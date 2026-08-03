@@ -1,12 +1,26 @@
 import { View, Text, StyleSheet, ScrollView, TouchableOpacity, TextInput, Modal, Alert, Share, ActivityIndicator } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useMemo } from 'react';
 import { useTranslation } from 'react-i18next';
 import { useRoute, useNavigation } from '@react-navigation/native';
 import { supabase } from '../lib/supabase';
 import { useAuth } from '../lib/useAuth';
 import { getVersiculoDoDia, parseReferencia, getTextoVersiculo, getReferenciaVersiculo, getVersaoVersiculo } from '../lib/versiculoDoDia';
 import { livrosAT, livrosNT, Livro } from '../lib/bibliaLivros';
+import { useTheme } from '../lib/theme';
+
+// LeitorModal (tela de leitura) já é sempre escuro — funciona nos dois
+// temas sem mudar. Só a tela de escolha de livro/versão precisa de paleta.
+function paletaBiblia(isDark: boolean) {
+  return isDark ? {
+    bg: '#0E0B22', cardBg: '#1C1940', cardBorder: '#332D5C', chipBg: '#241F4D',
+    textPrimary: '#F1EFFA', textMuted: '#A69FD6',
+  } : {
+    bg: '#F9F8FF', cardBg: '#FFFFFF', cardBorder: 'rgba(83,74,183,0.13)', chipBg: '#EEEDFE',
+    textPrimary: '#1A1740', textMuted: '#8B83D4',
+  };
+}
+type PaletaBiblia = ReturnType<typeof paletaBiblia>;
 
 // ─── Versões com API IDs ──────────────────────────────────────────────────────
 // Fonte: abibliadigital.com.br. Francês removido — sem fonte gratuita confiável
@@ -63,12 +77,23 @@ function LeitorModal({ livro, versao, capInicial, onClose }: {
   livro: Livro | null; versao: typeof versoes[0]; capInicial?: number; onClose: () => void;
 }) {
   const { t } = useTranslation();
+  const { user } = useAuth();
   const [capitulo, setCapitulo] = useState(capInicial ?? 1);
   const [versos, setVersos] = useState<Verso[]>([]);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
   const langKey = getLangKey(versao.apiId);
   const nomeExibido = livro ? nomeLivro(livro, langKey) : '';
+
+  // Registra a leitura no histórico do usuário (Perfil > Histórico de
+  // Estudos) — silencioso, não bloqueia nem avisa em caso de erro, pra não
+  // atrapalhar a leitura por causa de um log de fundo.
+  const registrarLeitura = (nomeLivroLido: string, cap: number) => {
+    if (!user) return;
+    supabase.from('reading_history').insert({
+      user_id: user.id, livro: nomeLivroLido, capitulo: cap, versao: versao.sigla,
+    }).then(() => {});
+  };
 
   const buscarCapitulo = async (cap: number) => {
     if (!livro) return;
@@ -96,6 +121,7 @@ function LeitorModal({ livro, versao, capInicial, onClose }: {
           verse: v.number,
           text: v.text,
         })));
+        registrarLeitura(data.book?.name ?? nomeExibido, data.chapter?.number ?? cap);
       }
     } catch {
       setError(t('biblia.semConexao'));
@@ -223,6 +249,9 @@ const lr = StyleSheet.create({
 export default function BibleScreen() {
   const { t, i18n } = useTranslation();
   const { user, isLoggedIn } = useAuth();
+  const { isDark } = useTheme();
+  const C = useMemo(() => paletaBiblia(isDark), [isDark]);
+  const styles = useMemo(() => buildStyles(C), [C]);
   const route = useRoute<any>();
   const navigation = useNavigation<any>();
   const [busca, setBusca] = useState('');
@@ -379,7 +408,7 @@ export default function BibleScreen() {
             <View style={styles.modalHeader}>
               <Text style={styles.modalTitulo}>{t('biblia.escolherVersao')}</Text>
               <TouchableOpacity onPress={() => setModalVersoes(false)}>
-                <Ionicons name="close" size={22} color="#1A1740" />
+                <Ionicons name="close" size={22} color={C.textPrimary} />
               </TouchableOpacity>
             </View>
             <ScrollView showsVerticalScrollIndicator={false}>
@@ -552,8 +581,8 @@ export default function BibleScreen() {
   );
 }
 
-const styles = StyleSheet.create({
-  container: { flex: 1, backgroundColor: '#F9F8FF' },
+function buildStyles(C: PaletaBiblia) { return StyleSheet.create({
+  container: { flex: 1, backgroundColor: C.bg },
   header: { backgroundColor: '#1A1740', paddingTop: 55, paddingBottom: 16, paddingHorizontal: 18 },
   headerTop: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginBottom: 12 },
   headerSub: { fontSize: 12, color: 'rgba(255,255,255,0.5)' },
@@ -564,18 +593,18 @@ const styles = StyleSheet.create({
   busca: { backgroundColor: 'rgba(255,255,255,0.1)', borderRadius: 10, paddingHorizontal: 12, paddingVertical: 10, flexDirection: 'row', alignItems: 'center', gap: 8, borderWidth: 0.5, borderColor: 'rgba(255,255,255,0.15)' },
   buscaInput: { flex: 1, fontSize: 13, color: '#fff' },
   modalFundo: { flex: 1, backgroundColor: 'rgba(0,0,0,0.5)', justifyContent: 'flex-end' },
-  modalCard: { backgroundColor: '#fff', borderTopLeftRadius: 24, borderTopRightRadius: 24, padding: 20, maxHeight: '80%' },
+  modalCard: { backgroundColor: C.cardBg, borderTopLeftRadius: 24, borderTopRightRadius: 24, padding: 20, maxHeight: '80%' },
   modalHeader: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 16 },
-  modalTitulo: { fontSize: 16, fontWeight: '500', color: '#1A1740' },
-  idiomaLabel: { fontSize: 11, fontWeight: '500', color: '#8B83D4', textTransform: 'uppercase', letterSpacing: 0.8, marginTop: 16, marginBottom: 8 },
-  versaoItem: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', padding: 14, borderRadius: 12, marginBottom: 6, backgroundColor: '#F9F8FF' },
-  versaoItemAtivo: { backgroundColor: '#EEEDFE' },
+  modalTitulo: { fontSize: 16, fontWeight: '500', color: C.textPrimary },
+  idiomaLabel: { fontSize: 11, fontWeight: '500', color: C.textMuted, textTransform: 'uppercase', letterSpacing: 0.8, marginTop: 16, marginBottom: 8 },
+  versaoItem: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', padding: 14, borderRadius: 12, marginBottom: 6, backgroundColor: C.bg },
+  versaoItemAtivo: { backgroundColor: C.chipBg },
   versaoItemEsquerda: { flexDirection: 'row', alignItems: 'center', gap: 12, flex: 1 },
   bandeira: { fontSize: 26 },
   versaoItemInfo: { flex: 1 },
-  versaoItemSigla: { fontSize: 14, fontWeight: '500', color: '#1A1740' },
+  versaoItemSigla: { fontSize: 14, fontWeight: '500', color: C.textPrimary },
   versaoItemSiglaAtiva: { color: '#534AB7' },
-  versaoItemNome: { fontSize: 12, color: '#8B83D4', marginTop: 2 },
+  versaoItemNome: { fontSize: 12, color: C.textMuted, marginTop: 2 },
   versiculo: { backgroundColor: '#1A1740', margin: 14, borderRadius: 16, padding: 18 },
   versiculoLabel: { fontSize: 10, fontWeight: '500', color: '#F5C842', letterSpacing: 1, textTransform: 'uppercase', marginBottom: 8 },
   versiculoTexto: { fontSize: 14, color: 'rgba(255,255,255,0.9)', lineHeight: 22, fontStyle: 'italic' },
@@ -602,14 +631,14 @@ const styles = StyleSheet.create({
   planoReiniciarBtn: { flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 8, backgroundColor: '#F5C842', borderRadius: 12, paddingVertical: 12, marginHorizontal: 14, marginBottom: 14 },
   planoReiniciarTexto: { fontSize: 13, fontWeight: '700', color: '#1A1740' },
   abasContainer: { paddingHorizontal: 14 },
-  abas: { flexDirection: 'row', backgroundColor: '#EEEDFE', borderRadius: 10, overflow: 'hidden', marginBottom: 12 },
+  abas: { flexDirection: 'row', backgroundColor: C.chipBg, borderRadius: 10, overflow: 'hidden', marginBottom: 12 },
   aba: { flex: 1, paddingVertical: 9, alignItems: 'center', borderRadius: 10 },
   abaAtiva: { backgroundColor: '#534AB7' },
-  abaTexto: { fontSize: 11, fontWeight: '500', color: '#8B83D4' },
+  abaTexto: { fontSize: 11, fontWeight: '500', color: C.textMuted },
   abaTextoAtivo: { color: '#fff' },
-  buscaResultado: { fontSize: 12, color: '#8B83D4', marginBottom: 10 },
+  buscaResultado: { fontSize: 12, color: C.textMuted, marginBottom: 10 },
   livrosGrid: { flexDirection: 'row', flexWrap: 'wrap', gap: 8 },
-  livroBtn: { backgroundColor: '#fff', borderRadius: 10, padding: 10, borderWidth: 0.5, borderColor: 'rgba(83,74,183,0.13)', width: '31%', alignItems: 'center' },
-  livroNome: { fontSize: 12, fontWeight: '500', color: '#1A1740', textAlign: 'center' },
-  livroCaps: { fontSize: 10, color: '#8B83D4', marginTop: 3 },
-});
+  livroBtn: { backgroundColor: C.cardBg, borderRadius: 10, padding: 10, borderWidth: 0.5, borderColor: C.cardBorder, width: '31%', alignItems: 'center' },
+  livroNome: { fontSize: 12, fontWeight: '500', color: C.textPrimary, textAlign: 'center' },
+  livroCaps: { fontSize: 10, color: C.textMuted, marginTop: 3 },
+}); }

@@ -1,7 +1,12 @@
 // supabase/functions/content-notifications/index.ts
 // Disparado por um Database Webhook do Supabase sempre que uma linha nova é
-// inserida em `avisos` ou `devocionais` (grupo geral). Manda push real para
-// todos os membros com notificações ativas (tabela push_tokens).
+// inserida em `avisos` ou `devocionais`. Manda push real via Expo.
+//
+// Segmentação por grupo: quando o registro tem `grupo` preenchido
+// (mulheres/homens/jovens), o push vai só pra quem está em `grupo_membros`
+// daquele grupo (via `members.profile_id`) — não pra igreja toda. Sem
+// `grupo` (null), continua sendo um push geral pra todo mundo com token,
+// igual sempre foi.
 //
 // Como ligar (uma vez só, no Supabase Dashboard):
 // 1. Deploy: supabase functions deploy content-notifications
@@ -9,8 +14,6 @@
 //    - Table: avisos   | Events: Insert | Type: Supabase Edge Functions
 //      Edge Function: content-notifications
 //    - Repita criando um segundo webhook igual para a tabela: devocionais
-//      (esse dispara para toda inserção; o código abaixo ignora devocionais
-//      de grupo específico e só notifica os gerais, grupo = null)
 
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2';
 
@@ -34,11 +37,6 @@ Deno.serve(async (req) => {
       corpo = String(record.texto ?? '').slice(0, 140);
       tipo = 'aviso';
     } else if (table === 'devocionais') {
-      // Só notifica devocionais gerais (Home) — devocionais de grupo específico
-      // (mulheres/homens/jovens) não disparam push para todo mundo.
-      if (record.grupo) {
-        return new Response(JSON.stringify({ message: 'Devocional de grupo específico, sem push geral.' }), { status: 200 });
-      }
       titulo = `📖 Novo devocional: ${record.titulo}`;
       corpo = `"${record.versiculo}" — ${record.referencia}`;
       tipo = 'devocional';
@@ -47,8 +45,38 @@ Deno.serve(async (req) => {
     }
 
     const supabase = createClient(SUPABASE_URL, SUPABASE_SERVICE_KEY);
-    const { data: tokens, error: tokensError } = await supabase.from('push_tokens').select('token');
-    if (tokensError) throw tokensError;
+    const grupo = record.grupo as string | null | undefined;
+
+    let tokens: { token: string }[] | null = null;
+
+    if (grupo) {
+      // Só quem foi adicionado a esse grupo (pelo líder) recebe. Busca via
+      // grupo_membros -> members.profile_id -> push_tokens.user_id.
+      const { data: membros, error: membrosError } = await supabase
+        .from('grupo_membros')
+        .select('members(profile_id)')
+        .eq('grupo', grupo);
+      if (membrosError) throw membrosError;
+
+      const profileIds = [...new Set(
+        (membros ?? [])
+          .map((m: any) => m.members?.profile_id)
+          .filter((id: string | null) => !!id)
+      )];
+
+      if (profileIds.length === 0) {
+        return new Response(JSON.stringify({ message: `Ninguém com conta vinculada no grupo ${grupo} ainda.` }), { status: 200 });
+      }
+
+      const { data: tokensData, error: tokensError } = await supabase
+        .from('push_tokens').select('token').in('user_id', profileIds);
+      if (tokensError) throw tokensError;
+      tokens = tokensData;
+    } else {
+      const { data: tokensData, error: tokensError } = await supabase.from('push_tokens').select('token');
+      if (tokensError) throw tokensError;
+      tokens = tokensData;
+    }
 
     if (!tokens || tokens.length === 0) {
       return new Response(JSON.stringify({ message: 'Nenhum token de push encontrado.' }), { status: 200 });
@@ -59,7 +87,7 @@ Deno.serve(async (req) => {
       title: titulo,
       body: corpo,
       sound: 'default',
-      data: { type: tipo },
+      data: { type: tipo, grupo: grupo ?? null },
     }));
 
     // Expo aceita no máximo 100 mensagens por request — quebra em lotes.

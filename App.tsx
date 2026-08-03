@@ -1,5 +1,7 @@
+import { StripeProvider } from '@stripe/stripe-react-native';
 import { useEffect } from 'react';
 import { Linking } from 'react-native';
+import { SafeAreaProvider } from 'react-native-safe-area-context';
 import { NavigationContainer, createNavigationContainerRef } from '@react-navigation/native';
 import { createBottomTabNavigator } from '@react-navigation/bottom-tabs';
 import { createNativeStackNavigator } from '@react-navigation/native-stack';
@@ -15,6 +17,7 @@ import OfertaScreen from './screens/OfertaScreen';
 import NovaSenhaScreen from './screens/NovaSenhaScreen';
 import { supabase } from './lib/supabase';
 import { carregarIdiomaSalvo } from './lib/i18n';
+import { ThemeProvider, useTheme } from './lib/theme';
 
 const Tab = createBottomTabNavigator();
 const Stack = createNativeStackNavigator();
@@ -57,12 +60,13 @@ async function handleAuthDeepLink(url: string | null): Promise<boolean> {
 
 function MainTabs() {
   const { t } = useTranslation();
+  const { colors } = useTheme();
   return (
     <Tab.Navigator
       screenOptions={{
         headerShown: false,
-        tabBarStyle: { backgroundColor: '#1A1740', borderTopColor: 'rgba(255,255,255,0.08)' },
-        tabBarActiveTintColor: '#F5C842',
+        tabBarStyle: { backgroundColor: colors.primary, borderTopColor: 'rgba(255,255,255,0.08)' },
+        tabBarActiveTintColor: colors.accent,
         tabBarInactiveTintColor: 'rgba(255,255,255,0.4)',
         tabBarLabelStyle: { fontSize: 11, fontWeight: '600' },
       }}
@@ -136,20 +140,30 @@ export default function App() {
   }, []);
 
   return (
-    <NavigationContainer ref={navigationRef}>
-      <Stack.Navigator screenOptions={{ headerShown: false }}>
-        <Stack.Screen name="MainTabs" component={MainTabs} />
-        <Stack.Screen
-          name="Oferta"
-          component={OfertaScreen}
-          options={{ presentation: 'modal' }}
-        />
-        <Stack.Screen
-          name="NovaSenha"
-          component={NovaSenhaScreen}
-          options={{ presentation: 'fullScreenModal', gestureEnabled: false }}
-        />
-      </Stack.Navigator>
-    </NavigationContainer>
+    <StripeProvider
+      publishableKey={process.env.EXPO_PUBLIC_STRIPE_PUBLISHABLE_KEY!}
+      merchantIdentifier="merchant.org.uk.penielchurch.app"
+      urlScheme="penielchurch"
+    >
+      <SafeAreaProvider>
+        <ThemeProvider>
+          <NavigationContainer ref={navigationRef}>
+            <Stack.Navigator screenOptions={{ headerShown: false }}>
+              <Stack.Screen name="MainTabs" component={MainTabs} />
+              <Stack.Screen
+                name="Oferta"
+                component={OfertaScreen}
+                options={{ presentation: 'modal' }}
+              />
+              <Stack.Screen
+                name="NovaSenha"
+                component={NovaSenhaScreen}
+                options={{ presentation: 'fullScreenModal', gestureEnabled: false }}
+              />
+            </Stack.Navigator>
+          </NavigationContainer>
+        </ThemeProvider>
+      </SafeAreaProvider>
+    </StripeProvider>
   );
 }

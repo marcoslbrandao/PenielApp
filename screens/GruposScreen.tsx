@@ -1,29 +1,48 @@
-import React, { useState, useEffect, useCallback } from 'react';
+import React, { useState, useEffect, useCallback, useMemo } from 'react';
 import {
   View, Text, StyleSheet, ScrollView, TouchableOpacity, Image,
   StatusBar, ActivityIndicator, RefreshControl, Linking, Alert,
   Modal, TextInput, KeyboardAvoidingView, Platform,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
+import { useRoute } from '@react-navigation/native';
 import { Ionicons } from '@expo/vector-icons';
 import { useTranslation } from 'react-i18next';
 import { supabase } from '../lib/supabase';
 import { useCampoTraduzido } from '../lib/useTraducao';
 import { useAuth } from '../lib/useAuth';
+import GrupoAdminModal from '../components/GrupoAdminModal';
+import GrupoChatModal from '../components/GrupoChatModal';
+import { useTheme } from '../lib/theme';
 
 // ─── Palette ──────────────────────────────────────────────────────────────────
-const C = {
-  bg: '#F7F4EE', surface: '#FFFFFF', surfaceAlt: '#F0EDE8',
-  border: '#E5E0D8', primary: '#1A1740', text: '#1A1A2E',
-  textMuted: '#6B7280', textDim: '#9CA3AF',
-  danger: '#C0392B', success: '#27AE60',
-  mulheres: '#D63A8A', mulheresDim: '#FCE4F3',
-  homens: '#1A6FC4', homensDim: '#E3F0FC',
-  // Mesmo lilás escuro do card "Peniel Alive" na Home
-  jovens: '#4A1AA8', jovensDim: '#EDE4FB',
-};
+// As cores de identidade de cada grupo (mulheres/homens/jovens) não mudam
+// com o tema — só o fundo/superfície/texto neutros trocam.
+function paleta(isDark: boolean) {
+  return isDark ? {
+    bg: '#0E0B22', surface: '#1C1940', surfaceAlt: '#241F4D',
+    border: '#332D5C', primary: '#100D28', text: '#F1EFFA',
+    textMuted: '#A6A0C7', textDim: '#726A99',
+    danger: '#FF6B6B', success: '#4ADE80',
+    mulheres: '#D63A8A', mulheresDim: '#3A1B2C',
+    homens: '#3D8FE0', homensDim: '#16273F',
+    jovens: '#8F79FF', jovensDim: '#241B4D',
+    estudoBiblico: '#2FBF9F', estudoBiblicoDim: '#123B33',
+  } : {
+    bg: '#F7F4EE', surface: '#FFFFFF', surfaceAlt: '#F0EDE8',
+    border: '#E5E0D8', primary: '#1A1740', text: '#1A1A2E',
+    textMuted: '#6B7280', textDim: '#9CA3AF',
+    danger: '#C0392B', success: '#27AE60',
+    mulheres: '#D63A8A', mulheresDim: '#FCE4F3',
+    homens: '#1A6FC4', homensDim: '#E3F0FC',
+    // Mesmo lilás escuro do card "Peniel Alive" na Home
+    jovens: '#4A1AA8', jovensDim: '#EDE4FB',
+    estudoBiblico: '#0F8F73', estudoBiblicoDim: '#DFF5EE',
+  };
+}
+type Paleta = ReturnType<typeof paleta>;
 
-type Tab = 'mulheres' | 'homens' | 'jovens';
+type Tab = 'mulheres' | 'homens' | 'jovens' | 'estudo_biblico';
 
 type GrupoEvento = {
   id: string;
@@ -44,8 +63,27 @@ type GrupoDevocional = {
   dataISO: string;
 };
 
+type GrupoShort = {
+  id: string;
+  titulo: string;
+  url: string;
+  plataforma: 'youtube' | 'instagram';
+};
+
+type GrupoArquivo = {
+  id: string;
+  titulo: string;
+  url: string;
+  created_at: string;
+};
+
+function extractYoutubeId(url: string): string | null {
+  const m = url.match(/(?:shorts\/|watch\?v=|youtu\.be\/)([a-zA-Z0-9_-]{6,})/);
+  return m ? m[1] : null;
+}
+
 // ─── Config dos grupos ────────────────────────────────────────────────────────
-function buildGrupos(t: (key: string) => string) {
+function buildGrupos(t: (key: string) => string, C: Paleta) {
   return {
     mulheres: {
       nome: t('grupos.mulheresNome'),
@@ -77,6 +115,16 @@ function buildGrupos(t: (key: string) => string) {
       whatsapp: '447540880456',
       mensagemWA: 'Olá! Quero saber mais sobre o Peniel Alive.',
     },
+    estudo_biblico: {
+      nome: t('grupos.estudoBiblicoNome'),
+      subtitulo: t('grupos.estudoBiblicoSubtitulo'),
+      icon: 'school-outline' as const,
+      cor: C.estudoBiblico,
+      corDim: C.estudoBiblicoDim,
+      descricao: t('grupos.estudoBiblicoDescricao'),
+      whatsapp: '447540880456',
+      mensagemWA: 'Olá! Quero saber mais sobre o Estudo Bíblico da Peniel Church.',
+    },
   };
 }
 
@@ -100,6 +148,9 @@ function GrupoEventoCard({ evento, tag }: {
   evento: GrupoEvento; tag: { bg: string; text: string; label: string };
 }) {
   const { i18n } = useTranslation();
+  const { isDark } = useTheme();
+  const C = useMemo(() => paleta(isDark), [isDark]);
+  const s = useMemo(() => buildS(C), [C]);
   const titulo = useCampoTraduzido(evento.titulo, 'grupo_eventos', evento.id, 'titulo');
   const descricao = useCampoTraduzido(evento.descricao, 'grupo_eventos', evento.id, 'descricao');
   const dataLabel = formatDataEvento(evento.dataISO, i18n.language);
@@ -136,6 +187,9 @@ function GrupoDevocionalCard({ dev, cor, isOpen, onToggle }: {
   dev: GrupoDevocional; cor: string; isOpen: boolean; onToggle: () => void;
 }) {
   const { i18n } = useTranslation();
+  const { isDark } = useTheme();
+  const C = useMemo(() => paleta(isDark), [isDark]);
+  const s = useMemo(() => buildS(C), [C]);
   const titulo = useCampoTraduzido(dev.titulo, 'devocionais', dev.id, 'titulo');
   const versiculo = useCampoTraduzido(dev.versiculo, 'devocionais', dev.id, 'versiculo');
   const referencia = useCampoTraduzido(dev.referencia, 'devocionais', dev.id, 'referencia');
@@ -173,6 +227,9 @@ type MembroBusca = { id: string; nome: string; sobrenome: string; telefone: stri
 function GerenciarParticipantesModal({ visible, grupo, grupoNome, cor, onClose }: {
   visible: boolean; grupo: Tab; grupoNome: string; cor: string; onClose: () => void;
 }) {
+  const { isDark } = useTheme();
+  const C = useMemo(() => paleta(isDark), [isDark]);
+  const gm = useMemo(() => buildGm(C), [C]);
   const [participantes, setParticipantes] = useState<Participante[]>([]);
   const [loading, setLoading] = useState(false);
   const [query, setQuery] = useState('');
@@ -294,7 +351,141 @@ function GerenciarParticipantesModal({ visible, grupo, grupoNome, cor, onClose }
   );
 }
 
-const gm = StyleSheet.create({
+// ─── Gestão de Líderes (só admin) ────────────────────────────────────────────
+// Diferente de Participantes (escolhidos do diretório `members`, sem precisar
+// de conta), líder precisa ter conta no app — por isso busca em `profiles`,
+// não em `members`. RLS de `group_leaders` já restringe a admin.
+type Lider = { id: string; profile_id: string; nome: string };
+type ProfileBusca = { id: string; full_name: string };
+
+function GerenciarLideresModal({ visible, grupo, grupoNome, cor, onClose }: {
+  visible: boolean; grupo: Tab; grupoNome: string; cor: string; onClose: () => void;
+}) {
+  const { isDark } = useTheme();
+  const C = useMemo(() => paleta(isDark), [isDark]);
+  const gm = useMemo(() => buildGm(C), [C]);
+  const [lideres, setLideres] = useState<Lider[]>([]);
+  const [loading, setLoading] = useState(false);
+  const [query, setQuery] = useState('');
+  const [resultados, setResultados] = useState<ProfileBusca[]>([]);
+  const [buscando, setBuscando] = useState(false);
+
+  const fetchLideres = useCallback(async () => {
+    setLoading(true);
+    const { data } = await supabase
+      .from('group_leaders')
+      .select('id, profile_id, profiles(full_name)')
+      .eq('grupo', grupo);
+    setLideres(((data ?? []) as any[]).map(row => ({
+      id: row.id,
+      profile_id: row.profile_id,
+      nome: row.profiles?.full_name ?? '—',
+    })).sort((a, b) => a.nome.localeCompare(b.nome)));
+    setLoading(false);
+  }, [grupo]);
+
+  useEffect(() => {
+    if (visible) { fetchLideres(); setQuery(''); setResultados([]); }
+  }, [visible, fetchLideres]);
+
+  useEffect(() => {
+    if (query.trim().length < 2) { setResultados([]); return; }
+    setBuscando(true);
+    const t = setTimeout(() => {
+      supabase.from('profiles').select('id, full_name')
+        .ilike('full_name', `%${query.trim()}%`)
+        .limit(10)
+        .then(({ data }) => {
+          const jaLideres = new Set(lideres.map(l => l.profile_id));
+          setResultados(((data ?? []) as ProfileBusca[]).filter(p => !jaLideres.has(p.id)));
+          setBuscando(false);
+        });
+    }, 300);
+    return () => clearTimeout(t);
+  }, [query, lideres]);
+
+  const adicionar = async (perfil: ProfileBusca) => {
+    const { error } = await supabase.from('group_leaders').insert({ profile_id: perfil.id, grupo });
+    if (error) { Alert.alert('Erro', error.message); return; }
+    setQuery(''); setResultados([]);
+    fetchLideres();
+  };
+
+  const remover = (lider: Lider) => {
+    Alert.alert('Remover líder', `Remover ${lider.nome} da liderança do grupo ${grupoNome}?`, [
+      { text: 'Cancelar', style: 'cancel' },
+      { text: 'Remover', style: 'destructive', onPress: async () => {
+        await supabase.from('group_leaders').delete().eq('id', lider.id);
+        fetchLideres();
+      }},
+    ]);
+  };
+
+  return (
+    <Modal visible={visible} animationType="slide" transparent onRequestClose={onClose}>
+      <View style={gm.overlay}>
+        <KeyboardAvoidingView behavior={Platform.OS === 'ios' ? 'padding' : undefined} style={{ width: '100%', maxHeight: '85%' }}>
+          <View style={gm.sheet}>
+            <View style={gm.header}>
+              <Text style={gm.title}>Líderes — {grupoNome}</Text>
+              <TouchableOpacity onPress={onClose}>
+                <Ionicons name="close" size={22} color={C.textMuted} />
+              </TouchableOpacity>
+            </View>
+
+            <View style={gm.searchRow}>
+              <Ionicons name="search-outline" size={16} color={C.textMuted} style={{ marginRight: 8 }} />
+              <TextInput
+                style={gm.searchInput}
+                placeholder="Buscar por nome (precisa ter conta no app)..."
+                placeholderTextColor={C.textDim}
+                value={query}
+                onChangeText={setQuery}
+              />
+              {buscando && <ActivityIndicator size="small" color={cor} />}
+            </View>
+
+            {resultados.length > 0 && (
+              <View style={gm.resultsBox}>
+                {resultados.map(p => (
+                  <TouchableOpacity key={p.id} style={gm.resultRow} onPress={() => adicionar(p)}>
+                    <Text style={gm.resultNome}>{p.full_name}</Text>
+                    <Ionicons name="add-circle" size={22} color={cor} />
+                  </TouchableOpacity>
+                ))}
+              </View>
+            )}
+
+            <Text style={gm.listLabel}>Líderes atuais ({lideres.length})</Text>
+            <ScrollView showsVerticalScrollIndicator={false} style={{ maxHeight: 280 }}>
+              {loading ? (
+                <ActivityIndicator color={cor} style={{ marginVertical: 20 }} />
+              ) : lideres.length === 0 ? (
+                <Text style={gm.emptyText}>Nenhum líder designado ainda.</Text>
+              ) : (
+                lideres.map(l => (
+                  <View key={l.id} style={gm.participanteRow}>
+                    <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
+                      <Ionicons name="ribbon-outline" size={16} color={cor} />
+                      <Text style={gm.participanteNome}>{l.nome}</Text>
+                    </View>
+                    <TouchableOpacity onPress={() => remover(l)}>
+                      <Ionicons name="trash-outline" size={18} color={C.danger} />
+                    </TouchableOpacity>
+                  </View>
+                ))
+              )}
+              <View style={{ height: 10 }} />
+            </ScrollView>
+            <Text style={gm.hint}>A pessoa precisa já ter uma conta no app (ter feito login pelo menos uma vez) pra aparecer na busca.</Text>
+          </View>
+        </KeyboardAvoidingView>
+      </View>
+    </Modal>
+  );
+}
+
+function buildGm(C: Paleta) { return StyleSheet.create({
   overlay: { flex: 1, justifyContent: 'flex-end', backgroundColor: 'rgba(0,0,0,0.5)' },
   sheet: { backgroundColor: C.surface, borderTopLeftRadius: 24, borderTopRightRadius: 24, padding: 20, paddingBottom: 36 },
   header: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginBottom: 16 },
@@ -309,43 +500,81 @@ const gm = StyleSheet.create({
   emptyText: { fontSize: 13, color: C.textMuted, textAlign: 'center', paddingVertical: 20 },
   participanteRow: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', paddingVertical: 12, borderBottomWidth: 1, borderBottomColor: C.border },
   participanteNome: { fontSize: 14, color: C.text },
-});
+  hint: { fontSize: 11, color: C.textDim, textAlign: 'center', marginTop: 10, lineHeight: 16 },
+}); }
 
 // ─── Componente principal ─────────────────────────────────────────────────────
 export default function GruposScreen() {
   const { t } = useTranslation();
   const { user } = useAuth();
-  const GRUPOS = buildGrupos(t);
-  const [activeTab, setActiveTab] = useState<Tab>('homens');
+  const { isDark } = useTheme();
+  const C = useMemo(() => paleta(isDark), [isDark]);
+  const s = useMemo(() => buildS(C), [C]);
+  const GRUPOS = buildGrupos(t, C);
+  // Permite abrir já numa aba específica (ex: card "Peniel Alive" da Home
+  // manda direto pra 'jovens') via navigation.navigate('Grupos', { grupoInicial: 'jovens' }).
+  const route = useRoute<any>();
+  const grupoInicial = route.params?.grupoInicial as Tab | undefined;
+  const [activeTab, setActiveTab] = useState<Tab>(grupoInicial ?? 'homens');
   const [expandedDev, setExpandedDev] = useState<string | null>(null);
   const [eventos, setEventos] = useState<GrupoEvento[]>([]);
   const [devocionais, setDevocionais] = useState<GrupoDevocional[]>([]);
+  const [shorts, setShorts] = useState<GrupoShort[]>([]);
+  const [arquivos, setArquivos] = useState<GrupoArquivo[]>([]);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   const [isAdmin, setIsAdmin] = useState(false);
+  const [userNome, setUserNome] = useState('');
   const [gruposLiderados, setGruposLiderados] = useState<Tab[]>([]);
+  const [meusGrupos, setMeusGrupos] = useState<Tab[]>([]);
+  const [permissoesCarregadas, setPermissoesCarregadas] = useState(false);
   const [participantesModalVisible, setParticipantesModalVisible] = useState(false);
+  const [adminModalVisible, setAdminModalVisible] = useState(false);
+  const [chatModalVisible, setChatModalVisible] = useState(false);
+  const [lideresModalVisible, setLideresModalVisible] = useState(false);
 
   const grupo = GRUPOS[activeTab];
   const souLiderDesteGrupo = isAdmin || gruposLiderados.includes(activeTab);
+  const temAcessoConteudo = souLiderDesteGrupo || meusGrupos.includes(activeTab);
 
-  // Verifica se o usuário é admin ou líder de algum grupo, pra mostrar o
-  // botão de gerenciar participantes só pra quem tem permissão.
+  // Se a tela já estava montada (usuário já estava na aba Membros) e a Home
+  // manda um novo grupoInicial, troca a aba também — não só na primeira montagem.
   useEffect(() => {
-    if (!user) { setIsAdmin(false); setGruposLiderados([]); return; }
-    supabase.from('profiles').select('role').eq('id', user.id).single()
-      .then(({ data }) => setIsAdmin(data?.role === 'admin'));
-    supabase.from('group_leaders').select('grupo').eq('profile_id', user.id)
-      .then(({ data }) => setGruposLiderados(((data ?? []) as { grupo: Tab }[]).map(r => r.grupo)));
+    if (grupoInicial) setActiveTab(grupoInicial);
+  }, [grupoInicial]);
+
+  // Verifica se o usuário é admin, líder de algum grupo, ou membro de algum
+  // grupo (adicionado pelo líder) — decide o que mostrar em cada aba.
+  useEffect(() => {
+    if (!user) {
+      setIsAdmin(false); setGruposLiderados([]); setMeusGrupos([]); setUserNome('');
+      setPermissoesCarregadas(true);
+      return;
+    }
+    setPermissoesCarregadas(false);
+    Promise.all([
+      supabase.from('profiles').select('role, full_name').eq('id', user.id).single(),
+      supabase.from('group_leaders').select('grupo').eq('profile_id', user.id),
+      supabase.rpc('meus_grupos'),
+    ]).then(([{ data: perfil }, { data: liderados }, { data: grupos }]) => {
+      setIsAdmin(perfil?.role === 'admin');
+      setUserNome(perfil?.full_name ?? 'Membro');
+      setGruposLiderados(((liderados ?? []) as { grupo: Tab }[]).map(r => r.grupo));
+      setMeusGrupos(((grupos ?? []) as Tab[]));
+      setPermissoesCarregadas(true);
+    });
   }, [user]);
 
-  const fetchGrupoData = useCallback(async (tab: Tab, isRefresh = false) => {
+  const fetchGrupoData = useCallback(async (tab: Tab, temAcesso: boolean, isRefresh = false) => {
+    if (!temAcesso) { setEventos([]); setDevocionais([]); setShorts([]); setArquivos([]); setLoading(false); setRefreshing(false); return; }
     if (isRefresh) setRefreshing(true); else setLoading(true);
 
     const hoje = new Date().toISOString().slice(0, 10);
-    const [{ data: eventosData }, { data: devData }] = await Promise.all([
+    const [{ data: eventosData }, { data: devData }, { data: shortsData }, { data: arquivosData }] = await Promise.all([
       supabase.from('grupo_eventos').select('*').eq('grupo', tab).gte('data', hoje).order('data', { ascending: true }),
       supabase.from('devocionais').select('*').eq('grupo', tab).order('data', { ascending: false }).limit(5),
+      supabase.from('shorts_videos').select('*').eq('grupo', tab).order('created_at', { ascending: false }).limit(12),
+      supabase.from('grupo_arquivos').select('*').eq('grupo', tab).order('created_at', { ascending: false }).limit(20),
     ]);
 
     setEventos((eventosData ?? []).map((e: any) => ({
@@ -356,12 +585,17 @@ export default function GruposScreen() {
       id: d.id, titulo: d.titulo, texto: d.texto, versiculo: d.versiculo,
       referencia: d.referencia, dataISO: d.data,
     })));
+    setShorts((shortsData ?? []) as GrupoShort[]);
+    setArquivos((arquivosData ?? []) as GrupoArquivo[]);
 
     setLoading(false);
     setRefreshing(false);
   }, []);
 
-  useEffect(() => { fetchGrupoData(activeTab); }, [activeTab, fetchGrupoData]);
+  useEffect(() => {
+    if (!permissoesCarregadas) return;
+    fetchGrupoData(activeTab, temAcessoConteudo);
+  }, [activeTab, temAcessoConteudo, permissoesCarregadas, fetchGrupoData]);
 
   const openWhatsApp = () => {
     const url = `https://wa.me/${grupo.whatsapp}?text=${encodeURIComponent(grupo.mensagemWA)}`;
@@ -378,9 +612,10 @@ export default function GruposScreen() {
   };
 
   const TABS: { id: Tab; label: string; icon: string }[] = [
-    { id: 'homens',   label: t('grupos.tabHomens'),   icon: 'shield-outline'  },
-    { id: 'mulheres', label: t('grupos.tabMulheres'), icon: 'flower-outline'  },
-    { id: 'jovens',   label: t('grupos.tabAlive'),    icon: 'flame-outline'   },
+    { id: 'homens',        label: t('grupos.tabHomens'),         icon: 'shield-outline'  },
+    { id: 'mulheres',      label: t('grupos.tabMulheres'),       icon: 'flower-outline'  },
+    { id: 'jovens',        label: t('grupos.tabAlive'),          icon: 'flame-outline'   },
+    { id: 'estudo_biblico', label: t('grupos.tabEstudoBiblico'), icon: 'school-outline'  },
   ];
 
   return (
@@ -394,13 +629,36 @@ export default function GruposScreen() {
           <Text style={s.headerSub}>Peniel Church</Text>
         </View>
         <View style={{ flexDirection: 'row', gap: 8 }}>
+          {temAcessoConteudo && (
+            <TouchableOpacity
+              style={[s.waBtn, { backgroundColor: 'rgba(255,255,255,0.15)', borderColor: 'rgba(255,255,255,0.3)' }]}
+              onPress={() => setChatModalVisible(true)}
+            >
+              <Ionicons name="chatbubbles-outline" size={16} color="#fff" />
+            </TouchableOpacity>
+          )}
           {souLiderDesteGrupo && (
             <TouchableOpacity
               style={[s.waBtn, { backgroundColor: 'rgba(255,255,255,0.15)', borderColor: 'rgba(255,255,255,0.3)' }]}
               onPress={() => setParticipantesModalVisible(true)}
             >
               <Ionicons name="people-outline" size={16} color="#fff" />
-              <Text style={[s.waBtnText, { color: '#fff' }]}>Participantes</Text>
+            </TouchableOpacity>
+          )}
+          {souLiderDesteGrupo && (
+            <TouchableOpacity
+              style={[s.waBtn, { backgroundColor: 'rgba(255,255,255,0.15)', borderColor: 'rgba(255,255,255,0.3)' }]}
+              onPress={() => setAdminModalVisible(true)}
+            >
+              <Ionicons name="megaphone-outline" size={16} color="#fff" />
+            </TouchableOpacity>
+          )}
+          {isAdmin && (
+            <TouchableOpacity
+              style={[s.waBtn, { backgroundColor: 'rgba(255,255,255,0.15)', borderColor: 'rgba(255,255,255,0.3)' }]}
+              onPress={() => setLideresModalVisible(true)}
+            >
+              <Ionicons name="ribbon-outline" size={16} color="#fff" />
             </TouchableOpacity>
           )}
           <TouchableOpacity style={[s.waBtn, { backgroundColor: grupo.cor + '20', borderColor: grupo.cor + '40' }]} onPress={openWhatsApp}>
@@ -428,7 +686,7 @@ export default function GruposScreen() {
 
       <ScrollView
         contentContainerStyle={s.scroll}
-        refreshControl={<RefreshControl refreshing={refreshing} onRefresh={() => fetchGrupoData(activeTab, true)} tintColor={grupo.cor} />}
+        refreshControl={<RefreshControl refreshing={refreshing} onRefresh={() => fetchGrupoData(activeTab, temAcessoConteudo, true)} tintColor={grupo.cor} />}
       >
 
         {/* Hero do grupo */}
@@ -453,36 +711,115 @@ export default function GruposScreen() {
           <Text style={s.descricaoTexto}>{grupo.descricao}</Text>
         </View>
 
-        {/* Eventos */}
-        <Text style={s.sectionLabel}>{t('grupos.proximosEventos')}</Text>
-        {loading ? (
-          <ActivityIndicator color={grupo.cor} style={{ marginVertical: 20 }} />
-        ) : eventos.length === 0 ? (
-          <View style={s.emptyWrap}>
-            <Text style={s.emptyText}>{t('grupos.nenhumEventoAgendado')}</Text>
+        {!permissoesCarregadas ? (
+          <ActivityIndicator color={grupo.cor} style={{ marginVertical: 30 }} />
+        ) : !temAcessoConteudo ? (
+          <View style={[s.lockedCard, { borderColor: grupo.cor + '40' }]}>
+            <View style={[s.lockedIcon, { backgroundColor: grupo.cor + '18' }]}>
+              <Ionicons name="lock-closed" size={22} color={grupo.cor} />
+            </View>
+            <Text style={s.lockedTitle}>{t('grupos.conteudoExclusivoTitulo')}</Text>
+            <Text style={s.lockedTexto}>{t('grupos.conteudoExclusivoTexto')}</Text>
           </View>
         ) : (
-          eventos.map(evento => (
-            <GrupoEventoCard key={evento.id} evento={evento} tag={tipoTag(evento.tipo)} />
-          ))
-        )}
+          <>
+            {/* Eventos */}
+            <Text style={s.sectionLabel}>{t('grupos.proximosEventos')}</Text>
+            {loading ? (
+              <ActivityIndicator color={grupo.cor} style={{ marginVertical: 20 }} />
+            ) : eventos.length === 0 ? (
+              <View style={s.emptyWrap}>
+                <Text style={s.emptyText}>{t('grupos.nenhumEventoAgendado')}</Text>
+              </View>
+            ) : (
+              eventos.map(evento => (
+                <GrupoEventoCard key={evento.id} evento={evento} tag={tipoTag(evento.tipo)} />
+              ))
+            )}
 
-        {/* Devocionais */}
-        <Text style={s.sectionLabel}>{t('grupos.devocionalGrupo')}</Text>
-        {!loading && devocionais.length === 0 && (
-          <View style={s.emptyWrap}>
-            <Text style={s.emptyText}>{t('grupos.nenhumDevocionalAinda')}</Text>
-          </View>
+            {/* Devocionais */}
+            <Text style={s.sectionLabel}>{t('grupos.devocionalGrupo')}</Text>
+            {!loading && devocionais.length === 0 && (
+              <View style={s.emptyWrap}>
+                <Text style={s.emptyText}>{t('grupos.nenhumDevocionalAinda')}</Text>
+              </View>
+            )}
+            {devocionais.map(dev => (
+              <GrupoDevocionalCard
+                key={dev.id}
+                dev={dev}
+                cor={grupo.cor}
+                isOpen={expandedDev === dev.id}
+                onToggle={() => setExpandedDev(expandedDev === dev.id ? null : dev.id)}
+              />
+            ))}
+
+            {/* Shorts */}
+            <Text style={s.sectionLabel}>{t('grupos.shortsGrupo')}</Text>
+            {!loading && shorts.length === 0 && (
+              <View style={s.emptyWrap}>
+                <Text style={s.emptyText}>{t('grupos.nenhumShortAinda')}</Text>
+              </View>
+            )}
+            {shorts.length > 0 && (
+              <View style={s.shortsGrid}>
+                {shorts.map(short => {
+                  const ytId = short.plataforma === 'youtube' ? extractYoutubeId(short.url) : null;
+                  return (
+                    <TouchableOpacity
+                      key={short.id}
+                      style={s.shortCard}
+                      activeOpacity={0.85}
+                      onPress={() => Linking.openURL(short.url).catch(() => Alert.alert(t('common.erro'), t('grupos.erroWhatsapp')))}
+                    >
+                      {ytId ? (
+                        <Image source={{ uri: `https://img.youtube.com/vi/${ytId}/hqdefault.jpg` }} style={s.shortThumb} resizeMode="cover" />
+                      ) : (
+                        <View style={[s.shortThumb, s.shortThumbPlaceholder, {
+                          backgroundColor: short.plataforma === 'instagram' ? '#E1306C22' : '#FF000022',
+                        }]}>
+                          <Ionicons
+                            name={short.plataforma === 'instagram' ? 'logo-instagram' : 'logo-youtube'}
+                            size={26}
+                            color={short.plataforma === 'instagram' ? '#E1306C' : '#FF0000'}
+                          />
+                        </View>
+                      )}
+                      <View style={s.shortPlayOverlay}>
+                        <Ionicons name="play-circle" size={26} color="rgba(255,255,255,0.9)" />
+                      </View>
+                      <View style={s.shortInfo}>
+                        <Text style={s.shortTitle} numberOfLines={2}>{short.titulo}</Text>
+                      </View>
+                    </TouchableOpacity>
+                  );
+                })}
+              </View>
+            )}
+
+            {/* Materiais (PDFs/links) */}
+            <Text style={s.sectionLabel}>{t('grupos.materiaisGrupo')}</Text>
+            {!loading && arquivos.length === 0 && (
+              <View style={s.emptyWrap}>
+                <Text style={s.emptyText}>{t('grupos.nenhumMaterialAinda')}</Text>
+              </View>
+            )}
+            {arquivos.map(arq => (
+              <TouchableOpacity
+                key={arq.id}
+                style={s.arquivoCard}
+                activeOpacity={0.8}
+                onPress={() => Linking.openURL(arq.url).catch(() => Alert.alert(t('common.erro'), t('grupos.erroWhatsapp')))}
+              >
+                <View style={[s.arquivoIcon, { backgroundColor: grupo.cor + '18' }]}>
+                  <Ionicons name="document-text-outline" size={18} color={grupo.cor} />
+                </View>
+                <Text style={s.arquivoTitulo} numberOfLines={1}>{arq.titulo}</Text>
+                <Ionicons name="open-outline" size={16} color={C.textMuted} />
+              </TouchableOpacity>
+            ))}
+          </>
         )}
-        {devocionais.map(dev => (
-          <GrupoDevocionalCard
-            key={dev.id}
-            dev={dev}
-            cor={grupo.cor}
-            isOpen={expandedDev === dev.id}
-            onToggle={() => setExpandedDev(expandedDev === dev.id ? null : dev.id)}
-          />
-        ))}
 
         {/* Botão de contato */}
         <TouchableOpacity style={[s.contactBtn, { backgroundColor: grupo.cor }]} onPress={openWhatsApp}>
@@ -500,12 +837,42 @@ export default function GruposScreen() {
         cor={grupo.cor}
         onClose={() => setParticipantesModalVisible(false)}
       />
+
+      <GerenciarLideresModal
+        visible={lideresModalVisible}
+        grupo={activeTab}
+        grupoNome={grupo.nome}
+        cor={grupo.cor}
+        onClose={() => setLideresModalVisible(false)}
+      />
+
+      <GrupoAdminModal
+        visible={adminModalVisible}
+        grupo={activeTab}
+        grupoNome={grupo.nome}
+        cor={grupo.cor}
+        onClose={() => setAdminModalVisible(false)}
+        onSaved={() => fetchGrupoData(activeTab, temAcessoConteudo)}
+      />
+
+      {user && (
+        <GrupoChatModal
+          visible={chatModalVisible}
+          grupo={activeTab}
+          grupoNome={grupo.nome}
+          cor={grupo.cor}
+          userId={user.id}
+          userNome={userNome}
+          podeModerar={souLiderDesteGrupo}
+          onClose={() => setChatModalVisible(false)}
+        />
+      )}
     </SafeAreaView>
   );
 }
 
 // ─── Styles ───────────────────────────────────────────────────────────────────
-const s = StyleSheet.create({
+function buildS(C: Paleta) { return StyleSheet.create({
   safe: { flex: 1, backgroundColor: C.bg },
   header: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', paddingHorizontal: 20, paddingVertical: 14, backgroundColor: C.primary },
   headerTitle: { fontSize: 20, fontWeight: '800', color: '#fff' },
@@ -546,10 +913,27 @@ const s = StyleSheet.create({
   versiculoText: { fontSize: 13, color: C.text, fontStyle: 'italic', lineHeight: 20 },
   versiculoRef: { fontSize: 11, fontWeight: '700', marginTop: 4 },
   reflexaoText: { fontSize: 13, color: C.textMuted, lineHeight: 20 },
+  // Shorts
+  shortsGrid: { flexDirection: 'row', flexWrap: 'wrap', justifyContent: 'space-between' },
+  shortCard: { width: '48%', aspectRatio: 9 / 14, borderRadius: 14, overflow: 'hidden', backgroundColor: C.surface, marginBottom: 14, position: 'relative', borderWidth: 1, borderColor: C.border },
+  shortThumb: { width: '100%', height: '100%' },
+  shortThumbPlaceholder: { alignItems: 'center', justifyContent: 'center' },
+  shortPlayOverlay: { position: 'absolute', top: 0, left: 0, right: 0, bottom: 0, alignItems: 'center', justifyContent: 'center' },
+  shortInfo: { position: 'absolute', bottom: 0, left: 0, right: 0, padding: 8, backgroundColor: 'rgba(0,0,0,0.55)' },
+  shortTitle: { fontSize: 11, fontWeight: '700', color: '#fff' },
+  // Materiais
+  arquivoCard: { flexDirection: 'row', alignItems: 'center', gap: 10, backgroundColor: C.surface, borderRadius: 12, padding: 12, marginBottom: 8, borderWidth: 1, borderColor: C.border },
+  arquivoIcon: { width: 34, height: 34, borderRadius: 9, alignItems: 'center', justifyContent: 'center' },
+  arquivoTitulo: { flex: 1, fontSize: 13, fontWeight: '600', color: C.text },
+  // Conteúdo trancado (não-membro)
+  lockedCard: { backgroundColor: C.surface, borderRadius: 16, borderWidth: 1, padding: 24, alignItems: 'center', marginTop: 4 },
+  lockedIcon: { width: 48, height: 48, borderRadius: 24, alignItems: 'center', justifyContent: 'center', marginBottom: 12 },
+  lockedTitle: { fontSize: 15, fontWeight: '800', color: C.text, marginBottom: 6, textAlign: 'center' },
+  lockedTexto: { fontSize: 13, color: C.textMuted, textAlign: 'center', lineHeight: 20 },
   // Contato
   contactBtn: { flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 10, borderRadius: 14, paddingVertical: 14, marginTop: 16 },
   contactBtnText: { fontSize: 15, fontWeight: '700', color: '#fff' },
   // Empty
   emptyWrap: { alignItems: 'center', paddingVertical: 24 },
   emptyText: { fontSize: 13, color: C.textMuted },
-});
+}); }

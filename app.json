@@ -60,7 +60,14 @@
           "sounds": []
         }
       ],
-      "expo-font"
+      "expo-font",
+      [
+        "@stripe/stripe-react-native",
+        {
+          "merchantIdentifier": "merchant.org.uk.penielchurch.app",
+          "enableGooglePay": true
+        }
+      ]
     ],
     "extra": {
       "eas": {

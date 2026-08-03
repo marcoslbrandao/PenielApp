@@ -1,9 +1,25 @@
 import { View, Text, StyleSheet, ScrollView, TouchableOpacity, Linking, Alert, ActivityIndicator, RefreshControl } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useCallback, useMemo } from 'react';
 import { useTranslation } from 'react-i18next';
 import { supabase } from '../lib/supabase';
 import { useCampoTraduzido } from '../lib/useTraducao';
+import { useTheme } from '../lib/theme';
+
+// Só os cards "claros" (header já é escuro nos dois temas) precisam de
+// paleta alternativa.
+function paletaAgenda(isDark: boolean) {
+  return isDark ? {
+    bg: '#0E0B22', cardBg: '#1C1940', cardBorder: '#332D5C',
+    textPrimary: '#F1EFFA', textMuted: '#A69FD6', accentText: '#A69FD6',
+    eventoDataBg: '#2A2560',
+  } : {
+    bg: '#F9F8FF', cardBg: '#FFFFFF', cardBorder: 'rgba(83,74,183,0.13)',
+    textPrimary: '#1A1740', textMuted: '#8B83D4', accentText: '#534AB7',
+    eventoDataBg: '#EEEDFE',
+  };
+}
+type PaletaAgenda = ReturnType<typeof paletaAgenda>;
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 // Calcula a próxima data de um evento recorrente pelo dia da semana
@@ -52,15 +68,12 @@ function EventoCard({ evento, hoje, aberto, onToggleDetalhes, onAbrirZoom, onAbr
 }) {
   const nome = useCampoTraduzido(evento.nome, 'agenda_eventos', evento.id, 'nome');
   const descricao = useCampoTraduzido(evento.descricao, 'agenda_eventos', evento.id, 'descricao');
+  const { isDark } = useTheme();
+  const C = useMemo(() => paletaAgenda(isDark), [isDark]);
+  const styles = useMemo(() => buildStyles(C), [C]);
 
   return (
     <View style={[styles.eventoCard, hoje && styles.eventoCardHoje]}>
-      {hoje && (
-        <View style={styles.hojeBadge}>
-          <Text style={styles.hojeBadgeText}>{t('agenda.hoje')}</Text>
-        </View>
-      )}
-
       <View style={styles.eventoEsquerda}>
         <View style={[styles.eventoData, hoje && styles.eventoDataHoje]}>
           <Text style={[styles.eventoDia, hoje && styles.eventoDiaHoje]}>
@@ -78,7 +91,12 @@ function EventoCard({ evento, hoje, aberto, onToggleDetalhes, onAbrirZoom, onAbr
 
       <View style={styles.eventoCorpo}>
         <View style={styles.eventoTop}>
-          <Text style={styles.eventoNome}>{nome}</Text>
+          {hoje && (
+            <View style={styles.hojeBadge}>
+              <Text style={styles.hojeBadgeText}>{t('agenda.hoje')}</Text>
+            </View>
+          )}
+          <Text style={styles.eventoNome} numberOfLines={1}>{nome}</Text>
           <View style={[styles.eventoTag, {
             backgroundColor: evento.tipo === 'presencial' ? '#EEEDFE' :
               evento.tipo === 'online' ? '#E1F5EE' : '#FEF6DC'
@@ -94,11 +112,11 @@ function EventoCard({ evento, hoje, aberto, onToggleDetalhes, onAbrirZoom, onAbr
         </View>
 
         <View style={styles.eventoInfoRow}>
-          <Ionicons name="time-outline" size={13} color="#8B83D4" />
+          <Ionicons name="time-outline" size={13} color={C.textMuted} />
           <Text style={styles.eventoInfoTexto}>{evento.diaSemanaLabel} · {evento.horario}</Text>
         </View>
         <View style={styles.eventoInfoRow}>
-          <Ionicons name="location-outline" size={13} color="#8B83D4" />
+          <Ionicons name="location-outline" size={13} color={C.textMuted} />
           <Text style={styles.eventoInfoTexto}>{evento.local}</Text>
         </View>
         <Text style={styles.eventoDescricao}>{descricao}</Text>
@@ -153,7 +171,7 @@ function EventoCard({ evento, hoje, aberto, onToggleDetalhes, onAbrirZoom, onAbr
             style={styles.eventoBtn}
             onPress={onAbrirMapa}
           >
-            <Ionicons name="map-outline" size={14} color="#534AB7" />
+            <Ionicons name="map-outline" size={14} color={C.accentText} />
             <Text style={styles.eventoBtnTexto}>{t('agenda.comoChegar')}</Text>
           </TouchableOpacity>
         )}
@@ -176,24 +194,30 @@ function EventoCard({ evento, hoje, aberto, onToggleDetalhes, onAbrirZoom, onAbr
 function EventoEspecialCard({ evento }: { evento: { id: string; nome: string; descricao: string; cor: string; data: string } }) {
   const nome = useCampoTraduzido(evento.nome, 'agenda_eventos', evento.id, 'nome');
   const descricao = useCampoTraduzido(evento.descricao, 'agenda_eventos', evento.id, 'descricao');
+  const { isDark } = useTheme();
+  const C = useMemo(() => paletaAgenda(isDark), [isDark]);
+  const styles = useMemo(() => buildStyles(C), [C]);
   return (
     <TouchableOpacity style={styles.especialCard}>
       <View style={[styles.especialCorFaixa, { backgroundColor: evento.cor }]} />
       <View style={styles.especialCorpo}>
         <Text style={styles.especialNome}>{nome}</Text>
         <View style={styles.eventoInfoRow}>
-          <Ionicons name="calendar-outline" size={13} color="#8B83D4" />
+          <Ionicons name="calendar-outline" size={13} color={C.textMuted} />
           <Text style={styles.eventoInfoTexto}>{evento.data}</Text>
         </View>
         <Text style={styles.eventoDescricao}>{descricao}</Text>
       </View>
-      <Ionicons name="chevron-forward" size={18} color="#8B83D4" style={{ marginRight: 12 }} />
+      <Ionicons name="chevron-forward" size={18} color={C.textMuted} style={{ marginRight: 12 }} />
     </TouchableOpacity>
   );
 }
 
 export default function AgendaScreen() {
   const { t } = useTranslation();
+  const { isDark } = useTheme();
+  const C = useMemo(() => paletaAgenda(isDark), [isDark]);
+  const styles = useMemo(() => buildStyles(C), [C]);
   const MESES = t('agenda.meses', { returnObjects: true }) as string[];
   const MESES_LONGOS = t('agenda.mesesLongos', { returnObjects: true }) as string[];
   const DIAS_SEMANA = t('agenda.diasSemana', { returnObjects: true }) as string[];
@@ -349,8 +373,8 @@ export default function AgendaScreen() {
   );
 }
 
-const styles = StyleSheet.create({
-  container: { flex: 1, backgroundColor: '#F9F8FF' },
+function buildStyles(C: PaletaAgenda) { return StyleSheet.create({
+  container: { flex: 1, backgroundColor: C.bg },
   header: { backgroundColor: '#1A1740', paddingTop: 55, paddingBottom: 16, paddingHorizontal: 18, flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' },
   headerSub: { fontSize: 12, color: 'rgba(255,255,255,0.5)' },
   headerTitulo: { fontSize: 18, fontWeight: '500', color: '#fff', marginTop: 2 },
@@ -363,29 +387,29 @@ const styles = StyleSheet.create({
   filtroTexto: { fontSize: 13, fontWeight: '500', color: 'rgba(255,255,255,0.6)' },
   filtroTextoAtivo: { color: '#fff' },
   scroll: { flex: 1, padding: 14 },
-  secaoTitulo: { fontSize: 14, fontWeight: '500', color: '#1A1740', marginBottom: 12 },
+  secaoTitulo: { fontSize: 14, fontWeight: '500', color: C.textPrimary, marginBottom: 12 },
   secaoTituloEspecial: { fontSize: 14, fontWeight: '500', color: '#E84B1A' },
   especiaisTitulo: { flexDirection: 'row', alignItems: 'center', gap: 6, marginBottom: 12, marginTop: 8 },
-  eventoCard: { backgroundColor: '#fff', borderRadius: 16, borderWidth: 0.5, borderColor: 'rgba(83,74,183,0.13)', marginBottom: 12, flexDirection: 'row', overflow: 'hidden' },
+  eventoCard: { backgroundColor: C.cardBg, borderRadius: 16, borderWidth: 0.5, borderColor: C.cardBorder, marginBottom: 12, flexDirection: 'row', overflow: 'hidden' },
   eventoCardHoje: { borderColor: '#F5C842', borderWidth: 1.5 },
-  hojeBadge: { position: 'absolute', top: 8, right: 8, backgroundColor: '#F5C842', paddingHorizontal: 8, paddingVertical: 2, borderRadius: 8, zIndex: 1 },
+  hojeBadge: { backgroundColor: '#F5C842', paddingHorizontal: 8, paddingVertical: 2, borderRadius: 8, marginRight: 6 },
   hojeBadgeText: { fontSize: 9, fontWeight: '800', color: '#1A1740' },
   eventoEsquerda: { alignItems: 'center', paddingTop: 14, paddingLeft: 12, paddingRight: 8, gap: 6 },
-  eventoData: { backgroundColor: '#EEEDFE', borderRadius: 10, width: 44, height: 44, alignItems: 'center', justifyContent: 'center' },
+  eventoData: { backgroundColor: C.eventoDataBg, borderRadius: 10, width: 44, height: 44, alignItems: 'center', justifyContent: 'center' },
   eventoDataHoje: { backgroundColor: '#F5C842' },
-  eventoDia: { fontSize: 16, fontWeight: '500', color: '#534AB7', lineHeight: 18 },
+  eventoDia: { fontSize: 16, fontWeight: '500', color: C.accentText, lineHeight: 18 },
   eventoDiaHoje: { color: '#1A1740', fontWeight: '800' },
-  eventoMes: { fontSize: 9, color: '#8B83D4', textTransform: 'uppercase' },
+  eventoMes: { fontSize: 9, color: C.textMuted, textTransform: 'uppercase' },
   eventoMesHoje: { color: '#1A1740' },
   eventoLinha: { width: 2, flex: 1, borderRadius: 2, marginBottom: 14 },
   eventoCorpo: { flex: 1, padding: 14 },
   eventoTop: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginBottom: 8 },
-  eventoNome: { fontSize: 14, fontWeight: '500', color: '#1A1740', flex: 1 },
+  eventoNome: { fontSize: 14, fontWeight: '500', color: C.textPrimary, flex: 1 },
   eventoTag: { borderRadius: 20, paddingHorizontal: 8, paddingVertical: 3, marginLeft: 8 },
   eventoTagTexto: { fontSize: 10, fontWeight: '500' },
   eventoInfoRow: { flexDirection: 'row', alignItems: 'center', gap: 5, marginBottom: 4 },
-  eventoInfoTexto: { fontSize: 12, color: '#8B83D4' },
-  eventoDescricao: { fontSize: 12, color: '#8B83D4', lineHeight: 18, marginTop: 6, marginBottom: 10 },
+  eventoInfoTexto: { fontSize: 12, color: C.textMuted },
+  eventoDescricao: { fontSize: 12, color: C.textMuted, lineHeight: 18, marginTop: 6, marginBottom: 10 },
   botoesRow: { flexDirection: 'row', alignItems: 'center', gap: 10, marginBottom: 6 },
   btnZoom: { flexDirection: 'row', alignItems: 'center', gap: 5, backgroundColor: '#1D9E75', paddingHorizontal: 12, paddingVertical: 7, borderRadius: 20 },
   btnZoomTexto: { fontSize: 12, fontWeight: '500', color: '#fff' },
@@ -395,9 +419,9 @@ const styles = StyleSheet.create({
   zoomRow: { flexDirection: 'row', alignItems: 'center', gap: 8 },
   zoomLabel: { fontSize: 12, color: '#085041', fontWeight: '500', flex: 1 },
   eventoBtn: { flexDirection: 'row', alignItems: 'center', gap: 4 },
-  eventoBtnTexto: { fontSize: 12, fontWeight: '500', color: '#534AB7' },
-  especialCard: { backgroundColor: '#fff', borderRadius: 16, borderWidth: 0.5, borderColor: 'rgba(83,74,183,0.13)', marginBottom: 12, flexDirection: 'row', alignItems: 'center', overflow: 'hidden' },
+  eventoBtnTexto: { fontSize: 12, fontWeight: '500', color: C.accentText },
+  especialCard: { backgroundColor: C.cardBg, borderRadius: 16, borderWidth: 0.5, borderColor: C.cardBorder, marginBottom: 12, flexDirection: 'row', alignItems: 'center', overflow: 'hidden' },
   especialCorFaixa: { width: 4, alignSelf: 'stretch' },
   especialCorpo: { flex: 1, padding: 14 },
-  especialNome: { fontSize: 14, fontWeight: '500', color: '#1A1740', marginBottom: 6 },
-});
+  especialNome: { fontSize: 14, fontWeight: '500', color: C.textPrimary, marginBottom: 6 },
+}); }

@@ -370,7 +370,7 @@ function NovoAvisoModal({ visible, onClose, onSaved }: {
     if (!titulo.trim() || !texto.trim()) { Alert.alert('Atenção', 'Preencha o título e o texto do aviso.'); return; }
     setSaving(true);
     const { error } = await supabase.from('avisos').insert({
-      titulo: titulo.trim(), texto: texto.trim(), tipo, data: new Date().toISOString(),
+      titulo: titulo.trim(), texto: texto.trim(), tipo, data: new Date().toISOString(), grupo: null,
     });
     setSaving(false);
     if (error) { Alert.alert('Erro', error.message); return; }
@@ -725,7 +725,7 @@ function NovoShortModal({ visible, onClose, onSaved }: {
     if (!titulo.trim() || !url.trim()) { Alert.alert('Atenção', 'Preencha o título e o link do vídeo.'); return; }
     setSaving(true);
     const { error } = await supabase.from('shorts_videos').insert({
-      titulo: titulo.trim(), url: url.trim(), plataforma,
+      titulo: titulo.trim(), url: url.trim(), plataforma, grupo: null,
     });
     setSaving(false);
     if (error) { Alert.alert('Erro', error.message); return; }
@@ -1340,6 +1340,11 @@ export default function AdminScreen() {
   const [areaGerenciarVisible, setAreaGerenciarVisible] = useState<EscalaArea | null>(null);
   const [gerarEscalaModalVisible, setGerarEscalaModalVisible] = useState(false);
   const [activeTab, setActiveTab] = useState<'convites' | 'stats' | 'ofertas' | 'avisos' | 'devocionais' | 'agenda' | 'shorts' | 'mensagens' | 'escalas'>('convites');
+  // São 9 abas e só ~3 cabem na tela por vez — sem esse indicador, dava a
+  // impressão de que a lista de abas estava cortada/quebrada (só aparecia
+  // uma lasquinha do ícone da 4ª aba na borda). A setinha "→" avisa que dá
+  // pra arrastar pra ver o resto, e some sozinha quando chega no fim.
+  const [tabsScrollFim, setTabsScrollFim] = useState(false);
 
   // Verifica role
   useEffect(() => {
@@ -1373,7 +1378,7 @@ export default function AdminScreen() {
     if (offeringsData) setOfferings(offeringsData as unknown as Offering[]);
     // Avisos
     const { data: avisosData } = await supabase
-      .from('avisos').select('*').order('created_at', { ascending: false }).limit(50);
+      .from('avisos').select('*').is('grupo', null).order('created_at', { ascending: false }).limit(50);
     if (avisosData) setAvisos(avisosData as Aviso[]);
     // Devocionais gerais (grupo = null, aparecem em destaque na Home)
     const { data: devData } = await supabase
@@ -1385,7 +1390,7 @@ export default function AdminScreen() {
     if (agendaData) setEventosAgenda(agendaData as AgendaEvento[]);
     // Shorts
     const { data: shortsData } = await supabase
-      .from('shorts_videos').select('*').order('created_at', { ascending: false });
+      .from('shorts_videos').select('*').is('grupo', null).order('created_at', { ascending: false });
     if (shortsData) setShorts(shortsData as ShortVideo[]);
     // Mensagens (blog)
     const { data: mensagensData } = await supabase
@@ -1550,24 +1555,41 @@ export default function AdminScreen() {
       </View>
 
       {/* Tabs */}
-      <ScrollView horizontal showsHorizontalScrollIndicator={false} style={s.tabRowScroll} contentContainerStyle={s.tabRow}>
-        {(['convites', 'avisos', 'devocionais', 'mensagens', 'agenda', 'shorts', 'ofertas', 'escalas', 'stats'] as const).map(tab => (
-          <TouchableOpacity
-            key={tab}
-            style={[s.tabBtn, activeTab === tab && s.tabBtnActive]}
-            onPress={() => setActiveTab(tab)}
-          >
-            <Ionicons
-              name={tab === 'convites' ? 'ticket-outline' : tab === 'avisos' ? 'megaphone-outline' : tab === 'devocionais' ? 'book-outline' : tab === 'mensagens' ? 'newspaper-outline' : tab === 'agenda' ? 'calendar-outline' : tab === 'shorts' ? 'film-outline' : tab === 'ofertas' ? 'gift-outline' : tab === 'escalas' ? 'people-circle-outline' : 'bar-chart-outline'}
-              size={16}
-              color={activeTab === tab ? C.purple : C.textMuted}
-            />
-            <Text style={[s.tabBtnText, activeTab === tab && { color: C.purple, fontWeight: '700' }]}>
-              {tab === 'convites' ? 'Convites' : tab === 'avisos' ? 'Avisos' : tab === 'devocionais' ? 'Devocionais' : tab === 'mensagens' ? 'Mensagens' : tab === 'agenda' ? 'Agenda' : tab === 'shorts' ? 'Shorts' : tab === 'ofertas' ? 'Ofertas' : tab === 'escalas' ? 'Escalas' : 'Estatísticas'}
-            </Text>
-          </TouchableOpacity>
-        ))}
-      </ScrollView>
+      <View style={s.tabRowWrap}>
+        <ScrollView
+          horizontal
+          showsHorizontalScrollIndicator={false}
+          style={s.tabRowScroll}
+          contentContainerStyle={s.tabRow}
+          scrollEventThrottle={32}
+          onScroll={(e) => {
+            const { contentOffset, contentSize, layoutMeasurement } = e.nativeEvent;
+            setTabsScrollFim(contentOffset.x + layoutMeasurement.width >= contentSize.width - 12);
+          }}
+        >
+          {(['convites', 'avisos', 'devocionais', 'mensagens', 'agenda', 'shorts', 'ofertas', 'escalas', 'stats'] as const).map(tab => (
+            <TouchableOpacity
+              key={tab}
+              style={[s.tabBtn, activeTab === tab && s.tabBtnActive]}
+              onPress={() => setActiveTab(tab)}
+            >
+              <Ionicons
+                name={tab === 'convites' ? 'ticket-outline' : tab === 'avisos' ? 'megaphone-outline' : tab === 'devocionais' ? 'book-outline' : tab === 'mensagens' ? 'newspaper-outline' : tab === 'agenda' ? 'calendar-outline' : tab === 'shorts' ? 'film-outline' : tab === 'ofertas' ? 'gift-outline' : tab === 'escalas' ? 'people-circle-outline' : 'bar-chart-outline'}
+                size={14}
+                color={activeTab === tab ? C.purple : C.textMuted}
+              />
+              <Text style={[s.tabBtnText, activeTab === tab && { color: C.purple, fontWeight: '700' }]}>
+                {tab === 'convites' ? 'Convites' : tab === 'avisos' ? 'Avisos' : tab === 'devocionais' ? 'Devocionais' : tab === 'mensagens' ? 'Mensagens' : tab === 'agenda' ? 'Agenda' : tab === 'shorts' ? 'Shorts' : tab === 'ofertas' ? 'Ofertas' : tab === 'escalas' ? 'Escalas' : 'Estatísticas'}
+              </Text>
+            </TouchableOpacity>
+          ))}
+        </ScrollView>
+        {!tabsScrollFim && (
+          <View pointerEvents="none" style={s.tabsFade}>
+            <Ionicons name="chevron-forward" size={14} color={C.textMuted} />
+          </View>
+        )}
+      </View>
 
       {loading ? (
         <View style={{ flex: 1, alignItems: 'center', justifyContent: 'center' }}>
@@ -2110,11 +2132,17 @@ const s = StyleSheet.create({
   headerSub: { fontSize: 12, color: 'rgba(255,255,255,0.6)', marginTop: 2 },
   newBtn: { flexDirection: 'row', alignItems: 'center', gap: 6, backgroundColor: C.accent, paddingVertical: 8, paddingHorizontal: 14, borderRadius: 20 },
   newBtnText: { fontSize: 13, fontWeight: '700', color: C.primary },
+  tabRowWrap: { position: 'relative' },
   tabRowScroll: { backgroundColor: C.surface, borderBottomWidth: 1, borderBottomColor: C.border },
   tabRow: { flexDirection: 'row' },
-  tabBtn: { flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 6, paddingVertical: 12, paddingHorizontal: 16 },
+  // Sinaliza que dá pra arrastar pra ver mais abas (some quando chega no fim).
+  tabsFade: { position: 'absolute', right: 0, top: 0, bottom: 1, width: 30, backgroundColor: C.surface, alignItems: 'center', justifyContent: 'center', opacity: 0.94 },
+  // Mais compacto que antes de propósito: com 9 abas, dava pra ver só
+  // 3 de cada vez (parecia que a barra tava "cortada pela metade"). Com
+  // menos padding/fonte, cabem ~5-6 na tela sem precisar arrastar tanto.
+  tabBtn: { flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 4, paddingVertical: 12, paddingHorizontal: 10 },
   tabBtnActive: { borderBottomWidth: 2, borderBottomColor: C.purple },
-  tabBtnText: { fontSize: 14, color: C.textMuted, fontWeight: '500' },
+  tabBtnText: { fontSize: 12.5, color: C.textMuted, fontWeight: '500' },
   scroll: { padding: 16, paddingBottom: 40 },
   sectionLabel: { fontSize: 11, color: C.textMuted, fontWeight: '700', letterSpacing: 1, textTransform: 'uppercase', marginBottom: 12 },
   // Summary

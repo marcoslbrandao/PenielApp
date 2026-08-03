@@ -6,7 +6,6 @@ import { Ionicons } from '@expo/vector-icons';
 import { supabase } from '../lib/supabase';
 import BandaScreen from './BandaScreen';
 import MembrosScreen from './MembrosScreen';
-import JovensScreen from './JovensScreen';
 import AdminScreen from './AdminScreen';
 import AuthScreen from './AuthScreen';
 import GruposScreen from './GruposScreen';
@@ -196,15 +195,6 @@ export default function AreaMembroScreen() {
           options={{
             tabBarIcon: ({ color, size }) => (
               <Ionicons name="people-outline" size={size} color={color} />
-            ),
-          }}
-        />
-        <Tab.Screen
-          name="Jovens"
-          component={JovensScreen}
-          options={{
-            tabBarIcon: ({ color, size }) => (
-              <Ionicons name="flame-outline" size={size} color={color} />
             ),
           }}
         />

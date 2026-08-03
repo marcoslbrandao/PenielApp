@@ -21,10 +21,13 @@ type Membro = {
   id: string;
   nome: string; sobrenome: string; data_nascimento: string; sexo: string;
   nacionalidade: string; estado_civil: string; profissao: string;
-  telefone: string; email: string; endereco: string;
+  telefone: string; email: string; endereco: string; complemento: string;
   cidade: string; estado: string; cep: string; pais: string;
   talentos_hobbies: string;
   batizado: boolean; data_batismo: string; membro_desde: string;
+  igreja_anterior: boolean; igreja_anterior_nome: string;
+  ministerio_anterior: boolean; ministerio_anterior_qual: string;
+  deseja_servir: boolean; deseja_servir_area: string;
   ministerio: string; funcao: string;
   status: 'membro' | 'visitante' | 'lider';
   observacoes: string;
@@ -37,9 +40,13 @@ type ProfileLite = { id: string; full_name: string | null };
 const EMPTY: Omit<Membro, 'id'> = {
   nome: '', sobrenome: '', data_nascimento: '', sexo: '', nacionalidade: 'Brasileira',
   estado_civil: '', profissao: '', telefone: '', email: '',
-  endereco: '', cidade: '', estado: '', cep: '', pais: 'Reino Unido',
+  endereco: '', complemento: '', cidade: '', estado: '', cep: '', pais: 'Reino Unido',
   talentos_hobbies: '',
-  batizado: false, data_batismo: '', membro_desde: '', ministerio: '',
+  batizado: false, data_batismo: '', membro_desde: '',
+  igreja_anterior: false, igreja_anterior_nome: '',
+  ministerio_anterior: false, ministerio_anterior_qual: '',
+  deseja_servir: false, deseja_servir_area: '',
+  ministerio: '',
   funcao: '', status: 'membro', observacoes: '',
   conjuge_id: null, pai_id: null, mae_id: null, profile_id: null,
 };
@@ -82,6 +89,19 @@ function parseDateISO(br: string): string {
   if (!d || !m || !y || y.length !== 4) return '';
   return `${y}-${m}-${d}`;
 }
+// "Chegou na Peniel" só pergunta mês/ano (ninguém lembra o dia exato) — guarda
+// como dia 01 do mês pra continuar usando a mesma coluna `date` do banco.
+function formatMesAnoFromISO(iso: string): string {
+  if (!iso) return '';
+  const [y, m] = iso.split('-');
+  if (!y || !m) return '';
+  return `${m}/${y}`;
+}
+function parseMesAnoToISO(mmAAAA: string): string {
+  const [m, y] = mmAAAA.split('/');
+  if (!m || !y || y.length !== 4) return '';
+  return `${y}-${m}-01`;
+}
 
 // ─── Form Modal ───────────────────────────────────────────────────────────────
 function MembroFormModal({ visible, membro, membros, isAdmin, onClose, onSaved }: {
@@ -98,7 +118,7 @@ function MembroFormModal({ visible, membro, membros, isAdmin, onClose, onSaved }
         ...membro,
         data_nascimento: formatDateBR(membro.data_nascimento),
         data_batismo: formatDateBR(membro.data_batismo),
-        membro_desde: formatDateBR(membro.membro_desde),
+        membro_desde: formatMesAnoFromISO(membro.membro_desde),
       });
     } else {
       setForm({ ...EMPTY });
@@ -126,6 +146,13 @@ function MembroFormModal({ visible, membro, membros, isAdmin, onClose, onSaved }
     set('telefone')(f);
   };
 
+  const formatMesAno = (text: string) => {
+    const digits = text.replace(/\D/g, '').slice(0, 6);
+    let f = digits;
+    if (digits.length > 2) f = digits.slice(0, 2) + '/' + digits.slice(2);
+    set('membro_desde')(f);
+  };
+
   const handleSave = async () => {
     if (!form.nome.trim()) { Alert.alert('Atenção', 'Nome é obrigatório.'); return; }
     if (!form.telefone.trim()) { Alert.alert('Atenção', 'Telefone é obrigatório.'); return; }
@@ -135,7 +162,7 @@ function MembroFormModal({ visible, membro, membros, isAdmin, onClose, onSaved }
       ...form,
       data_nascimento: parseDateISO(form.data_nascimento) || null,
       data_batismo: parseDateISO(form.data_batismo) || null,
-      membro_desde: parseDateISO(form.membro_desde) || null,
+      membro_desde: parseMesAnoToISO(form.membro_desde) || null,
     };
 
     let error;
@@ -462,7 +489,8 @@ function MembroFormModal({ visible, membro, membros, isAdmin, onClose, onSaved }
               )}
               {section === 2 && (
                 <View style={fm.sectionContent}>
-                  <Field label="Endereço" value={form.endereco} onChangeText={set('endereco')} placeholder="Rua, número, complemento" />
+                  <Field label="Endereço (rua e número)" value={form.endereco} onChangeText={set('endereco')} placeholder="Ex: 45 Abbey Square" />
+                  <Field label="Complemento" value={form.complemento} onChangeText={set('complemento')} placeholder="Ex: Apto 3B, próximo ao mercado" />
                   <View style={{ flexDirection: 'row', gap: 12 }}>
                     <View style={{ flex: 2 }}><Field label="Cidade" value={form.cidade} onChangeText={set('cidade')} placeholder="Cidade" /></View>
                     <View style={{ flex: 1 }}><Field label="Estado" value={form.estado} onChangeText={v => set('estado')(v.toUpperCase().slice(0, 2))} placeholder="SP" maxLength={2} /></View>
@@ -500,9 +528,56 @@ function MembroFormModal({ visible, membro, membros, isAdmin, onClose, onSaved }
                   {form.batizado && (
                     <Field label="Data do Batismo" value={form.data_batismo} onChangeText={t => formatDate(t, 'data_batismo')} placeholder="DD/MM/AAAA" keyboardType="numeric" maxLength={10} />
                   )}
-                  <Field label="Membro desde" value={form.membro_desde} onChangeText={t => formatDate(t, 'membro_desde')} placeholder="DD/MM/AAAA" keyboardType="numeric" maxLength={10} />
-                  <SelectPill label="Ministério" options={MINISTERIOS} value={form.ministerio} onChange={set('ministerio')} />
+                  <Field label="Chegou na Peniel em (mês/ano)" value={form.membro_desde} onChangeText={formatMesAno} placeholder="MM/AAAA" keyboardType="numeric" maxLength={7} />
+
+                  <View style={fm.toggleRow}>
+                    <View style={{ flex: 1 }}>
+                      <Text style={fm.fieldLabel}>Pertenceu a outra igreja antes?</Text>
+                      <Text style={[fm.toggleStatus, { color: form.igreja_anterior ? C.success : C.textMuted }]}>
+                        {form.igreja_anterior ? 'Sim' : 'Não'}
+                      </Text>
+                    </View>
+                    <TouchableOpacity style={[fm.toggleBtn, form.igreja_anterior && fm.toggleBtnActive]} onPress={() => set('igreja_anterior')(!form.igreja_anterior)}>
+                      <Ionicons name={form.igreja_anterior ? 'business' : 'business-outline'} size={20} color={form.igreja_anterior ? '#fff' : C.textMuted} />
+                    </TouchableOpacity>
+                  </View>
+                  {form.igreja_anterior && (
+                    <Field label="Qual igreja?" value={form.igreja_anterior_nome} onChangeText={set('igreja_anterior_nome')} placeholder="Nome da igreja" />
+                  )}
+
+                  <View style={fm.toggleRow}>
+                    <View style={{ flex: 1 }}>
+                      <Text style={fm.fieldLabel}>Participou ou participa de algum ministério?</Text>
+                      <Text style={[fm.toggleStatus, { color: form.ministerio_anterior ? C.success : C.textMuted }]}>
+                        {form.ministerio_anterior ? 'Sim' : 'Não'}
+                      </Text>
+                    </View>
+                    <TouchableOpacity style={[fm.toggleBtn, form.ministerio_anterior && fm.toggleBtnActive]} onPress={() => set('ministerio_anterior')(!form.ministerio_anterior)}>
+                      <Ionicons name={form.ministerio_anterior ? 'people' : 'people-outline'} size={20} color={form.ministerio_anterior ? '#fff' : C.textMuted} />
+                    </TouchableOpacity>
+                  </View>
+                  {form.ministerio_anterior && (
+                    <Field label="Qual ministério?" value={form.ministerio_anterior_qual} onChangeText={set('ministerio_anterior_qual')} placeholder="Ex: Louvor, infantil, intercessão..." />
+                  )}
+
+                  <SelectPill label="Ministério em Peniel (atual)" options={MINISTERIOS} value={form.ministerio} onChange={set('ministerio')} />
                   <SelectPill label="Função" options={FUNCOES} value={form.funcao} onChange={set('funcao')} />
+
+                  <View style={fm.toggleRow}>
+                    <View style={{ flex: 1 }}>
+                      <Text style={fm.fieldLabel}>Deseja trabalhar em alguma área da igreja?</Text>
+                      <Text style={[fm.toggleStatus, { color: form.deseja_servir ? C.success : C.textMuted }]}>
+                        {form.deseja_servir ? 'Sim' : 'Não'}
+                      </Text>
+                    </View>
+                    <TouchableOpacity style={[fm.toggleBtn, form.deseja_servir && fm.toggleBtnActive]} onPress={() => set('deseja_servir')(!form.deseja_servir)}>
+                      <Ionicons name={form.deseja_servir ? 'hand-right' : 'hand-right-outline'} size={20} color={form.deseja_servir ? '#fff' : C.textMuted} />
+                    </TouchableOpacity>
+                  </View>
+                  {form.deseja_servir && (
+                    <Field label="Qual área?" value={form.deseja_servir_area} onChangeText={set('deseja_servir_area')} placeholder="Ex: Louvor, recepção, mídia..." />
+                  )}
+
                   <View style={fm.fieldWrap}>
                     <Text style={fm.fieldLabel}>Status</Text>
                     <View style={{ flexDirection: 'row', gap: 8, marginTop: 4 }}>
@@ -594,12 +669,19 @@ function MembroDetailModal({ membro, membros, onClose, onEdit, onDelete }: {
     return m ? `${m.nome} ${m.sobrenome}` : '';
   };
   const sexoLabel = SEXO_OPCOES.find(o => o.valor === membro.sexo)?.label ?? '';
+  // Label em cima e valor embaixo (em vez de lado a lado numa coluna de
+  // largura fixa) — com uma coluna estreita, rótulos mais longos como
+  // "Nacionalidade" ou "Já serviu em ministério" quebravam no meio da
+  // palavra ("Nacionalida" / "de"). Empilhado assim não tem largura fixa
+  // pra estourar, então nunca quebra de um jeito estranho.
   const Row = ({ icon, label, value }: { icon: string; label: string; value: string }) =>
     value ? (
       <View style={dd.row}>
-        <Ionicons name={icon as any} size={16} color={C.textMuted} style={{ width: 20 }} />
-        <Text style={dd.rowLabel}>{label}</Text>
-        <Text style={dd.rowValue}>{value}</Text>
+        <Ionicons name={icon as any} size={16} color={C.textMuted} style={dd.rowIcon} />
+        <View style={{ flex: 1 }}>
+          <Text style={dd.rowLabel}>{label}</Text>
+          <Text style={dd.rowValue}>{value}</Text>
+        </View>
       </View>
     ) : null;
 
@@ -662,7 +744,8 @@ function MembroDetailModal({ membro, membros, onClose, onEdit, onDelete }: {
             <Text style={dd.sectionTitle}>Endereço</Text>
             <View style={dd.card}>
               <Row icon="home-outline" label="Endereço" value={membro.endereco} />
-              <Row icon="location-outline" label="Cidade" value={`${membro.cidade}${membro.estado ? ' – ' + membro.estado : ''}`} />
+              {!!membro.complemento && <Row icon="business-outline" label="Complemento" value={membro.complemento} />}
+              <Row icon="location-outline" label="Cidade" value={`${membro.cidade || ''}${membro.estado ? ' – ' + membro.estado : ''}`.trim()} />
               <Row icon="map-outline" label="CEP" value={membro.cep} />
               <Row icon="earth-outline" label="País" value={membro.pais} />
             </View>
@@ -679,8 +762,11 @@ function MembroDetailModal({ membro, membros, onClose, onEdit, onDelete }: {
             <Text style={dd.sectionTitle}>Igreja</Text>
             <View style={dd.card}>
               <Row icon="water-outline" label="Batismo" value={membro.data_batismo ? `Sim · ${formatDateBR(membro.data_batismo)}` : 'Não'} />
-              <Row icon="calendar-outline" label="Membro desde" value={formatDateBR(membro.membro_desde)} />
-              <Row icon="people-outline" label="Ministério" value={membro.ministerio} />
+              <Row icon="calendar-outline" label="Chegou na Peniel" value={formatMesAnoFromISO(membro.membro_desde)} />
+              <Row icon="business-outline" label="Outra igreja antes" value={membro.igreja_anterior ? `Sim · ${membro.igreja_anterior_nome || '—'}` : 'Não'} />
+              <Row icon="people-outline" label="Já serviu em ministério" value={membro.ministerio_anterior ? `Sim · ${membro.ministerio_anterior_qual || '—'}` : 'Não'} />
+              <Row icon="hand-right-outline" label="Quer servir" value={membro.deseja_servir ? `Sim · ${membro.deseja_servir_area || '—'}` : 'Não'} />
+              <Row icon="people-circle-outline" label="Ministério em Peniel" value={membro.ministerio} />
               <Row icon="star-outline" label="Função" value={membro.funcao} />
               {!!membro.observacoes && <Row icon="document-text-outline" label="Obs." value={membro.observacoes} />}
             </View>
@@ -706,9 +792,10 @@ const dd = StyleSheet.create({
   badgeText: { fontSize: 12, fontWeight: '600' },
   sectionTitle: { fontSize: 11, fontWeight: '700', color: C.textMuted, textTransform: 'uppercase', letterSpacing: 0.8, marginBottom: 8, marginTop: 16 },
   card: { backgroundColor: C.surfaceAlt, borderRadius: 12, overflow: 'hidden', borderWidth: 1, borderColor: C.border },
-  row: { flexDirection: 'row', alignItems: 'center', paddingHorizontal: 14, paddingVertical: 12, borderBottomWidth: 1, borderBottomColor: C.border },
-  rowLabel: { fontSize: 13, color: C.textMuted, width: 90 },
-  rowValue: { flex: 1, fontSize: 13, color: C.text, fontWeight: '500' },
+  row: { flexDirection: 'row', alignItems: 'flex-start', gap: 10, paddingHorizontal: 14, paddingVertical: 12, borderBottomWidth: 1, borderBottomColor: C.border },
+  rowIcon: { marginTop: 2 },
+  rowLabel: { fontSize: 11, color: C.textMuted, textTransform: 'uppercase', letterSpacing: 0.3, marginBottom: 3 },
+  rowValue: { fontSize: 14, color: C.text, fontWeight: '600', lineHeight: 19 },
 });
 
 // ─── Main Screen ──────────────────────────────────────────────────────────────
@@ -925,11 +1012,14 @@ const s = StyleSheet.create({
   searchRow: { paddingHorizontal: 16, paddingVertical: 10, backgroundColor: C.surface, borderBottomWidth: 1, borderBottomColor: C.border },
   searchBox: { flexDirection: 'row', alignItems: 'center', backgroundColor: C.surfaceAlt, borderRadius: 10, paddingHorizontal: 12, height: 40, gap: 8, borderWidth: 1, borderColor: C.border },
   searchInput: { flex: 1, fontSize: 14, color: C.text },
-  filterRowScroll: { backgroundColor: C.surface, borderBottomWidth: 1, borderBottomColor: C.border },
-  filterRow: { flexDirection: 'row', gap: 8, paddingHorizontal: 16, paddingVertical: 10 },
-  filterPill: { paddingHorizontal: 12, paddingVertical: 5, borderRadius: 16, backgroundColor: C.surfaceAlt, borderWidth: 1, borderColor: C.border },
+  // Altura fixa + alignItems 'center' de propósito: sem isso, esse ScrollView
+  // horizontal às vezes calculava a própria altura errado (menor que uma
+  // linha de texto), cortando o topo/base das pílulas pela metade.
+  filterRowScroll: { height: 52, backgroundColor: C.surface, borderBottomWidth: 1, borderBottomColor: C.border },
+  filterRow: { flexDirection: 'row', alignItems: 'center', gap: 8, paddingHorizontal: 16, paddingVertical: 10 },
+  filterPill: { paddingHorizontal: 12, paddingVertical: 7, borderRadius: 16, backgroundColor: C.surfaceAlt, borderWidth: 1, borderColor: C.border, justifyContent: 'center' },
   filterPillActive: { backgroundColor: C.primary + '15', borderColor: C.primary },
-  filterPillText: { fontSize: 12, color: C.textMuted, fontWeight: '500' },
+  filterPillText: { fontSize: 12, lineHeight: 16, color: C.textMuted, fontWeight: '500' },
   filterPillTextActive: { color: C.primary, fontWeight: '700' },
   list: { padding: 16, gap: 8, paddingBottom: 32 },
   empty: { alignItems: 'center', paddingTop: 60, gap: 12 },

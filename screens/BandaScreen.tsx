@@ -32,7 +32,15 @@ type CultoSongEntry = {
 
 type Culto = {
   id: string; label: string; date: string;
-  entries: CultoSongEntry[];
+  entries: CultoSongEntry[]; escala: EscalaEntry[];
+};
+
+type EscalaEntry = { id: string; membro_id: string; instrumento: string };
+type BandaMembro = { id: string; profile_id: string; nome: string };
+
+type Ensaio = {
+  id: string; label: string; date: string; time: string; local: string; observacao: string;
+  entries: CultoSongEntry[]; escala: EscalaEntry[];
 };
 
 type ChatMsg = { id: string; author: string; text: string; time: string; mine: boolean };
@@ -47,6 +55,16 @@ function cifraUrl(s: Song) { return `https://www.cifraclub.com.br/${slug(s.artis
 function letraUrl(s: Song) { return `https://www.letras.mus.br/${slug(s.artist)}/${slug(s.title)}/`; }
 function spotifyUrl(id: string) { return `https://open.spotify.com/track/${id}`; }
 function youtubeUrl(id: string) { return `https://www.youtube.com/watch?v=${id}`; }
+
+// Aceita colar o link completo do YouTube (várias variações) ou só o ID —
+// extrai o ID de vídeo pra guardar sempre o mesmo formato no banco.
+function extractYoutubeId(input: string): string {
+  const v = input.trim();
+  if (!v) return '';
+  const match = v.match(/(?:youtube\.com\/(?:watch\?v=|shorts\/|embed\/|live\/)|youtu\.be\/)([a-zA-Z0-9_-]{6,})/);
+  if (match) return match[1];
+  return v.replace(/[?&].*$/, ''); // já parece ser só o ID; limpa querystring residual
+}
 
 // ─── Date helpers ─────────────────────────────────────────────────────────────
 // Nomes de mês/dia da semana por idioma do app, para exibir a data do culto
@@ -73,17 +91,19 @@ function formatDateLabel(iso: string, lang: string = 'pt'): string {
     ? `${dias[dt.getDay()]}, ${d} ${meses[m - 1]}`
     : `${dias[dt.getDay()]}, ${d} de ${meses[m - 1]}`;
 }
+// Dia numérico + mês abreviado (3 letras) a partir de uma data ISO — usado
+// no "selo" de data dos cards de ensaio.
+function diaEMes(iso: string, lang: string = 'pt'): { dia: string; mes: string } {
+  const meses = MONTHS_BY_LANG[lang] ?? MONTHS_BY_LANG.pt;
+  const [, m, d] = iso.split('-').map(Number);
+  return { dia: String(d).padStart(2, '0'), mes: meses[m - 1].slice(0, 3) };
+}
 function todayISO(): string {
   const d = new Date();
   return `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`;
 }
 
-// ─── Static mock data (ensaios — será Supabase futuramente) ──────────────────
-const ENSAIOS = [
-  { id: '1', day: 'Sáb', dayNum: '18', month: 'Mai', time: '19:00', local: 'Templo Principal', observacao: 'Trazer cifras impressas' },
-  { id: '2', day: 'Sáb', dayNum: '25', month: 'Mai', time: '19:00', local: 'Templo Principal', observacao: '' },
-  { id: '3', day: 'Sáb', dayNum: '01', month: 'Jun', time: '18:30', local: 'Sala de Música', observacao: 'Ensaio especial — Culto de Pentecostes' },
-];
+// ─── Static mock data (chat — será Supabase futuramente) ─────────────────────
 const CHAT_INIT: ChatMsg[] = [
   { id: '1', author: 'Lucas (Guitarra)', text: 'Pessoal, alguém pode mandar a cifra de Oceanos em Lá?', time: '14:32', mine: false },
   { id: '2', author: 'Ana (Teclado)', text: 'Mandei no grupo do WhatsApp também 🎹', time: '14:35', mine: false },
@@ -181,7 +201,7 @@ function NovaMusicaModal({ visible, onClose, onSaved }: {
     const { error } = await supabase.from('songs').insert({
       title: form.title.trim(), artist: form.artist.trim(),
       song_key: form.song_key.trim().toUpperCase(), bpm: Number(form.bpm),
-      spotify_id: form.spotify_id.trim(), youtube_id: form.youtube_id.trim(),
+      spotify_id: form.spotify_id.trim(), youtube_id: extractYoutubeId(form.youtube_id),
       in_repertoire: true,
     });
     setSaving(false);
@@ -235,7 +255,7 @@ function NovaMusicaModal({ visible, onClose, onSaved }: {
               {/* YouTube */}
               <View style={nm.fieldWrap}>
                 <Text style={nm.fieldLabel}>{t('banda.idYoutubeOpcional')}</Text>
-                <TextInput style={nm.fieldInput} placeholder="Ex: dy9nwe9TTpk" placeholderTextColor={C.textDim} value={form.youtube_id} onChangeText={set('youtube_id')} autoCorrect={false} />
+                <TextInput style={nm.fieldInput} placeholder={t('banda.coleLinkYoutube')} placeholderTextColor={C.textDim} value={form.youtube_id} onChangeText={set('youtube_id')} autoCorrect={false} autoCapitalize="none" keyboardType="url" />
               </View>
               {/* Spotify */}
               <View style={nm.fieldWrap}>
@@ -419,21 +439,310 @@ const md = StyleSheet.create({
   saveBtnText: { fontSize: 16, fontWeight: '700', color: '#fff' },
 });
 
+// ─── Botões de link (Cifra Club automático + YouTube + Spotify) ──────────────
+// Usado em Hoje, Cultos e Ensaios — sempre que uma música aparece num
+// setlist, dá pra abrir a cifra (link gerado automaticamente a partir do
+// título/artista), o vídeo do YouTube (se cadastrado) e o Spotify (se tiver).
+function LinkMiniButtons({ song, openLink }: { song: Song; openLink: (url: string, label: string) => void }) {
+  return (
+    <View style={{ flexDirection: 'row', gap: 6 }}>
+      <TouchableOpacity style={s.linkBtn} onPress={() => openLink(cifraUrl(song), 'Cifra Club')}>
+        <Text style={s.linkBtnLabel}>CI</Text>
+      </TouchableOpacity>
+      <TouchableOpacity style={[s.linkBtn, song.youtube_id ? s.linkBtnYt : s.linkBtnDisabled]} onPress={() => openLink(youtubeUrl(song.youtube_id), 'YouTube')}>
+        <Ionicons name="logo-youtube" size={15} color={song.youtube_id ? '#FF0000' : C.textDim} />
+      </TouchableOpacity>
+      {!!song.spotify_id && (
+        <TouchableOpacity style={[s.linkBtn, s.spotifyBtn]} onPress={() => openLink(spotifyUrl(song.spotify_id), 'Spotify')}>
+          <Ionicons name="musical-note" size={15} color={C.accent} />
+        </TouchableOpacity>
+      )}
+    </View>
+  );
+}
+
+// ─── Novo Ensaio Modal ────────────────────────────────────────────────────────
+// Igual ao NovoCultoModal (data + músicas do repertório com tom/BPM
+// ajustáveis), só que também pede horário, local e uma observação opcional —
+// os mesmos dados que a aba Ensaios sempre mostrou, agora vindos do banco.
+function NovoEnsaioModal({ visible, onClose, onSaved, songs }: {
+  visible: boolean; onClose: () => void; onSaved: () => void; songs: Song[];
+}) {
+  const { t, i18n } = useTranslation();
+  const [date, setDate] = useState('');
+  const [time, setTime] = useState('');
+  const [local, setLocal] = useState('');
+  const [observacao, setObservacao] = useState('');
+  const [entries, setEntries] = useState<CultoSongEntry[]>([]);
+  const [dateError, setDateError] = useState('');
+  const [saving, setSaving] = useState(false);
+
+  const isSongSelected = (id: string) => entries.some(e => e.song_id === id);
+  const toggleSong = (song: Song) => {
+    if (isSongSelected(song.id)) {
+      setEntries(prev => prev.filter(e => e.song_id !== song.id));
+    } else {
+      setEntries(prev => [...prev, { song_id: song.id, song_key: song.song_key, bpm: String(song.bpm), order_index: prev.length }]);
+    }
+  };
+  const updateEntry = (songId: string, field: 'song_key' | 'bpm', value: string) => {
+    setEntries(prev => prev.map(e => e.song_id === songId ? { ...e, [field]: field === 'song_key' ? value.toUpperCase() : value } : e));
+  };
+  const formatDateInput = (text: string) => {
+    const digits = text.replace(/\D/g, '').slice(0, 8);
+    let f = digits;
+    if (digits.length > 2) f = digits.slice(0, 2) + '/' + digits.slice(2);
+    if (digits.length > 4) f = digits.slice(0, 2) + '/' + digits.slice(2, 4) + '/' + digits.slice(4);
+    setDate(f); setDateError('');
+  };
+
+  const handleSave = async () => {
+    const parts = date.split('/');
+    if (parts.length !== 3 || parts[0].length !== 2 || parts[1].length !== 2 || parts[2].length !== 4) {
+      setDateError(t('banda.usarFormatoData')); return;
+    }
+    if (!time.trim() || !local.trim()) { Alert.alert(t('common.atencao'), t('banda.preencherHorarioLocal')); return; }
+    if (entries.length === 0) { Alert.alert(t('common.atencao'), t('banda.selecioneUmaMusica')); return; }
+    const [d, m, y] = parts;
+    const iso = `${y}-${m}-${d}`;
+    const label = formatDateLabel(iso, i18n.language);
+    setSaving(true);
+
+    const { data: ensaioData, error: ensaioError } = await supabase
+      .from('ensaios').insert({ label, date: iso, time: time.trim(), local: local.trim(), observacao: observacao.trim() }).select().single();
+    if (ensaioError || !ensaioData) { Alert.alert(t('common.erro'), ensaioError?.message ?? t('banda.erroSalvarEnsaio')); setSaving(false); return; }
+
+    const ensaioSongs = entries.map(e => ({
+      ensaio_id: ensaioData.id, song_id: e.song_id,
+      song_key: e.song_key, bpm: Number(e.bpm), order_index: e.order_index,
+    }));
+    const { error: songsError } = await supabase.from('ensaio_songs').insert(ensaioSongs);
+    setSaving(false);
+    if (songsError) { Alert.alert(t('banda.erroSalvarMusicas'), songsError.message); return; }
+
+    setDate(''); setTime(''); setLocal(''); setObservacao(''); setEntries([]); setDateError('');
+    onSaved(); onClose();
+  };
+
+  return (
+    <Modal visible={visible} animationType="slide" transparent>
+      <View style={md.overlay}>
+        <KeyboardAvoidingView behavior={Platform.OS === 'ios' ? 'padding' : undefined} style={{ width: '100%' }}>
+          <View style={md.sheet}>
+            <View style={md.header}>
+              <Text style={md.title}>{t('banda.novoEnsaio')}</Text>
+              <TouchableOpacity onPress={onClose}><Ionicons name="close" size={22} color={C.textMuted} /></TouchableOpacity>
+            </View>
+            <ScrollView showsVerticalScrollIndicator={false}>
+              <Text style={md.label}>{t('banda.dataDoEnsaio')}</Text>
+              <TextInput style={[md.input, !!dateError && md.inputError]} placeholder="DD/MM/AAAA" placeholderTextColor={C.textDim} value={date} onChangeText={formatDateInput} keyboardType="numeric" maxLength={10} />
+              {!!dateError && <Text style={md.errorText}>{dateError}</Text>}
+
+              <View style={{ flexDirection: 'row', gap: 12, marginTop: 14 }}>
+                <View style={{ flex: 1 }}>
+                  <Text style={md.label}>{t('banda.horarioDoEnsaio')}</Text>
+                  <TextInput style={md.input} placeholder="Ex: 19:00" placeholderTextColor={C.textDim} value={time} onChangeText={setTime} />
+                </View>
+                <View style={{ flex: 1 }}>
+                  <Text style={md.label}>{t('banda.localDoEnsaio')}</Text>
+                  <TextInput style={md.input} placeholder={t('banda.localPlaceholder')} placeholderTextColor={C.textDim} value={local} onChangeText={setLocal} />
+                </View>
+              </View>
+
+              <Text style={[md.label, { marginTop: 14 }]}>{t('banda.observacaoOpcional')}</Text>
+              <TextInput style={md.input} placeholder={t('banda.observacaoPlaceholder')} placeholderTextColor={C.textDim} value={observacao} onChangeText={setObservacao} />
+
+              <Text style={[md.label, { marginTop: 16 }]}>{t('banda.musicasSelecionadas', { n: entries.length })}</Text>
+              <View style={md.songList}>
+                {songs.map(song => {
+                  const selected = isSongSelected(song.id);
+                  const entry = entries.find(e => e.song_id === song.id);
+                  return (
+                    <View key={song.id}>
+                      <TouchableOpacity style={[md.songRow, selected && md.songRowSelected]} onPress={() => toggleSong(song)} activeOpacity={0.7}>
+                        <View style={[md.keyPill, { backgroundColor: selected ? C.primaryDim : C.surfaceHigh }]}>
+                          <Text style={[md.keyPillText, { color: selected ? C.primary : C.textMuted }]}>{song.song_key}</Text>
+                        </View>
+                        <View style={{ flex: 1 }}>
+                          <Text style={[md.songTitle, selected && { color: C.text }]}>{song.title}</Text>
+                          <Text style={md.songArtist}>{song.artist} · {song.bpm} BPM</Text>
+                        </View>
+                        <View style={[md.checkbox, selected && md.checkboxSelected]}>
+                          {selected && <Ionicons name="checkmark" size={14} color="#fff" />}
+                        </View>
+                      </TouchableOpacity>
+                      {selected && entry && (
+                        <View style={md.overrideRow}>
+                          <View style={md.overrideField}>
+                            <Text style={md.overrideLabel}>{t('banda.tomLabel')}</Text>
+                            <TextInput style={md.overrideInput} value={entry.song_key} onChangeText={v => updateEntry(song.id, 'song_key', v)} autoCapitalize="characters" maxLength={3} placeholderTextColor={C.textDim} />
+                          </View>
+                          <View style={md.overrideField}>
+                            <Text style={md.overrideLabel}>{t('banda.bpm')}</Text>
+                            <TextInput style={md.overrideInput} value={entry.bpm} onChangeText={v => updateEntry(song.id, 'bpm', v)} keyboardType="numeric" maxLength={3} placeholderTextColor={C.textDim} />
+                          </View>
+                          <Text style={md.overrideHint}>{t('banda.ajusteParaEsteCulto')}</Text>
+                        </View>
+                      )}
+                    </View>
+                  );
+                })}
+              </View>
+            </ScrollView>
+            <TouchableOpacity style={[md.saveBtn, saving && { opacity: 0.7 }]} onPress={handleSave} disabled={saving} activeOpacity={0.85}>
+              {saving ? <ActivityIndicator color="#fff" /> : <><Ionicons name="save-outline" size={18} color="#fff" /><Text style={md.saveBtnText}>{t('banda.salvarEnsaio')}</Text></>}
+            </TouchableOpacity>
+          </View>
+        </KeyboardAvoidingView>
+      </View>
+    </Modal>
+  );
+}
+
+// ─── Adicionar à Escala Modal ─────────────────────────────────────────────────
+// Usado tanto em Cultos quanto em Ensaios (props `tipo`/`eventoId` decidem a
+// tabela certa) — escolhe uma pessoa do diretório da banda e o instrumento
+// que ela vai tocar naquele culto/ensaio específico.
+const INSTRUMENTOS = ['vocal', 'violao', 'guitarra', 'baixo', 'bateria', 'teclado', 'ministro', 'outro'] as const;
+
+function EscalaModal({ visible, onClose, onSaved, membros, tipo, eventoId }: {
+  visible: boolean; onClose: () => void; onSaved: () => void;
+  membros: BandaMembro[]; tipo: 'culto' | 'ensaio'; eventoId: string;
+}) {
+  const { t } = useTranslation();
+  const [membroId, setMembroId] = useState('');
+  const [instrumento, setInstrumento] = useState<typeof INSTRUMENTOS[number] | ''>('');
+  const [outroTexto, setOutroTexto] = useState('');
+  const [saving, setSaving] = useState(false);
+
+  useEffect(() => {
+    if (!visible) { setMembroId(''); setInstrumento(''); setOutroTexto(''); }
+  }, [visible]);
+
+  const labelDoInstrumento: Record<typeof INSTRUMENTOS[number], string> = {
+    vocal: t('banda.instVocal'), violao: t('banda.instViolao'), guitarra: t('banda.instGuitarra'),
+    baixo: t('banda.instBaixo'), bateria: t('banda.instBateria'), teclado: t('banda.instTeclado'),
+    ministro: t('banda.instMinistro'), outro: t('banda.instOutro'),
+  };
+
+  const handleSave = async () => {
+    const instrumentoFinal = instrumento === 'outro' ? outroTexto.trim() : (instrumento ? labelDoInstrumento[instrumento] : '');
+    if (!membroId || !instrumentoFinal) { Alert.alert(t('common.atencao'), t('banda.selecioneMembro')); return; }
+    setSaving(true);
+    const table = tipo === 'culto' ? 'culto_escala' : 'ensaio_escala';
+    const idField = tipo === 'culto' ? 'culto_id' : 'ensaio_id';
+    const { error } = await supabase.from(table).insert({ [idField]: eventoId, membro_id: membroId, instrumento: instrumentoFinal });
+    setSaving(false);
+    if (error) { Alert.alert(t('common.erro'), error.message); return; }
+    onSaved(); onClose();
+  };
+
+  return (
+    <Modal visible={visible} animationType="slide" transparent>
+      <View style={md.overlay}>
+        <KeyboardAvoidingView behavior={Platform.OS === 'ios' ? 'padding' : undefined} style={{ width: '100%' }}>
+          <View style={md.sheet}>
+            <View style={md.header}>
+              <Text style={md.title}>{t('banda.adicionarNaEscala')}</Text>
+              <TouchableOpacity onPress={onClose}><Ionicons name="close" size={22} color={C.textMuted} /></TouchableOpacity>
+            </View>
+            <ScrollView showsVerticalScrollIndicator={false}>
+              <Text style={md.label}>{t('banda.pessoa')}</Text>
+              {membros.length === 0 ? (
+                <Text style={[s.emptyDesc, { textAlign: 'left', paddingTop: 0, marginBottom: 14 }]}>{t('banda.semMembrosNaBanda')}</Text>
+              ) : (
+                <View style={{ gap: 6, marginBottom: 16 }}>
+                  {membros.map(m => {
+                    const selected = membroId === m.id;
+                    return (
+                      <TouchableOpacity key={m.id} style={[md.songRow, selected && md.songRowSelected]} onPress={() => setMembroId(m.id)} activeOpacity={0.7}>
+                        <View style={[md.keyPill, { backgroundColor: selected ? C.primaryDim : C.surfaceHigh }]}>
+                          <Ionicons name="person" size={14} color={selected ? C.primary : C.textMuted} />
+                        </View>
+                        <Text style={[md.songTitle, selected && { color: C.text }]}>{m.nome}</Text>
+                        <View style={[md.checkbox, selected && md.checkboxSelected]}>
+                          {selected && <Ionicons name="checkmark" size={14} color="#fff" />}
+                        </View>
+                      </TouchableOpacity>
+                    );
+                  })}
+                </View>
+              )}
+
+              <Text style={md.label}>{t('banda.escolherInstrumento')}</Text>
+              <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 8, marginBottom: 8 }}>
+                {INSTRUMENTOS.map(inst => (
+                  <TouchableOpacity key={inst} style={[s.pill, instrumento === inst && s.pillActive]} onPress={() => setInstrumento(inst)}>
+                    <Text style={[s.pillText, instrumento === inst && s.pillTextActive]}>{labelDoInstrumento[inst]}</Text>
+                  </TouchableOpacity>
+                ))}
+              </View>
+              {instrumento === 'outro' && (
+                <TextInput style={md.input} placeholder={t('banda.instrumentoPlaceholder')} placeholderTextColor={C.textDim} value={outroTexto} onChangeText={setOutroTexto} />
+              )}
+              <View style={{ height: 8 }} />
+            </ScrollView>
+            <TouchableOpacity style={[md.saveBtn, saving && { opacity: 0.7 }]} onPress={handleSave} disabled={saving} activeOpacity={0.85}>
+              {saving ? <ActivityIndicator color="#fff" /> : <><Ionicons name="person-add-outline" size={18} color="#fff" /><Text style={md.saveBtnText}>{t('banda.salvarEscala')}</Text></>}
+            </TouchableOpacity>
+          </View>
+        </KeyboardAvoidingView>
+      </View>
+    </Modal>
+  );
+}
+
+// ─── Escala (lista de pessoas + instrumento) ─────────────────────────────────
+// Reaproveitado em Hoje (só leitura), Cultos e Ensaios (com botão de remover).
+function EscalaLista({ escala, membros, onRemover }: {
+  escala: EscalaEntry[]; membros: BandaMembro[]; onRemover?: (id: string) => void;
+}) {
+  const { t } = useTranslation();
+  if (escala.length === 0) {
+    return <Text style={s.escalaVazia}>{t('banda.escalaVazia')}</Text>;
+  }
+  return (
+    <>
+      {escala.map(e => {
+        const membro = membros.find(m => m.id === e.membro_id);
+        return (
+          <View key={e.id} style={s.escalaRow}>
+            <Ionicons name="person-circle-outline" size={18} color={C.textMuted} />
+            <Text style={s.escalaNome} numberOfLines={1}>{membro?.nome ?? '—'}</Text>
+            <View style={s.escalaInstChip}><Text style={s.escalaInstText}>{e.instrumento}</Text></View>
+            {!!onRemover && (
+              <TouchableOpacity onPress={() => onRemover(e.id)} hitSlop={6}>
+                <Ionicons name="close-circle-outline" size={17} color={C.danger} />
+              </TouchableOpacity>
+            )}
+          </View>
+        );
+      })}
+    </>
+  );
+}
+
 // ─── Main Screen ──────────────────────────────────────────────────────────────
 function BandaMain() {
   const { t } = useTranslation();
   const [activeTab, setActiveTab] = useState<Tab>('hoje');
   const [songs, setSongs] = useState<Song[]>([]);
   const [cultos, setCultos] = useState<Culto[]>([]);
+  const [ensaios, setEnsaios] = useState<Ensaio[]>([]);
+  const [membros, setMembros] = useState<BandaMembro[]>([]);
   const [loadingSongs, setLoadingSongs] = useState(true);
   const [loadingCultos, setLoadingCultos] = useState(true);
+  const [loadingEnsaios, setLoadingEnsaios] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   const [expandedCulto, setExpandedCulto] = useState<string | null>(null);
+  const [expandedEnsaio, setExpandedEnsaio] = useState<string | null>(null);
   const [filter, setFilter] = useState<'all' | 'repertoire'>('all');
   const [chatMsg, setChatMsg] = useState('');
   const [messages, setMessages] = useState<ChatMsg[]>(CHAT_INIT);
   const [cultosModal, setCultosModal] = useState(false);
+  const [ensaioModal, setEnsaioModal] = useState(false);
   const [musicaModal, setMusicaModal] = useState(false);
+  const [escalaModal, setEscalaModal] = useState<{ tipo: 'culto' | 'ensaio'; eventoId: string } | null>(null);
   const scrollRef = useRef<ScrollView>(null);
   const today = todayISO();
 
@@ -444,7 +753,13 @@ function BandaMain() {
     setLoadingSongs(false);
   }, []);
 
-  // ── Fetch cultos with entries ────────────────────────────────────────────────
+  // ── Fetch diretório da banda (pra montar a escala) ───────────────────────────
+  const fetchMembros = useCallback(async () => {
+    const { data } = await supabase.from('banda_membros').select('*').order('nome');
+    if (data) setMembros(data as BandaMembro[]);
+  }, []);
+
+  // ── Fetch cultos com músicas e escala ────────────────────────────────────────
   const fetchCultos = useCallback(async () => {
     const { data: cultosData } = await supabase
       .from('cultos').select('*').order('date', { ascending: false });
@@ -452,14 +767,18 @@ function BandaMain() {
 
     const cultosWithEntries: Culto[] = await Promise.all(
       cultosData.map(async (culto: any) => {
-        const { data: entriesData } = await supabase
-          .from('culto_songs').select('*')
-          .eq('culto_id', culto.id).order('order_index');
+        const [{ data: entriesData }, { data: escalaData }] = await Promise.all([
+          supabase.from('culto_songs').select('*').eq('culto_id', culto.id).order('order_index'),
+          supabase.from('culto_escala').select('*').eq('culto_id', culto.id),
+        ]);
         return {
           id: culto.id, label: culto.label, date: culto.date,
           entries: (entriesData ?? []).map((e: any) => ({
             song_id: e.song_id, song_key: e.song_key,
             bpm: String(e.bpm), order_index: e.order_index,
+          })),
+          escala: (escalaData ?? []).map((e: any) => ({
+            id: e.id, membro_id: e.membro_id, instrumento: e.instrumento,
           })),
         };
       })
@@ -470,9 +789,49 @@ function BandaMain() {
     setRefreshing(false);
   }, []);
 
-  useEffect(() => { fetchSongs(); fetchCultos(); }, [fetchSongs, fetchCultos]);
+  // ── Fetch ensaios com músicas e escala ───────────────────────────────────────
+  const fetchEnsaios = useCallback(async () => {
+    const { data: ensaiosData } = await supabase
+      .from('ensaios').select('*').order('date', { ascending: true });
+    if (!ensaiosData) { setLoadingEnsaios(false); return; }
 
-  const handleRefresh = () => { setRefreshing(true); fetchSongs(); fetchCultos(); };
+    const ensaiosWithEntries: Ensaio[] = await Promise.all(
+      ensaiosData.map(async (ensaio: any) => {
+        const [{ data: entriesData }, { data: escalaData }] = await Promise.all([
+          supabase.from('ensaio_songs').select('*').eq('ensaio_id', ensaio.id).order('order_index'),
+          supabase.from('ensaio_escala').select('*').eq('ensaio_id', ensaio.id),
+        ]);
+        return {
+          id: ensaio.id, label: ensaio.label, date: ensaio.date,
+          time: ensaio.time ?? '', local: ensaio.local ?? '', observacao: ensaio.observacao ?? '',
+          entries: (entriesData ?? []).map((e: any) => ({
+            song_id: e.song_id, song_key: e.song_key,
+            bpm: String(e.bpm), order_index: e.order_index,
+          })),
+          escala: (escalaData ?? []).map((e: any) => ({
+            id: e.id, membro_id: e.membro_id, instrumento: e.instrumento,
+          })),
+        };
+      })
+    );
+    setEnsaios(ensaiosWithEntries);
+    if (ensaiosWithEntries.length > 0) setExpandedEnsaio(ensaiosWithEntries[0].id);
+    setLoadingEnsaios(false);
+  }, []);
+
+  useEffect(() => { fetchSongs(); fetchCultos(); fetchEnsaios(); fetchMembros(); }, [fetchSongs, fetchCultos, fetchEnsaios, fetchMembros]);
+
+  const handleRefresh = () => { setRefreshing(true); fetchSongs(); fetchCultos(); fetchEnsaios(); fetchMembros(); };
+
+  const removerDaEscala = (tipo: 'culto' | 'ensaio', id: string) => {
+    Alert.alert(t('banda.removerDaEscala'), t('banda.desejaRemoverDaEscala'), [
+      { text: t('common.cancelar'), style: 'cancel' },
+      { text: t('common.remover'), style: 'destructive', onPress: async () => {
+        await supabase.from(tipo === 'culto' ? 'culto_escala' : 'ensaio_escala').delete().eq('id', id);
+        tipo === 'culto' ? fetchCultos() : fetchEnsaios();
+      }},
+    ]);
+  };
 
   const deleteCulto = (id: string) => {
     Alert.alert(t('banda.removerCulto'), t('banda.desejaRemoverCulto'), [
@@ -480,6 +839,16 @@ function BandaMain() {
       { text: t('common.remover'), style: 'destructive', onPress: async () => {
         await supabase.from('cultos').delete().eq('id', id);
         fetchCultos();
+      }},
+    ]);
+  };
+
+  const deleteEnsaio = (id: string) => {
+    Alert.alert(t('banda.removerEnsaio'), t('banda.desejaRemoverEnsaio'), [
+      { text: t('common.cancelar'), style: 'cancel' },
+      { text: t('common.remover'), style: 'destructive', onPress: async () => {
+        await supabase.from('ensaios').delete().eq('id', id);
+        fetchEnsaios();
       }},
     ]);
   };
@@ -574,17 +943,17 @@ function BandaMain() {
                       <Text style={s.hojeBpmLabel}>{t('banda.bpm')}</Text>
                       <Text style={s.hojeBpmValue}>{entry.bpm}</Text>
                     </View>
-                    {!!song.spotify_id && (
-                      <TouchableOpacity onPress={() => openLink(spotifyUrl(song.spotify_id), 'Spotify')} style={s.hojeSpotify}>
-                        <Ionicons name="musical-note" size={14} color={C.accent} />
-                      </TouchableOpacity>
-                    )}
+                    <LinkMiniButtons song={song} openLink={openLink} />
                   </View>
                 );
               })}
               <View style={s.hojeTip}>
                 <Ionicons name="information-circle-outline" size={14} color={C.textDim} />
                 <Text style={s.hojeTipText}>{t('banda.dicaTomBpm')}</Text>
+              </View>
+              <Text style={[s.sectionLabel, { marginTop: 20 }]}>{t('banda.escalaDeHoje')}</Text>
+              <View style={s.escalaCard}>
+                <EscalaLista escala={cultoDoDia.escala} membros={membros} />
               </View>
             </>
           ) : (
@@ -719,14 +1088,17 @@ function BandaMain() {
                                 <Text style={s.cultoSongArtist}>{song.artist}</Text>
                               </View>
                               <View style={s.cultoBpmChip}><Text style={s.cultoBpmText}>{entry.bpm}</Text></View>
-                              {!!song.spotify_id && (
-                                <TouchableOpacity onPress={() => openLink(spotifyUrl(song.spotify_id), 'Spotify')} style={s.spotifyMini}>
-                                  <Ionicons name="musical-note" size={14} color={C.accent} />
-                                </TouchableOpacity>
-                              )}
+                              <LinkMiniButtons song={song} openLink={openLink} />
                             </View>
                           );
                         })}
+                        <View style={s.escalaHeader}>
+                          <Text style={s.cultoColLabel}>{t('banda.escala').toUpperCase()}</Text>
+                          <TouchableOpacity onPress={() => setEscalaModal({ tipo: 'culto', eventoId: culto.id })} hitSlop={6}>
+                            <Ionicons name="person-add-outline" size={16} color={C.primary} />
+                          </TouchableOpacity>
+                        </View>
+                        <EscalaLista escala={culto.escala} membros={membros} onRemover={id => removerDaEscala('culto', id)} />
                       </View>
                     )}
                   </View>
@@ -740,33 +1112,105 @@ function BandaMain() {
 
       {/* ══ ENSAIOS ═══════════════════════════════════════════════════════════ */}
       {activeTab === 'ensaios' && (
-        <ScrollView contentContainerStyle={s.tabContent}>
-          <Text style={s.sectionLabel}>{t('banda.proximosEnsaios')}</Text>
-          {ENSAIOS.map(e => (
-            <View key={e.id} style={s.ensaioCard}>
-              <View style={s.ensaioDate}>
-                <Text style={s.ensaioDay}>{e.dayNum}</Text>
-                <Text style={s.ensaioMonth}>{e.month}</Text>
-              </View>
-              <View style={s.ensaioInfo}>
-                <Text style={s.ensaioTitle}>{e.day}, {e.time}</Text>
-                <View style={s.ensaioLocalRow}>
-                  <Ionicons name="location-outline" size={13} color={C.textMuted} />
-                  <Text style={s.ensaioLocal}>{e.local}</Text>
-                </View>
-                {!!e.observacao && (
-                  <View style={s.obsRow}>
-                    <Ionicons name="information-circle-outline" size={13} color={C.primary} />
-                    <Text style={s.obsText}>{e.observacao}</Text>
-                  </View>
-                )}
-              </View>
-              <TouchableOpacity style={s.confirmBtn}>
-                <Ionicons name="checkmark" size={16} color={C.accent} />
-              </TouchableOpacity>
+        <View style={{ flex: 1 }}>
+          <View style={s.cultosToolbar}>
+            <Text style={s.cultosCount}>{ensaios.length} {ensaios.length !== 1 ? t('banda.tabEnsaios').toLowerCase() : t('banda.ensaioSingular')}</Text>
+            <TouchableOpacity style={s.newCultoBtn} onPress={() => setEnsaioModal(true)} activeOpacity={0.85}>
+              <Ionicons name="add" size={18} color="#fff" />
+              <Text style={s.newCultoBtnText}>{t('banda.novoEnsaio')}</Text>
+            </TouchableOpacity>
+          </View>
+          {loadingEnsaios ? (
+            <View style={s.loadingWrap}><ActivityIndicator color={C.primary} /></View>
+          ) : ensaios.length === 0 ? (
+            <View style={s.emptyState}>
+              <Ionicons name="calendar-outline" size={48} color={C.textDim} />
+              <Text style={s.emptyTitle}>{t('banda.nenhumEnsaioAinda')}</Text>
+              <Text style={s.emptyDesc}>{t('banda.toqueNovoEnsaio')}</Text>
             </View>
-          ))}
-        </ScrollView>
+          ) : (
+            <ScrollView contentContainerStyle={{ padding: 16, paddingBottom: 32 }}
+              refreshControl={<RefreshControl refreshing={refreshing} onRefresh={handleRefresh} tintColor={C.primary} />}>
+              {ensaios.map(ensaio => {
+                const isOpen = expandedEnsaio === ensaio.id;
+                const { dia, mes } = diaEMes(ensaio.date);
+                return (
+                  <View key={ensaio.id} style={[s.cultoCard, isOpen && s.cultoCardOpen]}>
+                    <TouchableOpacity style={s.cultoHeader} onPress={() => setExpandedEnsaio(isOpen ? null : ensaio.id)} activeOpacity={0.8}>
+                      <View style={s.ensaioDate}>
+                        <Text style={s.ensaioDay}>{dia}</Text>
+                        <Text style={s.ensaioMonth}>{mes}</Text>
+                      </View>
+                      <View style={{ flex: 1, marginLeft: 12 }}>
+                        <Text style={s.cultoLabel}>{ensaio.label}{ensaio.date === today ? t('banda.hojeSufixo') : ''}</Text>
+                        {!!ensaio.time && (
+                          <View style={s.ensaioLocalRow}>
+                            <Ionicons name="time-outline" size={13} color={C.textMuted} />
+                            <Text style={s.ensaioLocal}>{ensaio.time}</Text>
+                          </View>
+                        )}
+                        {!!ensaio.local && (
+                          <View style={s.ensaioLocalRow}>
+                            <Ionicons name="location-outline" size={13} color={C.textMuted} />
+                            <Text style={s.ensaioLocal}>{ensaio.local}</Text>
+                          </View>
+                        )}
+                        {!!ensaio.observacao && (
+                          <View style={s.obsRow}>
+                            <Ionicons name="information-circle-outline" size={13} color={C.primary} />
+                            <Text style={s.obsText}>{ensaio.observacao}</Text>
+                          </View>
+                        )}
+                      </View>
+                      <View style={s.cultoHeaderRight}>
+                        <TouchableOpacity onPress={() => deleteEnsaio(ensaio.id)} style={s.deleteBtn}>
+                          <Ionicons name="trash-outline" size={15} color={C.danger} />
+                        </TouchableOpacity>
+                        <Ionicons name={isOpen ? 'chevron-up' : 'chevron-down'} size={18} color={C.textMuted} />
+                      </View>
+                    </TouchableOpacity>
+                    {isOpen && (
+                      <View style={s.cultoSongs}>
+                        <View style={s.cultoColHeader}>
+                          <Text style={[s.cultoColLabel, { flex: 1, marginLeft: 52 }]}>{t('banda.colunaMusica')}</Text>
+                          <Text style={[s.cultoColLabel, { width: 44, textAlign: 'center' }]}>{t('banda.tomLabel')}</Text>
+                          <Text style={[s.cultoColLabel, { width: 44, textAlign: 'center' }]}>{t('banda.bpm')}</Text>
+                          <View style={{ width: 28 }} />
+                        </View>
+                        {ensaio.entries.length === 0 ? (
+                          <Text style={s.emptyDesc}>{t('banda.selecioneUmaMusica')}</Text>
+                        ) : ensaio.entries.map((entry, idx) => {
+                          const song = songs.find(sg => sg.id === entry.song_id);
+                          if (!song) return null;
+                          return (
+                            <View key={entry.song_id} style={[s.cultoSongRow, idx === ensaio.entries.length - 1 && { borderBottomWidth: 0 }]}>
+                              <Text style={s.cultoSongNum}>{idx + 1}</Text>
+                              <View style={s.cultoKeyBadge}><Text style={s.cultoKeyText}>{entry.song_key}</Text></View>
+                              <View style={{ flex: 1 }}>
+                                <Text style={s.cultoSongTitle}>{song.title}</Text>
+                                <Text style={s.cultoSongArtist}>{song.artist}</Text>
+                              </View>
+                              <View style={s.cultoBpmChip}><Text style={s.cultoBpmText}>{entry.bpm}</Text></View>
+                              <LinkMiniButtons song={song} openLink={openLink} />
+                            </View>
+                          );
+                        })}
+                        <View style={s.escalaHeader}>
+                          <Text style={s.cultoColLabel}>{t('banda.escala').toUpperCase()}</Text>
+                          <TouchableOpacity onPress={() => setEscalaModal({ tipo: 'ensaio', eventoId: ensaio.id })} hitSlop={6}>
+                            <Ionicons name="person-add-outline" size={16} color={C.primary} />
+                          </TouchableOpacity>
+                        </View>
+                        <EscalaLista escala={ensaio.escala} membros={membros} onRemover={id => removerDaEscala('ensaio', id)} />
+                      </View>
+                    )}
+                  </View>
+                );
+              })}
+            </ScrollView>
+          )}
+          <NovoEnsaioModal visible={ensaioModal} onClose={() => setEnsaioModal(false)} onSaved={fetchEnsaios} songs={songs} />
+        </View>
       )}
 
       {/* ══ CHAT ══════════════════════════════════════════════════════════════ */}
@@ -788,6 +1232,17 @@ function BandaMain() {
             </TouchableOpacity>
           </View>
         </KeyboardAvoidingView>
+      )}
+
+      {!!escalaModal && (
+        <EscalaModal
+          visible={!!escalaModal}
+          onClose={() => setEscalaModal(null)}
+          onSaved={() => (escalaModal.tipo === 'culto' ? fetchCultos() : fetchEnsaios())}
+          membros={membros}
+          tipo={escalaModal.tipo}
+          eventoId={escalaModal.eventoId}
+        />
       )}
     </SafeAreaView>
   );
@@ -887,6 +1342,14 @@ const s = StyleSheet.create({
   cultoBpmChip: { backgroundColor: C.surfaceHigh, borderRadius: 6, paddingHorizontal: 6, paddingVertical: 3, minWidth: 40, alignItems: 'center' },
   cultoBpmText: { fontSize: 12, fontWeight: '700', color: C.textMuted },
   spotifyMini: { width: 28, height: 28, borderRadius: 6, backgroundColor: C.accentDim, alignItems: 'center', justifyContent: 'center' },
+  // Escala
+  escalaCard: { backgroundColor: C.surface, borderRadius: 12, padding: 12, borderWidth: 1, borderColor: C.border },
+  escalaHeader: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginTop: 10, marginBottom: 6 },
+  escalaRow: { flexDirection: 'row', alignItems: 'center', gap: 8, paddingVertical: 6 },
+  escalaNome: { flex: 1, fontSize: 13, fontWeight: '600', color: C.text },
+  escalaInstChip: { backgroundColor: C.primaryDim, borderRadius: 8, paddingHorizontal: 8, paddingVertical: 3 },
+  escalaInstText: { fontSize: 11, fontWeight: '700', color: C.primary },
+  escalaVazia: { fontSize: 12, color: C.textDim, paddingVertical: 4 },
   // Ensaios
   ensaioCard: { flexDirection: 'row', alignItems: 'flex-start', backgroundColor: C.surface, borderRadius: 14, padding: 14, marginBottom: 10, borderWidth: 1, borderColor: C.border },
   ensaioDate: { width: 48, alignItems: 'center', marginRight: 14, backgroundColor: C.primaryDim, borderRadius: 10, paddingVertical: 8 },

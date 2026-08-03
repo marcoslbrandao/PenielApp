@@ -1,7 +1,35 @@
-import { View, Text, StyleSheet, ScrollView, TouchableOpacity, Linking, Alert, TextInput } from 'react-native';
+import { View, Text, StyleSheet, ScrollView, TouchableOpacity, Linking, Alert, TextInput, Platform } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
-import { useState } from 'react';
+import { useState, useMemo, useEffect } from 'react';
 import { useTranslation } from 'react-i18next';
+import { useTheme } from '../lib/theme';
+import { PlatformPayButton, usePlatformPay, PlatformPay } from '@stripe/stripe-react-native';
+import { supabase } from '../lib/supabase';
+
+// Paleta local — header, card do valor e card do versículo já são roxo
+// escuro por design e funcionam nos dois temas sem mudar. Só os blocos
+// "claros" (cards brancos de tipo/recorrência/resumo e o fundo da tela)
+// precisam inverter no modo escuro.
+function paletaOferta(isDark: boolean) {
+  return isDark ? {
+    bg: '#0E0B22',
+    cardBg: '#1C1940',
+    cardBorder: '#332D5C',
+    textPrimary: '#F1EFFA',
+    textMuted: '#A69FD6',
+    cardAtivoBg: '#2A2560',
+    abasBg: '#241F4D',
+  } : {
+    bg: '#F9F8FF',
+    cardBg: '#FFFFFF',
+    cardBorder: 'rgba(83,74,183,0.13)',
+    textPrimary: '#1A1740',
+    textMuted: '#8B83D4',
+    cardAtivoBg: '#EEEDFE',
+    abasBg: '#EEEDFE',
+  };
+}
+type PaletaOferta = ReturnType<typeof paletaOferta>;
 
 // ─── Config ───────────────────────────────────────────────────────────────────
 const SUMUP_URL = 'https://pay.sumup.com/b2c/Q54Q9ILX';
@@ -10,6 +38,9 @@ const valores = [10, 25, 50, 100, 200];
 
 export default function OfertaScreen({ navigation }: { navigation?: any }) {
   const { t } = useTranslation();
+  const { isDark } = useTheme();
+  const C = useMemo(() => paletaOferta(isDark), [isDark]);
+  const styles = useMemo(() => buildStyles(C), [C]);
   const tipos = [
     { id: 'dizimo', nome: t('oferta.dizimoNome'), sub: t('oferta.dizimoSub'), icone: 'star-outline' },
     { id: 'oferta', nome: t('oferta.ofertaNome'), sub: t('oferta.ofertaSub'), icone: 'heart-outline' },
@@ -20,6 +51,23 @@ export default function OfertaScreen({ navigation }: { navigation?: any }) {
   const [valorCustom, setValorCustom] = useState('');
   const [tipoSelecionado, setTipoSelecionado] = useState('dizimo');
   const [recorrencia, setRecorrencia] = useState('unica');
+
+  // ─── Apple Pay / Google Pay via Stripe ────────────────────────────────────
+  const { isPlatformPaySupported, confirmPlatformPayPayment } = usePlatformPay();
+  const [platformPayDisponivel, setPlatformPayDisponivel] = useState(false);
+  const [processandoPagamento, setProcessandoPagamento] = useState(false);
+
+  useEffect(() => {
+    (async () => {
+      try {
+        const disponivel = await isPlatformPaySupported({ googlePay: { testEnv: true } });
+        console.log('🍎 Apple/Google Pay disponível?', disponivel);
+        setPlatformPayDisponivel(disponivel);
+      } catch (e) {
+        console.log('🍎 Erro ao checar Platform Pay:', e);
+      }
+    })();
+  }, [isPlatformPaySupported]);
 
   const valorFinal = outroAtivo ? Number(valorCustom.replace(',', '.')) || 0 : valorSelecionado;
 
@@ -50,6 +98,58 @@ export default function OfertaScreen({ navigation }: { navigation?: any }) {
         { text: t('oferta.irParaPagamento'), onPress: () => Linking.openURL(SUMUP_URL) },
       ]
     );
+  };
+
+  // Busca o client_secret na Edge Function e confirma o pagamento via Apple/Google Pay.
+  const handlePlatformPay = async () => {
+    if (valorFinal <= 0) {
+      Alert.alert(t('common.atencao'), t('oferta.informeValorValido'));
+      return;
+    }
+
+    setProcessandoPagamento(true);
+    try {
+      const { data, error: fnError } = await supabase.functions.invoke('create-payment-intent', {
+        body: { valor: valorFinal, tipo: tipoSelecionado, moeda: 'gbp' },
+      });
+
+      if (fnError || !data?.clientSecret) {
+        throw new Error(fnError?.message || 'Não foi possível iniciar o pagamento.');
+      }
+
+      const { error: confirmError } = await confirmPlatformPayPayment(data.clientSecret, {
+        applePay: {
+          cartItems: [
+            {
+              label: 'Peniel Church',
+              amount: valorFinal.toFixed(2),
+              paymentType: PlatformPay.PaymentType.Immediate,
+            },
+          ],
+          merchantCountryCode: 'GB',
+          currencyCode: 'GBP',
+        },
+        googlePay: {
+          testEnv: true,
+          merchantName: 'Peniel Church',
+          merchantCountryCode: 'GB',
+          currencyCode: 'GBP',
+        },
+      });
+
+      if (confirmError) {
+        if (confirmError.code !== 'Canceled') {
+          Alert.alert(t('common.atencao'), confirmError.message);
+        }
+        return;
+      }
+
+      Alert.alert(t('oferta.modalTitulo'), t('oferta.pagamentoConfirmado') || 'Contribuição recebida. Obrigado!');
+    } catch (e: any) {
+      Alert.alert(t('common.atencao'), e?.message || 'Erro ao processar pagamento.');
+    } finally {
+      setProcessandoPagamento(false);
+    }
   };
 
   return (
@@ -123,7 +223,7 @@ export default function OfertaScreen({ navigation }: { navigation?: any }) {
               <Ionicons
                 name={tipo.icone as any}
                 size={20}
-                color={tipoSelecionado === tipo.id ? '#534AB7' : '#8B83D4'}
+                color={tipoSelecionado === tipo.id ? '#534AB7' : C.textMuted}
               />
               <Text style={[styles.tipoNome, tipoSelecionado === tipo.id && styles.tipoNomeAtivo]}>
                 {tipo.nome}
@@ -181,7 +281,21 @@ export default function OfertaScreen({ navigation }: { navigation?: any }) {
           </View>
         </View>
 
-        {/* ── Botão contribuir ──────────────────────────────────────────────── */}
+        {/* ── Apple Pay / Google Pay ───────────────────────────────────────────
+             Só aparece se o dispositivo suportar e só faz sentido pra
+             contribuição única (recorrência mensal continua via SumUp). */}
+        {platformPayDisponivel && recorrencia === 'unica' && (
+          <PlatformPayButton
+            onPress={handlePlatformPay}
+            type={PlatformPay.ButtonType.Donate}
+            appearance={PlatformPay.ButtonStyle.Black}
+            borderRadius={14}
+            disabled={processandoPagamento}
+            style={styles.platformPayBtn}
+          />
+        )}
+
+        {/* ── Botão contribuir (SumUp) ──────────────────────────────────────── */}
         <TouchableOpacity style={styles.btnContribuir} onPress={handleContribuir} activeOpacity={0.85}>
           <Ionicons name="card-outline" size={20} color="#fff" />
           <Text style={styles.btnContribuirTexto}>{t('oferta.contribuirComSeguranca')}</Text>
@@ -217,8 +331,8 @@ export default function OfertaScreen({ navigation }: { navigation?: any }) {
   );
 }
 
-const styles = StyleSheet.create({
-  container: { flex: 1, backgroundColor: '#F9F8FF' },
+function buildStyles(C: PaletaOferta) { return StyleSheet.create({
+  container: { flex: 1, backgroundColor: C.bg },
   header: { backgroundColor: '#1A1740', paddingTop: 55, paddingBottom: 16, paddingHorizontal: 18, flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' },
   closeBtn: { width: 34, height: 34, borderRadius: 17, backgroundColor: 'rgba(255,255,255,0.1)', alignItems: 'center', justifyContent: 'center' },
   headerSub: { fontSize: 12, color: 'rgba(255,255,255,0.5)' },
@@ -236,37 +350,39 @@ const styles = StyleSheet.create({
   outroInputPrefixo: { fontSize: 16, fontWeight: '700', color: '#F5C842', marginRight: 8 },
   outroInput: { flex: 1, fontSize: 16, color: '#fff', fontWeight: '600' },
   // Tipos
-  secaoTitulo: { fontSize: 14, fontWeight: '500', color: '#1A1740', marginHorizontal: 14, marginBottom: 10 },
+  secaoTitulo: { fontSize: 14, fontWeight: '500', color: C.textPrimary, marginHorizontal: 14, marginBottom: 10 },
   tiposGrid: { flexDirection: 'row', flexWrap: 'wrap', gap: 8, marginHorizontal: 14, marginBottom: 16 },
-  tipoCard: { backgroundColor: '#fff', borderRadius: 14, borderWidth: 0.5, borderColor: 'rgba(83,74,183,0.13)', padding: 14, width: '47%', gap: 5 },
-  tipoCardAtivo: { borderWidth: 1.5, borderColor: '#534AB7', backgroundColor: '#EEEDFE' },
-  tipoNome: { fontSize: 13, fontWeight: '500', color: '#1A1740' },
+  tipoCard: { backgroundColor: C.cardBg, borderRadius: 14, borderWidth: 0.5, borderColor: C.cardBorder, padding: 14, width: '47%', gap: 5 },
+  tipoCardAtivo: { borderWidth: 1.5, borderColor: '#534AB7', backgroundColor: C.cardAtivoBg },
+  tipoNome: { fontSize: 13, fontWeight: '500', color: C.textPrimary },
   tipoNomeAtivo: { color: '#534AB7' },
-  tipoSub: { fontSize: 11, color: '#8B83D4' },
+  tipoSub: { fontSize: 11, color: C.textMuted },
   // Recorrência
-  recorrenciaCard: { backgroundColor: '#fff', borderRadius: 14, borderWidth: 0.5, borderColor: 'rgba(83,74,183,0.13)', padding: 14, marginHorizontal: 14, marginBottom: 16 },
+  recorrenciaCard: { backgroundColor: C.cardBg, borderRadius: 14, borderWidth: 0.5, borderColor: C.cardBorder, padding: 14, marginHorizontal: 14, marginBottom: 16 },
   recorrenciaTop: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginBottom: 10 },
-  recorrenciaTitulo: { fontSize: 13, fontWeight: '500', color: '#1A1740' },
-  recorrenciaAbas: { flexDirection: 'row', backgroundColor: '#EEEDFE', borderRadius: 8, overflow: 'hidden' },
+  recorrenciaTitulo: { fontSize: 13, fontWeight: '500', color: C.textPrimary },
+  recorrenciaAbas: { flexDirection: 'row', backgroundColor: C.abasBg, borderRadius: 8, overflow: 'hidden' },
   recorrenciaAba: { paddingHorizontal: 14, paddingVertical: 6, borderRadius: 8 },
   recorrenciaAbaAtiva: { backgroundColor: '#534AB7' },
-  recorrenciaAbaTexto: { fontSize: 12, fontWeight: '500', color: '#8B83D4' },
+  recorrenciaAbaTexto: { fontSize: 12, fontWeight: '500', color: C.textMuted },
   recorrenciaAbaTextoAtivo: { color: '#fff' },
-  recorrenciaDesc: { fontSize: 12, color: '#8B83D4', lineHeight: 18 },
+  recorrenciaDesc: { fontSize: 12, color: C.textMuted, lineHeight: 18 },
   // Resumo
-  resumoCard: { backgroundColor: '#fff', borderRadius: 14, borderWidth: 0.5, borderColor: 'rgba(83,74,183,0.13)', marginHorizontal: 14, marginBottom: 16, overflow: 'hidden' },
-  resumoLinha: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', padding: 14, borderBottomWidth: 0.5, borderBottomColor: 'rgba(83,74,183,0.08)' },
-  resumoLabel: { fontSize: 13, color: '#8B83D4' },
-  resumoValor: { fontSize: 13, fontWeight: '500', color: '#1A1740' },
+  resumoCard: { backgroundColor: C.cardBg, borderRadius: 14, borderWidth: 0.5, borderColor: C.cardBorder, marginHorizontal: 14, marginBottom: 16, overflow: 'hidden' },
+  resumoLinha: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', padding: 14, borderBottomWidth: 0.5, borderBottomColor: C.cardBorder },
+  resumoLabel: { fontSize: 13, color: C.textMuted },
+  resumoValor: { fontSize: 13, fontWeight: '500', color: C.textPrimary },
+  // Apple/Google Pay
+  platformPayBtn: { height: 50, marginHorizontal: 14, marginBottom: 12 },
   // Botão
   btnContribuir: { backgroundColor: '#534AB7', borderRadius: 14, marginHorizontal: 14, padding: 16, alignItems: 'center', flexDirection: 'row', justifyContent: 'center', gap: 10 },
   btnContribuirTexto: { fontSize: 16, fontWeight: '700', color: '#fff' },
   // Selos
   selosRow: { flexDirection: 'row', justifyContent: 'center', gap: 16, marginTop: 12, marginBottom: 16 },
   selo: { flexDirection: 'row', alignItems: 'center', gap: 5 },
-  seloTexto: { fontSize: 11, color: '#8B83D4' },
+  seloTexto: { fontSize: 11, color: C.textMuted },
   // Versículo
   versiculoCard: { backgroundColor: '#1A1740', borderRadius: 16, marginHorizontal: 14, padding: 18 },
   versiculoTexto: { fontSize: 13, color: 'rgba(255,255,255,0.8)', lineHeight: 20, fontStyle: 'italic' },
   versiculoRef: { fontSize: 11, color: '#F5C842', marginTop: 8 },
-});
+}); }

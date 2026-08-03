@@ -139,6 +139,10 @@ export default function MidiaScreen() {
   }, []);
 
   // ── Busca avisos do Supabase ─────────────────────────────────────────────────
+  // Sem filtro de grupo de propósito: a RLS de `avisos` já devolve os avisos
+  // gerais (grupo = null) + os do(s) grupo(s) de que o usuário logado faz
+  // parte. Quem não é membro de nenhum grupo só recebe os gerais mesmo,
+  // automaticamente — não precisa filtrar aqui.
   const fetchAvisos = useCallback(async () => {
     const { data } = await supabase
       .from('avisos')
@@ -155,6 +159,7 @@ export default function MidiaScreen() {
     const { data } = await supabase
       .from('shorts_videos')
       .select('*')
+      .is('grupo', null)
       .order('created_at', { ascending: false })
       .limit(30);
     if (data) setShorts(data as Short[]);

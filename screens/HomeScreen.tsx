@@ -1,16 +1,43 @@
-import React, { useEffect, useRef, useState } from 'react';
-import { View, Text, StyleSheet, ScrollView, TouchableOpacity, Image, Animated, Linking, Alert, Modal, TextInput, ActivityIndicator } from 'react-native';
+import React, { useEffect, useRef, useState, useMemo } from 'react';
+import { View, Text, StyleSheet, ScrollView, TouchableOpacity, Image, Animated, PanResponder, Linking, Alert, Modal, TextInput, ActivityIndicator } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { useTranslation } from 'react-i18next';
 import { supabase } from '../lib/supabase';
 import { useAuth } from '../lib/useAuth';
 import { useNotifications } from '../lib/useNotifications';
 import { useBirthdays } from '../lib/useBirthdays';
+import { getUltimaVisita, marcarComoVistoAgora, getIdsDispensados, dispensarAviso } from '../lib/notificacoesLidas';
 import BirthdayBanner from '../components/BirthdayBanner';
 import MensagemDetalheModal, { Mensagem } from '../components/MensagemDetalheModal';
 import { livrosAT, livrosNT, Livro } from '../lib/bibliaLivros';
 import { getVersiculoDoDia, parseReferencia, getTextoVersiculo, getReferenciaVersiculo, getVersaoVersiculo } from '../lib/versiculoDoDia';
 import { useCampoTraduzido } from '../lib/useTraducao';
+import { useTheme } from '../lib/theme';
+
+// Paleta local — só os elementos "claros" da Home (cards brancos: live,
+// acesso rápido, eventos, especial) precisam trocar no escuro. Os blocos já
+// escuros (header, versículo, mensagem, devocional) funcionam nos dois
+// temas sem mudar, então ficam com cor fixa.
+function paletaHome(isDark: boolean) {
+  return isDark ? {
+    bg: '#0E0B22',
+    cardBg: '#1C1940',
+    cardBorder: '#332D5C',
+    textPrimary: '#F1EFFA',
+    textMuted: '#A69FD6',
+    accentText: '#A69FD6',
+    eventoDataBg: '#2A2560',
+  } : {
+    bg: '#F9F8FF',
+    cardBg: '#FFFFFF',
+    cardBorder: 'rgba(83,74,183,0.13)',
+    textPrimary: '#1A1740',
+    textMuted: '#8B83D4',
+    accentText: '#534AB7',
+    eventoDataBg: '#EEEDFE',
+  };
+}
+type PaletaHome = ReturnType<typeof paletaHome>;
 
 // ─── Config ───────────────────────────────────────────────────────────────────
 const YOUTUBE_LIVE_URL = 'https://www.youtube.com/@PenielChurchOfficial/streams';
@@ -49,23 +76,62 @@ function AvisoResultRow({ aviso, onPress }: { aviso: AvisoResult; onPress: () =>
 
 const LOCALE_POR_IDIOMA: Record<string, string> = { pt: 'pt-BR', en: 'en-GB', es: 'es-ES', fr: 'fr-FR' };
 
+// Envolve um item de lista com gesto de arrastar-pra-esquerda-e-soltar-pra-
+// apagar. Feito só com PanResponder + Animated (API nativa do React Native)
+// de propósito — react-native-gesture-handler daria uma experiência mais
+// fluida, mas é um módulo nativo: instalar ele exigiria gerar uma build nova
+// na loja (não dá só com `eas update`), quebrando o fluxo rápido de OTA que
+// o app usa hoje. Isso aqui já publica na hora.
+const SWIPE_LIMIAR = -80;
+function SwipeParaRemover({ onRemover, children }: { onRemover: () => void; children: React.ReactNode }) {
+  const translateX = useRef(new Animated.Value(0)).current;
+  const panResponder = useRef(
+    PanResponder.create({
+      onMoveShouldSetPanResponder: (_, g) => Math.abs(g.dx) > 8 && Math.abs(g.dx) > Math.abs(g.dy),
+      onPanResponderMove: (_, g) => {
+        if (g.dx < 0) translateX.setValue(g.dx);
+      },
+      onPanResponderRelease: (_, g) => {
+        if (g.dx < SWIPE_LIMIAR) {
+          Animated.timing(translateX, { toValue: -500, duration: 180, useNativeDriver: true }).start(onRemover);
+        } else {
+          Animated.spring(translateX, { toValue: 0, useNativeDriver: true, bounciness: 6 }).start();
+        }
+      },
+    })
+  ).current;
+
+  return (
+    <View style={sm.swipeWrap}>
+      <View style={sm.swipeDeleteBg}>
+        <Ionicons name="trash-outline" size={18} color="#fff" />
+      </View>
+      <Animated.View style={{ transform: [{ translateX }] }} {...panResponder.panHandlers}>
+        {children}
+      </Animated.View>
+    </View>
+  );
+}
+
 // Card de aviso no modal de notificações — título e texto traduzidos pro idioma do app.
-function NotifAvisoCard({ aviso }: { aviso: AvisoResult }) {
+function NotifAvisoCard({ aviso, onRemover }: { aviso: AvisoResult; onRemover: () => void }) {
   const { i18n } = useTranslation();
   const titulo = useCampoTraduzido(aviso.titulo, 'avisos', aviso.id, 'titulo');
   const texto = useCampoTraduzido(aviso.texto, 'avisos', aviso.id, 'texto');
   const locale = LOCALE_POR_IDIOMA[i18n.language] ?? 'pt-BR';
   return (
-    <View style={styles.notifCard}>
-      <View style={styles.notifIcone}>
-        <Ionicons name="megaphone-outline" size={16} color="#F5C842" />
+    <SwipeParaRemover onRemover={onRemover}>
+      <View style={sm.notifCard}>
+        <View style={sm.notifIcone}>
+          <Ionicons name="megaphone-outline" size={16} color="#F5C842" />
+        </View>
+        <View style={{ flex: 1 }}>
+          <Text style={sm.notifTitulo}>{titulo}</Text>
+          <Text style={sm.notifTexto} numberOfLines={3}>{texto}</Text>
+          <Text style={sm.notifData}>{new Date(aviso.data).toLocaleDateString(locale, { day: '2-digit', month: 'short' })}</Text>
+        </View>
       </View>
-      <View style={{ flex: 1 }}>
-        <Text style={styles.notifTitulo}>{titulo}</Text>
-        <Text style={styles.notifTexto} numberOfLines={3}>{texto}</Text>
-        <Text style={styles.notifData}>{new Date(aviso.data).toLocaleDateString(locale, { day: '2-digit', month: 'short' })}</Text>
-      </View>
-    </View>
+    </SwipeParaRemover>
   );
 }
 
@@ -183,6 +249,17 @@ function SearchModal({ visible, onClose, navigation }: {
 }
 
 const sm = StyleSheet.create({
+  swipeHint: { fontSize: 11, color: 'rgba(255,255,255,0.35)', textAlign: 'center', marginBottom: 10 },
+  swipeWrap: { marginBottom: 10, borderRadius: 12, overflow: 'hidden' },
+  swipeDeleteBg: { position: 'absolute', top: 0, right: 0, bottom: 0, width: 70, backgroundColor: '#C0392B', alignItems: 'center', justifyContent: 'center' },
+  // Opaco de propósito (não translúcido como antes): esse card fica em cima
+  // do fundo vermelho de "remover" que aparece ao arrastar — se fosse
+  // translúcido, o vermelho vazaria por trás mesmo sem arrastar nada.
+  notifCard: { flexDirection: 'row', gap: 12, backgroundColor: '#242052', borderRadius: 12, padding: 14 },
+  notifIcone: { width: 32, height: 32, borderRadius: 10, backgroundColor: 'rgba(245,200,66,0.15)', alignItems: 'center', justifyContent: 'center' },
+  notifTitulo: { fontSize: 14, fontWeight: '700', color: '#fff' },
+  notifTexto: { fontSize: 12, color: 'rgba(255,255,255,0.6)', marginTop: 4, lineHeight: 18 },
+  notifData: { fontSize: 10, color: 'rgba(255,255,255,0.4)', marginTop: 6 },
   overlay: { flex: 1, backgroundColor: '#1A1740', paddingTop: 55 },
   sheet: { flex: 1, paddingHorizontal: 18 },
   searchRow: { flexDirection: 'row', alignItems: 'center', gap: 10, backgroundColor: 'rgba(255,255,255,0.08)', borderRadius: 12, paddingHorizontal: 14, height: 46 },
@@ -230,6 +307,9 @@ const eventosRecorrentes = [
 export default function HomeScreen({ navigation }: { navigation?: any }) {
   const { t, i18n } = useTranslation();
   const { user, isLoggedIn } = useAuth();
+  const { isDark } = useTheme();
+  const C = useMemo(() => paletaHome(isDark), [isDark]);
+  const styles = useMemo(() => buildStyles(C), [C]);
   const { todayBirthdays } = useBirthdays();
   useNotifications(user?.id);
 
@@ -363,21 +443,49 @@ export default function HomeScreen({ navigation }: { navigation?: any }) {
   const [notifModalVisible, setNotifModalVisible] = useState(false);
   const [notifAvisos, setNotifAvisos] = useState<AvisoResult[]>([]);
   const [notifLoading, setNotifLoading] = useState(false);
-  const temNotificacaoRecente = notifAvisos.some(a => {
-    const dias = (Date.now() - new Date(a.data).getTime()) / (1000 * 60 * 60 * 24);
-    return dias <= 7;
-  });
+  const [notifDismissedIds, setNotifDismissedIds] = useState<string[]>([]);
+  const [notifNaoLidas, setNotifNaoLidas] = useState(0);
 
+  // Sem filtro de grupo aqui de propósito: a RLS de `avisos` já mistura os
+  // avisos gerais com os do(s) grupo(s) de que o usuário é membro/líder —
+  // aparecem juntos no sininho, mas só quem tem acesso ao grupo vê os dele.
+  // "Não lida" é contado localmente (AsyncStorage) comparando com a última
+  // vez que o sininho foi aberto — não existe coluna "lida" no banco porque
+  // avisos são um mural compartilhado, não uma caixa de entrada por usuário.
   useEffect(() => {
-    supabase.from('avisos').select('*').order('created_at', { ascending: false }).limit(10)
-      .then(({ data }) => { if (data) setNotifAvisos(data as AvisoResult[]); });
+    (async () => {
+      const [dismissed, ultimaVisita, { data }] = await Promise.all([
+        getIdsDispensados(),
+        getUltimaVisita(),
+        supabase.from('avisos').select('*').order('created_at', { ascending: false }).limit(10),
+      ]);
+      setNotifDismissedIds(dismissed);
+      const lista = ((data as AvisoResult[]) ?? []).filter(a => !dismissed.includes(a.id));
+      setNotifAvisos(lista);
+      const naoLidas = ultimaVisita
+        ? lista.filter(a => new Date(a.data).getTime() > new Date(ultimaVisita).getTime()).length
+        : lista.length;
+      setNotifNaoLidas(naoLidas);
+    })();
   }, []);
 
   const abrirNotificacoes = () => {
     setNotifModalVisible(true);
     setNotifLoading(true);
     supabase.from('avisos').select('*').order('created_at', { ascending: false }).limit(10)
-      .then(({ data }) => { if (data) setNotifAvisos(data as AvisoResult[]); setNotifLoading(false); });
+      .then(({ data }) => {
+        const lista = ((data as AvisoResult[]) ?? []).filter(a => !notifDismissedIds.includes(a.id));
+        setNotifAvisos(lista);
+        setNotifLoading(false);
+        setNotifNaoLidas(0);
+        marcarComoVistoAgora();
+      });
+  };
+
+  const removerNotificacao = async (id: string) => {
+    setNotifAvisos(prev => prev.filter(a => a.id !== id));
+    const novos = await dispensarAviso(id);
+    setNotifDismissedIds(novos);
   };
 
   const openYouTube = () => Linking.openURL(isLive ? YOUTUBE_LIVE_URL : YOUTUBE_CHANNEL);
@@ -408,7 +516,10 @@ export default function HomeScreen({ navigation }: { navigation?: any }) {
   };
 
   // Calcula datas dos próximos eventos
-  const eventos = eventosRecorrentes.map(e => ({ ...e, ...proximaData(e.diaSemana, i18n.language) }));
+  const eventos = eventosRecorrentes.map(e => ({
+    ...e, ...proximaData(e.diaSemana, i18n.language),
+    hoje: e.diaSemana === new Date().getDay(),
+  }));
 
   const tagStyle = (tipo: string) => ({
     bg: tipo === 'presencial' ? '#EEEDFE' : tipo === 'online' ? '#E1F5EE' : tipo === 'jovens' ? '#F3E8FF' : '#FEF6DC',
@@ -434,7 +545,11 @@ export default function HomeScreen({ navigation }: { navigation?: any }) {
           </TouchableOpacity>
           <TouchableOpacity style={styles.iconeBtn} onPress={abrirNotificacoes}>
             <Ionicons name="notifications-outline" size={22} color="rgba(255,255,255,0.7)" />
-            {temNotificacaoRecente && <View style={styles.notifDot} />}
+            {notifNaoLidas > 0 && (
+              <View style={styles.notifBadge}>
+                <Text style={styles.notifBadgeText}>{notifNaoLidas > 9 ? '9+' : notifNaoLidas}</Text>
+              </View>
+            )}
           </TouchableOpacity>
         </View>
       </View>
@@ -553,29 +668,26 @@ export default function HomeScreen({ navigation }: { navigation?: any }) {
               {isLive ? t('home.tocarParaAssistir') : t('home.tocarParaVerCanal')}
             </Text>
           </View>
-          <Ionicons name="chevron-forward" size={18} color="#8B83D4" />
+          <Ionicons name="chevron-forward" size={18} color={C.textMuted} />
         </TouchableOpacity>
 
         {/* ── Acesso rápido ─────────────────────────────────────────────────── */}
         <Text style={styles.secaoTitulo}>{t('home.acessoRapido')}</Text>
         <View style={styles.quickGrid}>
           <TouchableOpacity style={styles.quickBtn} onPress={() => navigation?.navigate('Biblia')}>
-            <Ionicons name="book-outline" size={22} color="#534AB7" />
+            <Ionicons name="book-outline" size={22} color={C.accentText} />
             <Text style={styles.quickTexto}>{t('home.quickBiblia')}</Text>
           </TouchableOpacity>
           <TouchableOpacity style={styles.quickBtn} onPress={() => navigation?.navigate('Agenda')}>
-            <Ionicons name="calendar-outline" size={22} color="#534AB7" />
+            <Ionicons name="calendar-outline" size={22} color={C.accentText} />
             <Text style={styles.quickTexto}>{t('home.quickAgenda')}</Text>
           </TouchableOpacity>
           <TouchableOpacity style={styles.quickBtn} onPress={() => navigation?.navigate('Oferta')}>
-            <Ionicons name="heart-outline" size={22} color="#534AB7" />
+            <Ionicons name="heart-outline" size={22} color={C.accentText} />
             <Text style={styles.quickTexto}>{t('home.quickOferta')}</Text>
           </TouchableOpacity>
-          <TouchableOpacity style={styles.quickBtn} onPress={() => Alert.alert(t('home.quickGrupos'), t('home.quickGruposEmBreveMsg'), [
-            { text: t('common.cancelar'), style: 'cancel' },
-            { text: 'WhatsApp', onPress: () => openWhatsApp(t('home.quickGruposWhatsappMsg')) },
-          ])}>
-            <Ionicons name="people-outline" size={22} color="#534AB7" />
+          <TouchableOpacity style={styles.quickBtn} onPress={() => navigation?.navigate('Membros', { screen: 'Grupos' })}>
+            <Ionicons name="people-outline" size={22} color={C.accentText} />
             <Text style={styles.quickTexto}>{t('home.quickGrupos')}</Text>
           </TouchableOpacity>
         </View>
@@ -584,7 +696,7 @@ export default function HomeScreen({ navigation }: { navigation?: any }) {
         <TouchableOpacity
           style={styles.aliveCard}
           activeOpacity={0.85}
-          onPress={() => navigation?.navigate('Membros')}
+          onPress={() => navigation?.navigate('Membros', { screen: 'Grupos', params: { grupoInicial: 'jovens' } })}
         >
           <Image
             source={require('../assets/PenielAlive-Logo.jpg')}
@@ -608,12 +720,19 @@ export default function HomeScreen({ navigation }: { navigation?: any }) {
             const tag = tagStyle(ev.tipo);
             return (
               <View key={ev.id} style={[styles.eventoRow, idx === eventos.length - 1 && { borderBottomWidth: 0 }]}>
-                <View style={styles.eventoData}>
-                  <Text style={styles.eventoDia}>{ev.dia}</Text>
-                  <Text style={styles.eventoMes}>{ev.mes}</Text>
+                <View style={[styles.eventoData, ev.hoje && styles.eventoDataHoje]}>
+                  <Text style={[styles.eventoDia, ev.hoje && styles.eventoDiaHoje]}>{ev.dia}</Text>
+                  <Text style={[styles.eventoMes, ev.hoje && styles.eventoMesHoje]}>{ev.mes}</Text>
                 </View>
                 <View style={styles.eventoInfo}>
-                  <Text style={styles.eventoNome}>{ev.nomeKey ? t(`home.${ev.nomeKey}`) : ev.nome}</Text>
+                  <View style={styles.eventoNomeRow}>
+                    {ev.hoje && (
+                      <View style={styles.hojeBadge}>
+                        <Text style={styles.hojeBadgeText}>{t('agenda.hoje')}</Text>
+                      </View>
+                    )}
+                    <Text style={styles.eventoNome} numberOfLines={1}>{ev.nomeKey ? t(`home.${ev.nomeKey}`) : ev.nome}</Text>
+                  </View>
                   <Text style={styles.eventoMeta}>{ev.diaSemana === 0 ? t('home.diaDomingo') : ev.diaSemana === 3 ? t('home.diaQuarta') : ev.diaSemana === 5 ? t('home.diaSexta') : t('home.diaSabado')} · {ev.horario} · {ev.localKey ? t(`home.${ev.localKey}`) : ev.local}</Text>
                 </View>
                 <View style={[styles.eventoTag, { backgroundColor: tag.bg }]}>
@@ -631,12 +750,12 @@ export default function HomeScreen({ navigation }: { navigation?: any }) {
           <View style={styles.especialCorpo}>
             <Text style={styles.especialNome}>⛺ Camping Peniel 2026</Text>
             <View style={{ flexDirection: 'row', alignItems: 'center', gap: 5 }}>
-              <Ionicons name="calendar-outline" size={13} color="#8B83D4" />
+              <Ionicons name="calendar-outline" size={13} color={C.textMuted} />
               <Text style={styles.eventoMetaTexto}>28 a 31 de Agosto 2026</Text>
             </View>
             <Text style={styles.especialDesc}>Inscrições abertas! Toque para se inscrever.</Text>
           </View>
-          <Ionicons name="chevron-forward" size={18} color="#8B83D4" style={{ marginRight: 12 }} />
+          <Ionicons name="chevron-forward" size={18} color={C.textMuted} style={{ marginRight: 12 }} />
         </TouchableOpacity>
 
         <View style={{ height: 24 }} />
@@ -660,7 +779,10 @@ export default function HomeScreen({ navigation }: { navigation?: any }) {
               <Text style={sm.hint}>{t('home.nenhumAvisoAinda')}</Text>
             ) : (
               <ScrollView showsVerticalScrollIndicator={false}>
-                {notifAvisos.map(a => (<NotifAvisoCard key={a.id} aviso={a} />))}
+                <Text style={sm.swipeHint}>{t('home.deslizeRemover')}</Text>
+                {notifAvisos.map(a => (
+                  <NotifAvisoCard key={a.id} aviso={a} onRemover={() => removerNotificacao(a.id)} />
+                ))}
                 <View style={{ height: 30 }} />
               </ScrollView>
             )}
@@ -673,8 +795,8 @@ export default function HomeScreen({ navigation }: { navigation?: any }) {
   );
 }
 
-const styles = StyleSheet.create({
-  container: { flex: 1, backgroundColor: '#F9F8FF' },
+function buildStyles(C: PaletaHome) { return StyleSheet.create({
+  container: { flex: 1, backgroundColor: C.bg },
   header: { backgroundColor: '#1A1740', paddingTop: 55, paddingBottom: 16, paddingHorizontal: 18, flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' },
   headerEsquerda: { flexDirection: 'row', alignItems: 'center', gap: 14 },
   logo: { width: 48, height: 48, borderRadius: 24 },
@@ -682,12 +804,8 @@ const styles = StyleSheet.create({
   headerTitulo: { fontSize: 18, fontWeight: '500', color: '#fff', marginTop: 2 },
   headerIcones: { flexDirection: 'row', gap: 10 },
   iconeBtn: { padding: 4, position: 'relative' },
-  notifDot: { position: 'absolute', top: 3, right: 3, width: 8, height: 8, borderRadius: 4, backgroundColor: '#E84B1A', borderWidth: 1, borderColor: '#1A1740' },
-  notifCard: { flexDirection: 'row', gap: 12, backgroundColor: 'rgba(255,255,255,0.06)', borderRadius: 12, padding: 14, marginBottom: 10 },
-  notifIcone: { width: 32, height: 32, borderRadius: 10, backgroundColor: 'rgba(245,200,66,0.15)', alignItems: 'center', justifyContent: 'center' },
-  notifTitulo: { fontSize: 14, fontWeight: '700', color: '#fff' },
-  notifTexto: { fontSize: 12, color: 'rgba(255,255,255,0.6)', marginTop: 4, lineHeight: 18 },
-  notifData: { fontSize: 10, color: 'rgba(255,255,255,0.4)', marginTop: 6 },
+  notifBadge: { position: 'absolute', top: -2, right: -4, minWidth: 16, height: 16, borderRadius: 8, paddingHorizontal: 3, backgroundColor: '#E84B1A', borderWidth: 1, borderColor: '#1A1740', alignItems: 'center', justifyContent: 'center' },
+  notifBadgeText: { fontSize: 9, fontWeight: '800', color: '#fff' },
   scroll: { flex: 1, padding: 14 },
   // Versículo
   versiculo: { backgroundColor: '#1A1740', borderRadius: 16, padding: 20, marginBottom: 16 },
@@ -721,20 +839,20 @@ const styles = StyleSheet.create({
   devocionalTexto: { fontSize: 13, color: 'rgba(255,255,255,0.7)', lineHeight: 20, marginTop: 10 },
   // Live
   secaoHeader: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginBottom: 10 },
-  secaoTitulo: { fontSize: 14, fontWeight: '500', color: '#1A1740', marginBottom: 10 },
+  secaoTitulo: { fontSize: 14, fontWeight: '500', color: C.textPrimary, marginBottom: 10 },
   liveBadge: { flexDirection: 'row', alignItems: 'center', gap: 5, backgroundColor: '#E84B1A', paddingHorizontal: 10, paddingVertical: 3, borderRadius: 20 },
   livePonto: { width: 6, height: 6, borderRadius: 3, backgroundColor: '#fff' },
   liveTexto: { fontSize: 10, fontWeight: '700', color: '#fff' },
-  liveCard: { backgroundColor: '#fff', borderRadius: 16, padding: 14, flexDirection: 'row', alignItems: 'center', gap: 12, marginBottom: 16, borderWidth: 0.5, borderColor: 'rgba(83,74,183,0.13)' },
+  liveCard: { backgroundColor: C.cardBg, borderRadius: 16, padding: 14, flexDirection: 'row', alignItems: 'center', gap: 12, marginBottom: 16, borderWidth: 0.5, borderColor: C.cardBorder },
   liveCardAtivo: { borderColor: '#E84B1A', borderWidth: 1.5 },
   liveThumb: { width: 56, height: 42, backgroundColor: '#1A1740', borderRadius: 8, alignItems: 'center', justifyContent: 'center' },
   liveInfo: { flex: 1 },
-  liveNome: { fontSize: 13, fontWeight: '500', color: '#1A1740' },
-  liveMeta: { fontSize: 11, color: '#8B83D4', marginTop: 2 },
+  liveNome: { fontSize: 13, fontWeight: '500', color: C.textPrimary },
+  liveMeta: { fontSize: 11, color: C.textMuted, marginTop: 2 },
   // Quick grid
   quickGrid: { flexDirection: 'row', gap: 8, marginBottom: 16 },
-  quickBtn: { flex: 1, backgroundColor: '#fff', borderRadius: 12, padding: 12, alignItems: 'center', gap: 5, borderWidth: 0.5, borderColor: 'rgba(83,74,183,0.13)' },
-  quickTexto: { fontSize: 10, fontWeight: '500', color: '#534AB7' },
+  quickBtn: { flex: 1, backgroundColor: C.cardBg, borderRadius: 12, padding: 12, alignItems: 'center', gap: 5, borderWidth: 0.5, borderColor: C.cardBorder },
+  quickTexto: { fontSize: 10, fontWeight: '500', color: C.accentText },
   // Peniel Alive card
   aliveCard: { flexDirection: 'row', alignItems: 'center', backgroundColor: '#1E0A4A', borderRadius: 16, marginBottom: 16, overflow: 'hidden', borderWidth: 1, borderColor: '#4A1AA8' },
   aliveImage: { width: 70, height: 70 },
@@ -744,21 +862,27 @@ const styles = StyleSheet.create({
   aliveSub: { fontSize: 11, color: '#E8A87C', marginTop: 3 },
   aliveArrow: { paddingRight: 14 },
   // Eventos
-  card: { backgroundColor: '#fff', borderRadius: 16, borderWidth: 0.5, borderColor: 'rgba(83,74,183,0.13)', marginBottom: 16, overflow: 'hidden' },
-  eventoRow: { flexDirection: 'row', alignItems: 'center', gap: 12, padding: 12, borderBottomWidth: 0.5, borderBottomColor: 'rgba(83,74,183,0.08)' },
-  eventoData: { backgroundColor: '#EEEDFE', borderRadius: 10, width: 44, height: 44, alignItems: 'center', justifyContent: 'center' },
-  eventoDia: { fontSize: 16, fontWeight: '500', color: '#534AB7', lineHeight: 18 },
-  eventoMes: { fontSize: 9, color: '#8B83D4', textTransform: 'uppercase' },
+  card: { backgroundColor: C.cardBg, borderRadius: 16, borderWidth: 0.5, borderColor: C.cardBorder, marginBottom: 16, overflow: 'hidden' },
+  eventoRow: { flexDirection: 'row', alignItems: 'center', gap: 12, padding: 12, borderBottomWidth: 0.5, borderBottomColor: C.cardBorder },
+  eventoData: { backgroundColor: C.eventoDataBg, borderRadius: 10, width: 44, height: 44, alignItems: 'center', justifyContent: 'center' },
+  eventoDataHoje: { backgroundColor: '#F5C842' },
+  eventoDia: { fontSize: 16, fontWeight: '500', color: C.accentText, lineHeight: 18 },
+  eventoDiaHoje: { color: '#1A1740', fontWeight: '800' },
+  eventoMes: { fontSize: 9, color: C.textMuted, textTransform: 'uppercase' },
+  eventoMesHoje: { color: '#1A1740' },
   eventoInfo: { flex: 1 },
-  eventoNome: { fontSize: 13, fontWeight: '500', color: '#1A1740' },
-  eventoMeta: { fontSize: 11, color: '#8B83D4', marginTop: 2 },
+  eventoNomeRow: { flexDirection: 'row', alignItems: 'center' },
+  hojeBadge: { backgroundColor: '#F5C842', paddingHorizontal: 8, paddingVertical: 2, borderRadius: 8, marginRight: 6 },
+  hojeBadgeText: { fontSize: 9, fontWeight: '800', color: '#1A1740' },
+  eventoNome: { fontSize: 13, fontWeight: '500', color: C.textPrimary, flexShrink: 1 },
+  eventoMeta: { fontSize: 11, color: C.textMuted, marginTop: 2 },
   eventoTag: { borderRadius: 20, paddingHorizontal: 8, paddingVertical: 3 },
   eventoTagTexto: { fontSize: 10, fontWeight: '500' },
   // Especial
-  especialCard: { backgroundColor: '#fff', borderRadius: 16, borderWidth: 0.5, borderColor: 'rgba(83,74,183,0.13)', marginBottom: 16, flexDirection: 'row', alignItems: 'center', overflow: 'hidden' },
+  especialCard: { backgroundColor: C.cardBg, borderRadius: 16, borderWidth: 0.5, borderColor: C.cardBorder, marginBottom: 16, flexDirection: 'row', alignItems: 'center', overflow: 'hidden' },
   especialCorFaixa: { width: 4, alignSelf: 'stretch' },
   especialCorpo: { flex: 1, padding: 14, gap: 4 },
-  especialNome: { fontSize: 14, fontWeight: '600', color: '#1A1740' },
-  especialDesc: { fontSize: 12, color: '#8B83D4', marginTop: 2 },
-  eventoMetaTexto: { fontSize: 12, color: '#8B83D4' },
-});
+  especialNome: { fontSize: 14, fontWeight: '600', color: C.textPrimary },
+  especialDesc: { fontSize: 12, color: C.textMuted, marginTop: 2 },
+  eventoMetaTexto: { fontSize: 12, color: C.textMuted },
+}); }

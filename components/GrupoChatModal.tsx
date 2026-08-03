@@ -1,0 +1,231 @@
+import React, { useState, useEffect, useRef, useCallback, useMemo } from 'react';
+import {
+  View, Text, StyleSheet, FlatList, TextInput, TouchableOpacity,
+  KeyboardAvoidingView, Platform, Modal, ActivityIndicator, Alert,
+} from 'react-native';
+import { SafeAreaView } from 'react-native-safe-area-context';
+import { Ionicons } from '@expo/vector-icons';
+import { supabase } from '../lib/supabase';
+import { useTheme } from '../lib/theme';
+
+function paletaChat(isDark: boolean) {
+  return isDark ? {
+    bg: '#0E0B22',
+    bubbleOtherBg: '#1C1940',
+    bubbleOtherBorder: '#332D5C',
+    text: '#F1EFFA',
+    textMuted: '#A69FD6',
+    inputBg: '#241F4D',
+    inputBarBg: '#1C1940',
+    inputBarBorder: '#332D5C',
+    emptyIcon: '#4A4478',
+    placeholder: '#726A99',
+  } : {
+    bg: '#F7F4EE',
+    bubbleOtherBg: '#FFFFFF',
+    bubbleOtherBorder: '#E5E0D8',
+    text: '#1A1A2E',
+    textMuted: '#9CA3AF',
+    inputBg: '#F0EDE8',
+    inputBarBg: '#FFFFFF',
+    inputBarBorder: '#E5E0D8',
+    emptyIcon: '#C9C4E8',
+    placeholder: '#9CA3AF',
+  };
+}
+type PaletaChat = ReturnType<typeof paletaChat>;
+
+type Mensagem = {
+  id: string;
+  grupo: string;
+  autor_id: string;
+  autor_nome: string;
+  texto: string;
+  created_at: string;
+};
+
+// Chat em tempo real de um grupo (Mulheres/Homens/Jovens). Só abre pra quem
+// já tem acesso ao grupo (RLS de `grupo_chat_mensagens` garante isso de
+// qualquer forma, mesmo se alguém tentar chamar isso fora do fluxo normal).
+export default function GrupoChatModal({
+  visible, grupo, grupoNome, cor, userId, userNome, podeModerar, onClose,
+}: {
+  visible: boolean;
+  grupo: string;
+  grupoNome: string;
+  cor: string;
+  userId: string;
+  userNome: string;
+  podeModerar: boolean;
+  onClose: () => void;
+}) {
+  const [mensagens, setMensagens] = useState<Mensagem[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [texto, setTexto] = useState('');
+  const [enviando, setEnviando] = useState(false);
+  const listRef = useRef<FlatList>(null);
+
+  const { isDark } = useTheme();
+  const C = useMemo(() => paletaChat(isDark), [isDark]);
+  const cs = useMemo(() => buildStyles(C), [C]);
+
+  const fetchMensagens = useCallback(async () => {
+    setLoading(true);
+    const { data, error } = await supabase
+      .from('grupo_chat_mensagens')
+      .select('*')
+      .eq('grupo', grupo)
+      .order('created_at', { ascending: true })
+      .limit(300);
+    if (!error) setMensagens((data ?? []) as Mensagem[]);
+    setLoading(false);
+  }, [grupo]);
+
+  useEffect(() => {
+    if (!visible) return;
+    fetchMensagens();
+
+    const channel = supabase
+      .channel(`grupo_chat_${grupo}`)
+      .on(
+        'postgres_changes',
+        { event: 'INSERT', schema: 'public', table: 'grupo_chat_mensagens', filter: `grupo=eq.${grupo}` },
+        (payload) => {
+          const nova = payload.new as Mensagem;
+          setMensagens(prev => (prev.some(m => m.id === nova.id) ? prev : [...prev, nova]));
+        }
+      )
+      .on(
+        'postgres_changes',
+        { event: 'DELETE', schema: 'public', table: 'grupo_chat_mensagens', filter: `grupo=eq.${grupo}` },
+        (payload) => {
+          const removida = payload.old as { id: string };
+          setMensagens(prev => prev.filter(m => m.id !== removida.id));
+        }
+      )
+      .subscribe();
+
+    return () => { supabase.removeChannel(channel); };
+  }, [visible, grupo, fetchMensagens]);
+
+  const enviar = async () => {
+    const texto_ = texto.trim();
+    if (!texto_ || enviando) return;
+    setEnviando(true);
+    const { error } = await supabase.from('grupo_chat_mensagens').insert({
+      grupo, autor_id: userId, autor_nome: userNome, texto: texto_,
+    });
+    setEnviando(false);
+    if (error) { Alert.alert('Erro', error.message); return; }
+    setTexto('');
+  };
+
+  const apagar = (msg: Mensagem) => {
+    if (msg.autor_id !== userId && !podeModerar) return;
+    Alert.alert('Apagar mensagem', 'Remover esta mensagem do chat?', [
+      { text: 'Cancelar', style: 'cancel' },
+      {
+        text: 'Apagar', style: 'destructive', onPress: async () => {
+          setMensagens(prev => prev.filter(m => m.id !== msg.id));
+          await supabase.from('grupo_chat_mensagens').delete().eq('id', msg.id);
+        },
+      },
+    ]);
+  };
+
+  return (
+    <Modal visible={visible} animationType="slide" onRequestClose={onClose}>
+      <SafeAreaView style={cs.safe} edges={['top', 'bottom']}>
+        <View style={[cs.header, { backgroundColor: cor }]}>
+          <TouchableOpacity onPress={onClose} style={cs.headerBtn} hitSlop={10}>
+            <Ionicons name="chevron-back" size={24} color="#fff" />
+          </TouchableOpacity>
+          <View style={{ flex: 1 }}>
+            <Text style={cs.headerTitle} numberOfLines={1}>Chat — {grupoNome}</Text>
+            <Text style={cs.headerSub}>Só participantes do grupo veem</Text>
+          </View>
+          <Ionicons name="chatbubbles-outline" size={20} color="rgba(255,255,255,0.7)" />
+        </View>
+
+        <KeyboardAvoidingView
+          style={{ flex: 1 }}
+          behavior={Platform.OS === 'ios' ? 'padding' : undefined}
+          keyboardVerticalOffset={Platform.OS === 'ios' ? 90 : 0}
+        >
+          {loading ? (
+            <ActivityIndicator color={cor} style={{ marginTop: 30 }} />
+          ) : (
+            <FlatList
+              ref={listRef}
+              data={mensagens}
+              keyExtractor={m => m.id}
+              contentContainerStyle={cs.list}
+              onContentSizeChange={() => listRef.current?.scrollToEnd({ animated: false })}
+              ListEmptyComponent={
+                <View style={cs.emptyWrap}>
+                  <Ionicons name="chatbubble-ellipses-outline" size={40} color={C.emptyIcon} />
+                  <Text style={cs.emptyText}>Nenhuma mensagem ainda.{'\n'}Comece a conversa!</Text>
+                </View>
+              }
+              renderItem={({ item }) => {
+                const minha = item.autor_id === userId;
+                const podeApagar = minha || podeModerar;
+                return (
+                  <TouchableOpacity
+                    activeOpacity={podeApagar ? 0.6 : 1}
+                    onLongPress={() => podeApagar && apagar(item)}
+                    style={[cs.bubbleRow, minha && cs.bubbleRowMine]}
+                  >
+                    <View style={[cs.bubble, minha ? { backgroundColor: cor } : cs.bubbleOther]}>
+                      {!minha && <Text style={[cs.autorNome, { color: cor }]}>{item.autor_nome}</Text>}
+                      <Text style={[cs.bubbleText, minha && { color: '#fff' }]}>{item.texto}</Text>
+                    </View>
+                  </TouchableOpacity>
+                );
+              }}
+            />
+          )}
+
+          <View style={cs.inputRow}>
+            <TextInput
+              style={cs.input}
+              placeholder="Escreva uma mensagem..."
+              placeholderTextColor={C.placeholder}
+              value={texto}
+              onChangeText={setTexto}
+              multiline
+              maxLength={1000}
+            />
+            <TouchableOpacity
+              style={[cs.sendBtn, { backgroundColor: cor, opacity: texto.trim() && !enviando ? 1 : 0.5 }]}
+              onPress={enviar}
+              disabled={!texto.trim() || enviando}
+            >
+              {enviando ? <ActivityIndicator size="small" color="#fff" /> : <Ionicons name="send" size={17} color="#fff" />}
+            </TouchableOpacity>
+          </View>
+        </KeyboardAvoidingView>
+      </SafeAreaView>
+    </Modal>
+  );
+}
+
+function buildStyles(C: PaletaChat) { return StyleSheet.create({
+  safe: { flex: 1, backgroundColor: C.bg },
+  header: { flexDirection: 'row', alignItems: 'center', gap: 10, paddingHorizontal: 12, paddingTop: 22, paddingBottom: 14 },
+  headerBtn: { padding: 8, minWidth: 44, minHeight: 44, alignItems: 'center', justifyContent: 'center', marginLeft: -8 },
+  headerTitle: { fontSize: 16, fontWeight: '800', color: '#fff' },
+  headerSub: { fontSize: 11, color: 'rgba(255,255,255,0.7)', marginTop: 1 },
+  list: { padding: 14, paddingBottom: 6, flexGrow: 1 },
+  emptyWrap: { flex: 1, alignItems: 'center', justifyContent: 'center', paddingTop: 60, gap: 10 },
+  emptyText: { fontSize: 13, color: C.textMuted, textAlign: 'center', lineHeight: 19 },
+  bubbleRow: { flexDirection: 'row', marginBottom: 8 },
+  bubbleRowMine: { justifyContent: 'flex-end' },
+  bubble: { maxWidth: '78%', borderRadius: 16, paddingVertical: 8, paddingHorizontal: 12 },
+  bubbleOther: { backgroundColor: C.bubbleOtherBg, borderWidth: 1, borderColor: C.bubbleOtherBorder },
+  autorNome: { fontSize: 11, fontWeight: '700', marginBottom: 2 },
+  bubbleText: { fontSize: 14, color: C.text, lineHeight: 19 },
+  inputRow: { flexDirection: 'row', alignItems: 'flex-end', gap: 8, padding: 10, borderTopWidth: 1, borderTopColor: C.inputBarBorder, backgroundColor: C.inputBarBg },
+  input: { flex: 1, maxHeight: 100, backgroundColor: C.inputBg, borderRadius: 18, paddingHorizontal: 14, paddingVertical: 9, fontSize: 14, color: C.text },
+  sendBtn: { width: 38, height: 38, borderRadius: 19, alignItems: 'center', justifyContent: 'center' },
+}); }

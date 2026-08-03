@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useMemo } from 'react';
 import {
   View, Text, StyleSheet, ScrollView, TouchableOpacity,
   Switch, Image, Alert, StatusBar, ActivityIndicator,
@@ -15,6 +15,7 @@ import * as Updates from 'expo-updates';
 import { supabase } from '../lib/supabase';
 import { useAuth } from '../lib/useAuth';
 import { IDIOMAS, trocarIdioma } from '../lib/i18n';
+import { useTheme, ThemeMode } from '../lib/theme';
 
 // Versão real do app.json (não mais um texto fixo desatualizado), + info de
 // qual atualização OTA (EAS Update) está rodando agora — útil pra confirmar
@@ -39,13 +40,24 @@ interface MenuItem {
 }
 interface MenuSection { title: string; items: MenuItem[]; }
 
-const C = {
-  primary: '#1A1740', primaryLight: '#2D2870',
-  accent: '#C8960A', accentLight: '#F5C842',
-  bg: '#F7F4EE', surface: '#FFFFFF', surfaceAlt: '#F0EDE8',
-  text: '#1A1A2E', textMuted: '#6B7280', textDim: '#9CA3AF',
-  border: '#E5E0D8', danger: '#C0392B', success: '#27AE60',
-};
+// Paleta calculada a partir do tema global (claro/escuro/sistema) — os
+// mesmos nomes de campo de sempre, só que agora com uma variante escura.
+function paleta(isDark: boolean) {
+  return isDark ? {
+    primary: '#100D28', primaryLight: '#3B2E7A',
+    accent: '#F5C842', accentLight: '#FFD873',
+    bg: '#0E0B22', surface: '#1C1940', surfaceAlt: '#241F4D',
+    text: '#F1EFFA', textMuted: '#A6A0C7', textDim: '#726A99',
+    border: '#332D5C', danger: '#FF6B6B', success: '#4ADE80',
+  } : {
+    primary: '#1A1740', primaryLight: '#2D2870',
+    accent: '#C8960A', accentLight: '#F5C842',
+    bg: '#F7F4EE', surface: '#FFFFFF', surfaceAlt: '#F0EDE8',
+    text: '#1A1A2E', textMuted: '#6B7280', textDim: '#9CA3AF',
+    border: '#E5E0D8', danger: '#C0392B', success: '#27AE60',
+  };
+}
+type Paleta = ReturnType<typeof paleta>;
 
 // ─── Edit Profile Modal ───────────────────────────────────────────────────────
 function EditProfileModal({ visible, profile, userId, onClose, onSaved }: {
@@ -53,6 +65,9 @@ function EditProfileModal({ visible, profile, userId, onClose, onSaved }: {
   onClose: () => void; onSaved: () => void;
 }) {
   const { t } = useTranslation();
+  const { isDark } = useTheme();
+  const C = useMemo(() => paleta(isDark), [isDark]);
+  const em = useMemo(() => buildEm(C), [C]);
   const [fullName, setFullName] = useState('');
   const [phone, setPhone] = useState('');
   const [saving, setSaving] = useState(false);
@@ -104,7 +119,7 @@ function EditProfileModal({ visible, profile, userId, onClose, onSaved }: {
   );
 }
 
-const em = StyleSheet.create({
+function buildEm(C: Paleta) { return StyleSheet.create({
   overlay: { flex: 1, justifyContent: 'flex-end', backgroundColor: 'rgba(0,0,0,0.5)' },
   sheet: { backgroundColor: C.surface, borderTopLeftRadius: 24, borderTopRightRadius: 24, padding: 20, paddingBottom: 36 },
   header: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginBottom: 20 },
@@ -114,10 +129,10 @@ const em = StyleSheet.create({
   input: { backgroundColor: C.surfaceAlt, borderWidth: 1, borderColor: C.border, borderRadius: 10, paddingHorizontal: 14, height: 46, fontSize: 15, color: C.text },
   saveBtn: { backgroundColor: C.primary, borderRadius: 12, paddingVertical: 14, alignItems: 'center', marginTop: 8 },
   saveBtnText: { fontSize: 16, fontWeight: '700', color: '#fff' },
-});
+}); }
 
 // ─── List modal styles (compartilhado entre os modais abaixo) ────────────────
-const lm = StyleSheet.create({
+function buildLm(C: Paleta) { return StyleSheet.create({
   overlay: { flex: 1, justifyContent: 'flex-end', backgroundColor: 'rgba(0,0,0,0.5)' },
   sheet: { backgroundColor: C.surface, borderTopLeftRadius: 24, borderTopRightRadius: 24, padding: 20, maxHeight: '82%' },
   header: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginBottom: 16 },
@@ -139,13 +154,16 @@ const lm = StyleSheet.create({
   totalCard: { backgroundColor: C.primary, borderRadius: 14, padding: 16, alignItems: 'center', marginBottom: 16 },
   totalLabel: { fontSize: 11, color: 'rgba(255,255,255,0.6)', fontWeight: '600', textTransform: 'uppercase', letterSpacing: 1 },
   totalValue: { fontSize: 28, fontWeight: '800', color: C.accentLight, marginTop: 4 },
-});
+}); }
 
 // ─── Versículos Salvos ────────────────────────────────────────────────────────
 function SavedVersesModal({ visible, userId, onClose }: {
   visible: boolean; userId: string | undefined; onClose: () => void;
 }) {
   const { t } = useTranslation();
+  const { isDark } = useTheme();
+  const C = useMemo(() => paleta(isDark), [isDark]);
+  const lm = useMemo(() => buildLm(C), [C]);
   const [items, setItems] = useState<any[]>([]);
   const [loading, setLoading] = useState(false);
 
@@ -205,11 +223,66 @@ function SavedVersesModal({ visible, userId, onClose }: {
   );
 }
 
+// ─── Histórico de Estudos ─────────────────────────────────────────────────────
+function ReadingHistoryModal({ visible, userId, onClose }: {
+  visible: boolean; userId: string | undefined; onClose: () => void;
+}) {
+  const { t } = useTranslation();
+  const { isDark } = useTheme();
+  const C = useMemo(() => paleta(isDark), [isDark]);
+  const lm = useMemo(() => buildLm(C), [C]);
+  const [items, setItems] = useState<any[]>([]);
+  const [loading, setLoading] = useState(false);
+
+  useEffect(() => {
+    if (!visible || !userId) return;
+    setLoading(true);
+    supabase.from('reading_history').select('*').eq('user_id', userId).order('lido_em', { ascending: false }).limit(100)
+      .then(({ data }) => { setItems(data ?? []); setLoading(false); });
+  }, [visible, userId]);
+
+  const formatarData = (iso: string) => new Date(iso).toLocaleDateString('pt-BR', { day: '2-digit', month: 'short', year: 'numeric' });
+
+  return (
+    <Modal visible={visible} animationType="slide" transparent>
+      <View style={lm.overlay}>
+        <View style={lm.sheet}>
+          <View style={lm.header}>
+            <Text style={lm.title}>{t('perfil.historicoDeEstudos')}</Text>
+            <TouchableOpacity onPress={onClose}><Ionicons name="close" size={22} color={C.textMuted} /></TouchableOpacity>
+          </View>
+          <ScrollView showsVerticalScrollIndicator={false}>
+            {loading ? (
+              <ActivityIndicator color={C.primary} style={{ marginVertical: 30 }} />
+            ) : items.length === 0 ? (
+              <View style={lm.empty}>
+                <Ionicons name="book-outline" size={40} color={C.textDim} />
+                <Text style={lm.emptyText}>{t('perfil.nenhumaLeituraAinda')}</Text>
+              </View>
+            ) : (
+              items.map(r => (
+                <View key={r.id} style={lm.item}>
+                  <Text style={[lm.itemText, { fontStyle: 'normal', fontWeight: '700' }]}>{r.livro} {r.capitulo}</Text>
+                  <Text style={lm.itemMeta}>{r.versao} · {formatarData(r.lido_em)}</Text>
+                </View>
+              ))
+            )}
+            <View style={{ height: 10 }} />
+          </ScrollView>
+        </View>
+      </View>
+    </Modal>
+  );
+}
+
 // ─── Pedidos de Oração ────────────────────────────────────────────────────────
 function PrayerRequestsModal({ visible, userId, onClose }: {
   visible: boolean; userId: string | undefined; onClose: () => void;
 }) {
   const { t } = useTranslation();
+  const { isDark } = useTheme();
+  const C = useMemo(() => paleta(isDark), [isDark]);
+  const lm = useMemo(() => buildLm(C), [C]);
   const [items, setItems] = useState<any[]>([]);
   const [loading, setLoading] = useState(false);
   const [showForm, setShowForm] = useState(false);
@@ -310,6 +383,9 @@ function OfferingsModal({ visible, userId, onClose }: {
   visible: boolean; userId: string | undefined; onClose: () => void;
 }) {
   const { t } = useTranslation();
+  const { isDark } = useTheme();
+  const C = useMemo(() => paleta(isDark), [isDark]);
+  const lm = useMemo(() => buildLm(C), [C]);
   const [items, setItems] = useState<any[]>([]);
   const [loading, setLoading] = useState(false);
 
@@ -368,6 +444,9 @@ function OfferingsModal({ visible, userId, onClose }: {
 // ─── Language Picker Modal ──────────────────────────────────────────────────
 function LanguagePickerModal({ visible, onClose }: { visible: boolean; onClose: () => void }) {
   const { t, i18n } = useTranslation();
+  const { isDark } = useTheme();
+  const C = useMemo(() => paleta(isDark), [isDark]);
+  const lang = useMemo(() => buildLang(C), [C]);
   return (
     <Modal visible={visible} animationType="slide" transparent onRequestClose={onClose}>
       <View style={lang.overlay}>
@@ -395,17 +474,57 @@ function LanguagePickerModal({ visible, onClose }: { visible: boolean; onClose: 
   );
 }
 
-const lang = StyleSheet.create({
+function buildLang(C: Paleta) { return StyleSheet.create({
   overlay: { flex: 1, justifyContent: 'flex-end', backgroundColor: 'rgba(0,0,0,0.5)' },
-  sheet: { backgroundColor: '#FFFFFF', borderTopLeftRadius: 24, borderTopRightRadius: 24, padding: 20, paddingBottom: 36 },
+  sheet: { backgroundColor: C.surface, borderTopLeftRadius: 24, borderTopRightRadius: 24, padding: 20, paddingBottom: 36 },
   header: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginBottom: 16 },
-  title: { fontSize: 18, fontWeight: '800', color: '#1A1A2E' },
+  title: { fontSize: 18, fontWeight: '800', color: C.text },
   opcao: { flexDirection: 'row', alignItems: 'center', gap: 12, paddingVertical: 14, paddingHorizontal: 12, borderRadius: 12, marginBottom: 4 },
-  opcaoAtiva: { backgroundColor: '#F0EDE8' },
+  opcaoAtiva: { backgroundColor: C.surfaceAlt },
   bandeira: { fontSize: 22 },
-  opcaoTexto: { flex: 1, fontSize: 15, color: '#1A1A2E', fontWeight: '500' },
+  opcaoTexto: { flex: 1, fontSize: 15, color: C.text, fontWeight: '500' },
   opcaoTextoAtiva: { fontWeight: '700' },
-});
+}); }
+
+// ─── Tema (Claro / Escuro / Automático) ──────────────────────────────────────
+function ThemeModePickerModal({ visible, onClose }: { visible: boolean; onClose: () => void }) {
+  const { t } = useTranslation();
+  const { mode, setMode, isDark } = useTheme();
+  const C = useMemo(() => paleta(isDark), [isDark]);
+  const lang = useMemo(() => buildLang(C), [C]);
+
+  const opcoes: { valor: ThemeMode; label: string; icon: keyof typeof Ionicons.glyphMap }[] = [
+    { valor: 'light', label: t('perfil.temaClaro'), icon: 'sunny-outline' },
+    { valor: 'dark', label: t('perfil.temaEscuro'), icon: 'moon-outline' },
+    { valor: 'system', label: t('perfil.temaAutomatico'), icon: 'phone-portrait-outline' },
+  ];
+
+  return (
+    <Modal visible={visible} animationType="slide" transparent onRequestClose={onClose}>
+      <View style={lang.overlay}>
+        <View style={lang.sheet}>
+          <View style={lang.header}>
+            <Text style={lang.title}>{t('perfil.escolherTema')}</Text>
+            <TouchableOpacity onPress={onClose}>
+              <Ionicons name="close" size={22} color={C.textMuted} />
+            </TouchableOpacity>
+          </View>
+          {opcoes.map(op => (
+            <TouchableOpacity
+              key={op.valor}
+              style={[lang.opcao, mode === op.valor && lang.opcaoAtiva]}
+              onPress={() => { setMode(op.valor); onClose(); }}
+            >
+              <Ionicons name={op.icon} size={20} color={mode === op.valor ? C.accent : C.textMuted} />
+              <Text style={[lang.opcaoTexto, mode === op.valor && lang.opcaoTextoAtiva]}>{op.label}</Text>
+              {mode === op.valor && <Ionicons name="checkmark-circle" size={20} color={C.accent} />}
+            </TouchableOpacity>
+          ))}
+        </View>
+      </View>
+    </Modal>
+  );
+}
 
 // ─── Excluir Conta ────────────────────────────────────────────────────────────
 // Exigido pela App Store (Guideline 5.1.1(v)): apps com criação de conta
@@ -414,6 +533,10 @@ const lang = StyleSheet.create({
 // mas o fluxo inteiro acontece dentro do app, sem depender de suporte.
 function DeleteAccountModal({ visible, onClose }: { visible: boolean; onClose: () => void }) {
   const { t } = useTranslation();
+  const { isDark } = useTheme();
+  const C = useMemo(() => paleta(isDark), [isDark]);
+  const em = useMemo(() => buildEm(C), [C]);
+  const dam = useMemo(() => buildDam(C), [C]);
   const [confirmText, setConfirmText] = useState('');
   const [deleting, setDeleting] = useState(false);
   const palavraConfirmacao = t('perfil.excluirPalavraConfirmacao');
@@ -502,26 +625,31 @@ function DeleteAccountModal({ visible, onClose }: { visible: boolean; onClose: (
   );
 }
 
-const dam = StyleSheet.create({
+function buildDam(_C: Paleta) { return StyleSheet.create({
   warningBox: { backgroundColor: '#FDEDEC', borderRadius: 12, padding: 14, marginBottom: 18, flexDirection: 'row', gap: 10, alignItems: 'flex-start' },
   warningText: { flex: 1, fontSize: 13, color: '#922B21', lineHeight: 19 },
   dangerBtn: { backgroundColor: '#C0392B', borderRadius: 12, paddingVertical: 14, alignItems: 'center', marginTop: 8 },
   dangerBtnDisabled: { opacity: 0.4 },
   dangerBtnText: { fontSize: 16, fontWeight: '700', color: '#fff' },
-});
+}); }
 
 // ─── Main Screen ──────────────────────────────────────────────────────────────
 export default function ProfileScreen() {
   const { t, i18n } = useTranslation();
   const { user, isLoggedIn } = useAuth();
+  const { isDark, mode, setMode } = useTheme();
+  const C = useMemo(() => paleta(isDark), [isDark]);
+  const styles = useMemo(() => buildStyles(C), [C]);
   const [notificationsEnabled, setNotificationsEnabled] = useState(true);
   const [profile, setProfile] = useState<any>(null);
   const [loadingProfile, setLoadingProfile] = useState(false);
   const [editModalVisible, setEditModalVisible] = useState(false);
   const [savedVersesVisible, setSavedVersesVisible] = useState(false);
+  const [readingHistoryVisible, setReadingHistoryVisible] = useState(false);
   const [prayerVisible, setPrayerVisible] = useState(false);
   const [offeringsVisible, setOfferingsVisible] = useState(false);
   const [languageModalVisible, setLanguageModalVisible] = useState(false);
+  const [themeModalVisible, setThemeModalVisible] = useState(false);
   const [deleteAccountVisible, setDeleteAccountVisible] = useState(false);
 
   const [uploadingAvatar, setUploadingAvatar] = useState(false);
@@ -629,13 +757,14 @@ export default function ProfileScreen() {
   };
 
   const idiomaAtual = IDIOMAS.find(i => i.codigo === i18n.language)?.label ?? '';
+  const temaAtualLabel = mode === 'dark' ? t('perfil.temaEscuro') : mode === 'light' ? t('perfil.temaClaro') : t('perfil.temaAutomatico');
 
   const sections: MenuSection[] = [
     {
       title: t('perfil.minhaIgreja'),
       items: [
         { icon: 'bookmark-outline', label: t('perfil.versiculosSalvos'), onPress: () => isLoggedIn ? setSavedVersesVisible(true) : Alert.alert(t('common.atencao'), t('perfil.faceLoginVersiculos')) },
-        { icon: 'book-outline', label: t('perfil.historicoDeEstudos'), onPress: () => Alert.alert(t('common.emBreve'), t('perfil.funcionalidadeEmBreve')) },
+        { icon: 'book-outline', label: t('perfil.historicoDeEstudos'), onPress: () => isLoggedIn ? setReadingHistoryVisible(true) : Alert.alert(t('common.atencao'), t('perfil.faceLoginHistorico')) },
         { icon: 'heart-outline', label: t('perfil.pedidosDeOracao'), onPress: () => isLoggedIn ? setPrayerVisible(true) : Alert.alert(t('common.atencao'), t('perfil.faceLoginOracao')) },
         { icon: 'gift-outline', label: t('perfil.minhasOfertas'), onPress: () => isLoggedIn ? setOfferingsVisible(true) : Alert.alert(t('common.atencao'), t('perfil.faceLoginOfertas')) },
       ],
@@ -653,7 +782,8 @@ export default function ProfileScreen() {
         },
         {
           icon: 'moon-outline', label: t('perfil.modoEscuro'),
-          onPress: () => Alert.alert(t('common.emBreve'), t('perfil.modoEscuroDesenvolvimento')),
+          onPress: () => setThemeModalVisible(true),
+          rightElement: <Text style={{ fontSize: 13, color: C.textMuted }}>{temaAtualLabel}</Text>,
         },
         {
           icon: 'language-outline', label: t('perfil.idioma'),
@@ -802,6 +932,11 @@ export default function ProfileScreen() {
         userId={user?.id}
         onClose={() => setSavedVersesVisible(false)}
       />
+      <ReadingHistoryModal
+        visible={readingHistoryVisible}
+        userId={user?.id}
+        onClose={() => setReadingHistoryVisible(false)}
+      />
       <PrayerRequestsModal
         visible={prayerVisible}
         userId={user?.id}
@@ -816,6 +951,10 @@ export default function ProfileScreen() {
         visible={languageModalVisible}
         onClose={() => setLanguageModalVisible(false)}
       />
+      <ThemeModePickerModal
+        visible={themeModalVisible}
+        onClose={() => setThemeModalVisible(false)}
+      />
       <DeleteAccountModal
         visible={deleteAccountVisible}
         onClose={() => setDeleteAccountVisible(false)}
@@ -824,7 +963,7 @@ export default function ProfileScreen() {
   );
 }
 
-const styles = StyleSheet.create({
+function buildStyles(C: Paleta) { return StyleSheet.create({
   safe: { flex: 1, backgroundColor: C.primary },
   header: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', paddingHorizontal: 20, paddingVertical: 14, backgroundColor: C.primary },
   headerTitle: { fontSize: 20, fontWeight: '700', color: '#FFFFFF', letterSpacing: 0.3 },
@@ -859,4 +998,4 @@ const styles = StyleSheet.create({
   menuRight: { marginLeft: 8 },
   version: { textAlign: 'center', fontSize: 12, color: C.textMuted, marginTop: 32 },
   versionSub: { textAlign: 'center', fontSize: 10, color: C.textDim, marginTop: 4 },
-});
+}); }
