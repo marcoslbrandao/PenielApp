@@ -104,6 +104,7 @@ grant execute on function public.meus_grupos() to authenticated;
 
 -- ─── grupo_eventos: só quem tem acesso ao grupo vê ─────────────────────────
 drop policy if exists "Qualquer usuário autenticado vê eventos de grupo" on public.grupo_eventos;
+drop policy if exists "Quem tem acesso ao grupo vê os eventos" on public.grupo_eventos;
 create policy "Quem tem acesso ao grupo vê os eventos"
   on public.grupo_eventos for select
   using (public.tem_acesso_grupo(grupo));
@@ -184,10 +185,12 @@ alter table public.shorts_videos
   add column if not exists grupo text check (grupo is null or grupo in ('mulheres', 'homens', 'jovens'));
 
 drop policy if exists "Qualquer um vê os shorts" on public.shorts_videos;
+drop policy if exists "Short geral é público" on public.shorts_videos;
 create policy "Short geral é público"
   on public.shorts_videos for select
   using (grupo is null);
 
+drop policy if exists "Short de grupo só pra quem tem acesso" on public.shorts_videos;
 create policy "Short de grupo só pra quem tem acesso"
   on public.shorts_videos for select
   using (grupo is not null and public.tem_acesso_grupo(grupo));
