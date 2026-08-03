@@ -132,6 +132,16 @@ android {
     }
 }
 
+// EAS Build gera esse arquivo remotamente (com o keystore de release gerenciado
+// pela Expo) e injeta o signingConfig de release automaticamente. Localmente
+// esse arquivo não existe, então o build continua caindo no signingConfig de
+// debug — sem isso aqui, o EAS builda o AAB de produção assinado com a chave
+// de debug, o que a Play Store rejeita/desaconselha.
+def easBuildGradle = file('./eas-build.gradle')
+if (easBuildGradle.exists()) {
+    apply from: easBuildGradle
+}
+
 // Apply static values from `gradle.properties` to the `android.packagingOptions`
 // Accepts values in comma delimited lists, example:
 // android.packagingOptions.pickFirsts=/LICENSE,**/picasa.ini
