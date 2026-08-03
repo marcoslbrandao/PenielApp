@@ -1,0 +1,168 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Política de Privacidade — Peniel Church App</title>
+<style>
+  :root {
+    --navy: #1A1542;
+    --violet: #7B61FF;
+    --gold: #F5C44C;
+    --text: #2A2550;
+    --muted: #6b6690;
+    --bg: #F9F8FF;
+  }
+  body {
+    margin: 0;
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+    background: var(--bg);
+    color: var(--text);
+    line-height: 1.6;
+  }
+  header {
+    background: var(--navy);
+    color: #fff;
+    padding: 40px 20px;
+    text-align: center;
+  }
+  header h1 { margin: 0 0 6px; font-size: 24px; }
+  header p { margin: 0; color: rgba(255,255,255,0.6); font-size: 14px; }
+  main {
+    max-width: 720px;
+    margin: 0 auto;
+    padding: 32px 20px 80px;
+  }
+  section { margin-bottom: 32px; }
+  h2 {
+    font-size: 18px;
+    color: var(--navy);
+    border-left: 4px solid var(--violet);
+    padding-left: 10px;
+    margin-bottom: 12px;
+  }
+  h3 { font-size: 15px; color: var(--navy); margin-bottom: 6px; }
+  p, li { font-size: 14.5px; color: var(--text); }
+  ul { padding-left: 20px; }
+  .muted { color: var(--muted); font-size: 13px; }
+  table { width: 100%; border-collapse: collapse; margin: 12px 0; font-size: 13.5px; }
+  th, td { text-align: left; padding: 8px 10px; border-bottom: 1px solid rgba(83,74,183,0.15); vertical-align: top; }
+  th { color: var(--navy); }
+  .card {
+    background: #fff;
+    border: 1px solid rgba(83,74,183,0.15);
+    border-radius: 12px;
+    padding: 18px 20px;
+  }
+  a { color: var(--violet); }
+  footer {
+    text-align: center;
+    padding: 24px;
+    color: var(--muted);
+    font-size: 12.5px;
+  }
+</style>
+</head>
+<body>
+
+<header>
+  <h1>Política de Privacidade</h1>
+  <p>Peniel Church App — última atualização: 3 de agosto de 2026</p>
+</header>
+
+<main>
+
+<section class="card">
+  <p>Esta política explica quais dados o aplicativo <strong>Peniel Church</strong> (org.uk.penielchurch.app),
+  desenvolvido e mantido pela Peniel Church (Abbey Square, Reading, RG1 3BE, Reino Unido), coleta, como usa e
+  como você pode controlar ou apagar essas informações.</p>
+  <p>Ao usar o app, você concorda com esta política. Se tiver dúvidas, entre em contato pelo e-mail
+  <a href="mailto:marcosbrandao@me.com">marcosbrandao@me.com</a>.</p>
+</section>
+
+<section>
+  <h2>1. Quais dados coletamos</h2>
+
+  <h3>Conta e autenticação</h3>
+  <p>Para criar uma conta, pedimos e-mail e senha. A autenticação é feita através do Supabase (nosso provedor de
+  backend), que armazena essas credenciais de forma criptografada.</p>
+
+  <h3>Perfil e área de membro</h3>
+  <table>
+    <tr><th>Dado</th><th>Finalidade</th></tr>
+    <tr><td>Nome, foto de perfil</td><td>Identificação dentro do app e da comunidade da igreja</td></tr>
+    <tr><td>Telefone, endereço/complemento</td><td>Cadastro de membros e contato pastoral</td></tr>
+    <tr><td>Data de nascimento</td><td>Lembretes de aniversário para a comunidade</td></tr>
+    <tr><td>Igreja/ministério anterior, área em que deseja servir</td><td>Processo de integração de novos membros</td></tr>
+    <tr><td>Foto via câmera ou galeria</td><td>Atualização da foto de perfil (só quando você escolhe enviar uma)</td></tr>
+  </table>
+
+  <h3>Contribuições e ofertas</h3>
+  <p>Pagamentos (Apple Pay, Google Pay ou cartão) são processados diretamente pela <strong>Stripe</strong>. O app
+  não recebe nem armazena números de cartão — apenas o valor, o tipo de contribuição (dízimo/oferta) e a
+  confirmação do pagamento.</p>
+
+  <h3>Notificações push</h3>
+  <p>Se você permitir notificações, armazenamos um token de identificação do seu dispositivo (via Expo) para
+  enviar avisos, lembretes de eventos e notificações de aniversário.</p>
+
+  <h3>Uso do app</h3>
+  <p>Conteúdo que você gera dentro do app — mensagens em chats de grupo, pedidos de oração, versículos salvos,
+  histórico de leitura da Bíblia — fica associado à sua conta.</p>
+</section>
+
+<section>
+  <h2>2. Com quem compartilhamos dados</h2>
+  <p>Não vendemos seus dados. Compartilhamos informações apenas com prestadores de serviço necessários para o
+  funcionamento do app:</p>
+  <ul>
+    <li><strong>Supabase</strong> — banco de dados, autenticação e hospedagem de arquivos.</li>
+    <li><strong>Stripe</strong> — processamento de pagamentos (Apple Pay / Google Pay / cartão).</li>
+    <li><strong>Expo (EAS)</strong> — envio de notificações push e atualizações do app.</li>
+    <li><strong>YouTube Data API</strong> — exibição de vídeos e transmissões da igreja (nenhum dado pessoal seu é
+    enviado ao YouTube por esse uso).</li>
+  </ul>
+</section>
+
+<section>
+  <h2>3. Seus direitos</h2>
+  <p>Você pode a qualquer momento:</p>
+  <ul>
+    <li><strong>Acessar e corrigir</strong> seus dados diretamente na tela de Perfil do app.</li>
+    <li><strong>Excluir sua conta</strong> — dentro do app, em Perfil, há a opção de exclusão definitiva da conta.
+    Isso remove seu perfil, versículos salvos, pedidos de oração, histórico de leitura, tokens de notificação e a
+    conta de autenticação. Essa ação não pode ser desfeita.</li>
+    <li><strong>Solicitar por e-mail</strong> qualquer uma dessas ações escrevendo para
+    <a href="mailto:marcosbrandao@me.com">marcosbrandao@me.com</a>.</li>
+  </ul>
+</section>
+
+<section>
+  <h2>4. Menores de idade</h2>
+  <p>O app tem uma área para o grupo de jovens ("Alive"). Não coletamos intencionalmente dados de crianças abaixo
+  da idade mínima exigida pela legislação local sem o consentimento de um responsável. Se um responsável
+  identificar que um menor forneceu dados sem autorização, pode solicitar a remoção pelo e-mail de contato acima.</p>
+</section>
+
+<section>
+  <h2>5. Segurança e retenção</h2>
+  <p>Os dados ficam armazenados em servidores do Supabase com controle de acesso por linha (Row Level Security) —
+  cada usuário só acessa o que lhe pertence, e dados sensíveis (como notas administrativas) ficam restritos a
+  administradores e líderes autorizados. Mantemos os dados enquanto sua conta estiver ativa ou conforme exigido
+  por lei.</p>
+</section>
+
+<section>
+  <h2>6. Alterações nesta política</h2>
+  <p>Podemos atualizar esta política conforme o app evolui. A data no topo desta página sempre indica a versão
+  mais recente.</p>
+</section>
+
+</main>
+
+<footer>
+  Peniel Church — Abbey Square, Reading, RG1 3BE, Reino Unido
+</footer>
+
+</body>
+</html>
