@@ -60,7 +60,7 @@ export default function OfertaScreen({ navigation }: { navigation?: any }) {
   useEffect(() => {
     (async () => {
       try {
-        const disponivel = await isPlatformPaySupported({ googlePay: { testEnv: true } });
+        const disponivel = await isPlatformPaySupported({ googlePay: { testEnv: false } });
         console.log('🍎 Apple/Google Pay disponível?', disponivel);
         setPlatformPayDisponivel(disponivel);
       } catch (e) {
@@ -130,7 +130,7 @@ export default function OfertaScreen({ navigation }: { navigation?: any }) {
           currencyCode: 'GBP',
         },
         googlePay: {
-          testEnv: true,
+          testEnv: false,
           merchantName: 'Peniel Church',
           merchantCountryCode: 'GB',
           currencyCode: 'GBP',
