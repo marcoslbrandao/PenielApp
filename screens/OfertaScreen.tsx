@@ -1,6 +1,6 @@
 import { View, Text, StyleSheet, ScrollView, TouchableOpacity, Linking, Alert, TextInput, Platform } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
-import { useState, useMemo, useEffect } from 'react';
+import { useState, useMemo } from 'react';
 import { useTranslation } from 'react-i18next';
 import { useTheme } from '../lib/theme';
 import { PlatformPayButton, usePlatformPay, PlatformPay } from '@stripe/stripe-react-native';
@@ -53,21 +53,14 @@ export default function OfertaScreen({ navigation }: { navigation?: any }) {
   const [recorrencia, setRecorrencia] = useState('unica');
 
   // ─── Apple Pay / Google Pay via Stripe ────────────────────────────────────
-  const { isPlatformPaySupported, confirmPlatformPayPayment } = usePlatformPay();
-  const [platformPayDisponivel, setPlatformPayDisponivel] = useState(false);
+  // Mostramos o botão sempre (para quem está no iOS/Android), independente
+  // de canMakePayments/isPlatformPaySupported — esse check exige cartão já
+  // configurado na Wallet do dispositivo, o que faz o botão sumir em
+  // dispositivos "limpos" (incluindo o do revisor da Apple). Se o usuário
+  // tocar sem ter Apple/Google Pay configurado, o erro é tratado no catch
+  // de handlePlatformPay com um Alert amigável.
+  const { confirmPlatformPayPayment } = usePlatformPay();
   const [processandoPagamento, setProcessandoPagamento] = useState(false);
-
-  useEffect(() => {
-    (async () => {
-      try {
-        const disponivel = await isPlatformPaySupported({ googlePay: { testEnv: false } });
-        console.log('🍎 Apple/Google Pay disponível?', disponivel);
-        setPlatformPayDisponivel(disponivel);
-      } catch (e) {
-        console.log('🍎 Erro ao checar Platform Pay:', e);
-      }
-    })();
-  }, [isPlatformPaySupported]);
 
   const valorFinal = outroAtivo ? Number(valorCustom.replace(',', '.')) || 0 : valorSelecionado;
 
@@ -282,9 +275,10 @@ export default function OfertaScreen({ navigation }: { navigation?: any }) {
         </View>
 
         {/* ── Apple Pay / Google Pay ───────────────────────────────────────────
-             Só aparece se o dispositivo suportar e só faz sentido pra
-             contribuição única (recorrência mensal continua via SumUp). */}
-        {platformPayDisponivel && recorrencia === 'unica' && (
+             Aparece sempre para contribuição única (recorrência mensal
+             continua via SumUp), independente de haver cartão configurado
+             na Wallet — ver nota acima sobre isPlatformPaySupported. */}
+        {recorrencia === 'unica' && (
           <PlatformPayButton
             onPress={handlePlatformPay}
             type={PlatformPay.ButtonType.Donate}
