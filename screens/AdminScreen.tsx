@@ -3,7 +3,7 @@ import {
   View, Text, StyleSheet, ScrollView, TouchableOpacity,
   TextInput, Alert, StatusBar, ActivityIndicator,
   Share, RefreshControl, Modal, Image,
-  KeyboardAvoidingView, Platform,
+  KeyboardAvoidingView, Platform, Linking,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
@@ -60,6 +60,16 @@ type ShortVideo = { id: string; titulo: string; url: string; plataforma: string 
 type MensagemBlog = {
   id: string; titulo: string; resumo: string; conteudo: string;
   imagem_url: string | null; autor: string; data: string;
+};
+
+type ContactMessage = {
+  id: string; nome: string; email: string | null; grupo: string | null;
+  mensagem: string; status: 'novo' | 'lido' | 'respondido'; created_at: string;
+};
+
+const NOME_GRUPO: Record<string, string> = {
+  mulheres: 'Grupo de Mulheres', homens: 'Grupo de Homens',
+  jovens: 'Peniel Alive', estudo_biblico: 'Estudo Bíblico',
 };
 
 type EscalaArea = { id: string; nome: string; vagas_padrao: number };
@@ -1324,6 +1334,7 @@ export default function AdminScreen() {
   const [eventosAgenda, setEventosAgenda] = useState<AgendaEvento[]>([]);
   const [shorts, setShorts] = useState<ShortVideo[]>([]);
   const [mensagens, setMensagens] = useState<MensagemBlog[]>([]);
+  const [contatoMensagens, setContatoMensagens] = useState<ContactMessage[]>([]);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   const [modalVisible, setModalVisible] = useState(false);
@@ -1339,7 +1350,7 @@ export default function AdminScreen() {
   const [areaModalVisible, setAreaModalVisible] = useState(false);
   const [areaGerenciarVisible, setAreaGerenciarVisible] = useState<EscalaArea | null>(null);
   const [gerarEscalaModalVisible, setGerarEscalaModalVisible] = useState(false);
-  const [activeTab, setActiveTab] = useState<'convites' | 'stats' | 'ofertas' | 'avisos' | 'devocionais' | 'agenda' | 'shorts' | 'mensagens' | 'escalas'>('convites');
+  const [activeTab, setActiveTab] = useState<'convites' | 'stats' | 'ofertas' | 'avisos' | 'devocionais' | 'agenda' | 'shorts' | 'mensagens' | 'escalas' | 'contato'>('convites');
   // São 9 abas e só ~3 cabem na tela por vez — sem esse indicador, dava a
   // impressão de que a lista de abas estava cortada/quebrada (só aparecia
   // uma lasquinha do ícone da 4ª aba na borda). A setinha "→" avisa que dá
@@ -1396,6 +1407,10 @@ export default function AdminScreen() {
     const { data: mensagensData } = await supabase
       .from('mensagens').select('*').order('data', { ascending: false });
     if (mensagensData) setMensagens(mensagensData as MensagemBlog[]);
+    // Mensagens de contato (enviadas pelo botão "Contato" nos grupos)
+    const { data: contatoData } = await supabase
+      .from('contact_messages').select('*').order('created_at', { ascending: false }).limit(200);
+    if (contatoData) setContatoMensagens(contatoData as ContactMessage[]);
     // Escalas — áreas, time de cada uma, e quais áreas o usuário logado lidera
     const { data: areasData } = await supabase.from('escala_areas').select('*').order('nome');
     if (areasData) setEscalaAreas(areasData as EscalaArea[]);
@@ -1445,6 +1460,27 @@ export default function AdminScreen() {
         fetchData();
       }},
     ]);
+  };
+
+  const marcarContatoRespondido = async (id: string) => {
+    await supabase.from('contact_messages').update({ status: 'respondido' }).eq('id', id);
+    fetchData();
+  };
+
+  const deleteContato = (id: string) => {
+    Alert.alert('Remover Mensagem', 'Deseja remover esta mensagem de contato?', [
+      { text: 'Cancelar', style: 'cancel' },
+      { text: 'Remover', style: 'destructive', onPress: async () => {
+        await supabase.from('contact_messages').delete().eq('id', id);
+        fetchData();
+      }},
+    ]);
+  };
+
+  const responderPorEmail = (msg: ContactMessage) => {
+    if (!msg.email) return;
+    const assunto = msg.grupo ? `Re: ${NOME_GRUPO[msg.grupo] ?? msg.grupo} — Peniel Church App` : 'Re: Peniel Church App';
+    Linking.openURL(`mailto:${msg.email}?subject=${encodeURIComponent(assunto)}`).catch(() => {});
   };
 
   const deleteEvento = (id: string) => {
@@ -1532,7 +1568,7 @@ export default function AdminScreen() {
           <Text style={s.headerTitle}>Painel Admin</Text>
           <Text style={s.headerSub}>{role === 'admin' ? 'Administrador' : 'Líder'}</Text>
         </View>
-        {!(activeTab === 'escalas' && role !== 'admin') && (
+        {!(activeTab === 'escalas' && role !== 'admin') && activeTab !== 'contato' && (
           <TouchableOpacity
             style={s.newBtn}
             onPress={() => {
@@ -1567,19 +1603,22 @@ export default function AdminScreen() {
             setTabsScrollFim(contentOffset.x + layoutMeasurement.width >= contentSize.width - 12);
           }}
         >
-          {(['convites', 'avisos', 'devocionais', 'mensagens', 'agenda', 'shorts', 'ofertas', 'escalas', 'stats'] as const).map(tab => (
+          {(['convites', 'avisos', 'devocionais', 'mensagens', 'contato', 'agenda', 'shorts', 'ofertas', 'escalas', 'stats'] as const).map(tab => (
             <TouchableOpacity
               key={tab}
               style={[s.tabBtn, activeTab === tab && s.tabBtnActive]}
               onPress={() => setActiveTab(tab)}
             >
               <Ionicons
-                name={tab === 'convites' ? 'ticket-outline' : tab === 'avisos' ? 'megaphone-outline' : tab === 'devocionais' ? 'book-outline' : tab === 'mensagens' ? 'newspaper-outline' : tab === 'agenda' ? 'calendar-outline' : tab === 'shorts' ? 'film-outline' : tab === 'ofertas' ? 'gift-outline' : tab === 'escalas' ? 'people-circle-outline' : 'bar-chart-outline'}
+                name={tab === 'convites' ? 'ticket-outline' : tab === 'avisos' ? 'megaphone-outline' : tab === 'devocionais' ? 'book-outline' : tab === 'mensagens' ? 'newspaper-outline' : tab === 'contato' ? 'chatbubble-ellipses-outline' : tab === 'agenda' ? 'calendar-outline' : tab === 'shorts' ? 'film-outline' : tab === 'ofertas' ? 'gift-outline' : tab === 'escalas' ? 'people-circle-outline' : 'bar-chart-outline'}
                 size={14}
                 color={activeTab === tab ? C.purple : C.textMuted}
               />
+              {tab === 'contato' && contatoMensagens.some(m => m.status === 'novo') && (
+                <View style={s.tabDot} />
+              )}
               <Text style={[s.tabBtnText, activeTab === tab && { color: C.purple, fontWeight: '700' }]}>
-                {tab === 'convites' ? 'Convites' : tab === 'avisos' ? 'Avisos' : tab === 'devocionais' ? 'Devocionais' : tab === 'mensagens' ? 'Mensagens' : tab === 'agenda' ? 'Agenda' : tab === 'shorts' ? 'Shorts' : tab === 'ofertas' ? 'Ofertas' : tab === 'escalas' ? 'Escalas' : 'Estatísticas'}
+                {tab === 'convites' ? 'Convites' : tab === 'avisos' ? 'Avisos' : tab === 'devocionais' ? 'Devocionais' : tab === 'mensagens' ? 'Mensagens' : tab === 'contato' ? 'Contato' : tab === 'agenda' ? 'Agenda' : tab === 'shorts' ? 'Shorts' : tab === 'ofertas' ? 'Ofertas' : tab === 'escalas' ? 'Escalas' : 'Estatísticas'}
               </Text>
             </TouchableOpacity>
           ))}
@@ -1786,6 +1825,79 @@ export default function AdminScreen() {
                     </View>
                     <View style={s.inviteActions}>
                       <TouchableOpacity style={[s.actionBtn, { borderColor: C.danger + '40' }]} onPress={() => deleteMensagem(m.id)}>
+                        <Ionicons name="trash-outline" size={16} color={C.danger} />
+                      </TouchableOpacity>
+                    </View>
+                  </View>
+                ))
+              )}
+            </>
+          )}
+
+          {/* ══ CONTATO ═══════════════════════════════════════════════════════ */}
+          {activeTab === 'contato' && (
+            <>
+              <Text style={{ fontSize: 12, color: C.textMuted, marginBottom: 12, lineHeight: 18 }}>
+                Mensagens enviadas pelo botão "Contato" nos grupos (e visitantes sem conta). Ninguém mais vê essas mensagens.
+              </Text>
+              <View style={s.summaryRow}>
+                <View style={s.summaryCard}>
+                  <Text style={[s.summaryNum, { color: C.danger }]}>{contatoMensagens.filter(m => m.status !== 'respondido').length}</Text>
+                  <Text style={s.summaryLabel}>Pendentes</Text>
+                </View>
+                <View style={s.summaryCard}>
+                  <Text style={[s.summaryNum, { color: C.purple }]}>{contatoMensagens.length}</Text>
+                  <Text style={s.summaryLabel}>Total</Text>
+                </View>
+              </View>
+              {contatoMensagens.length === 0 ? (
+                <View style={s.empty}>
+                  <Ionicons name="chatbubble-ellipses-outline" size={40} color={C.textDim} />
+                  <Text style={s.emptyText}>Nenhuma mensagem de contato ainda</Text>
+                </View>
+              ) : (
+                contatoMensagens.map(msg => (
+                  <View key={msg.id} style={s.inviteCard}>
+                    <View style={s.inviteLeft}>
+                      <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
+                        <Text style={s.inviteCode}>{msg.nome}</Text>
+                        {!!msg.grupo && (
+                          <View style={[s.statusBadge, { backgroundColor: C.purple + '18' }]}>
+                            <Text style={[s.statusBadgeText, { color: C.purple }]}>{NOME_GRUPO[msg.grupo] ?? msg.grupo}</Text>
+                          </View>
+                        )}
+                      </View>
+                      {!!msg.email && (
+                        <View style={s.inviteEmailRow}>
+                          <Ionicons name="mail-outline" size={12} color={C.textMuted} />
+                          <Text style={s.inviteEmail}>{msg.email}</Text>
+                        </View>
+                      )}
+                      <Text style={[s.inviteEmail, { marginTop: 4 }]}>{msg.mensagem}</Text>
+                      <View style={s.inviteMetaRow}>
+                        <View style={[s.statusBadge, {
+                          backgroundColor: msg.status === 'respondido' ? C.success + '18' : msg.status === 'lido' ? C.textMuted + '20' : C.danger + '18',
+                        }]}>
+                          <Text style={[s.statusBadgeText, {
+                            color: msg.status === 'respondido' ? C.success : msg.status === 'lido' ? C.textMuted : C.danger,
+                          }]}>
+                            {msg.status === 'respondido' ? '✓ Respondido' : msg.status === 'lido' ? 'Lido' : '● Novo'} · {formatDate(msg.created_at)}
+                          </Text>
+                        </View>
+                      </View>
+                    </View>
+                    <View style={s.inviteActions}>
+                      {!!msg.email && (
+                        <TouchableOpacity style={s.actionBtn} onPress={() => responderPorEmail(msg)}>
+                          <Ionicons name="arrow-undo-outline" size={16} color={C.purple} />
+                        </TouchableOpacity>
+                      )}
+                      {msg.status !== 'respondido' && (
+                        <TouchableOpacity style={[s.actionBtn, { borderColor: C.success + '40' }]} onPress={() => marcarContatoRespondido(msg.id)}>
+                          <Ionicons name="checkmark-circle-outline" size={16} color={C.success} />
+                        </TouchableOpacity>
+                      )}
+                      <TouchableOpacity style={[s.actionBtn, { borderColor: C.danger + '40' }]} onPress={() => deleteContato(msg.id)}>
                         <Ionicons name="trash-outline" size={16} color={C.danger} />
                       </TouchableOpacity>
                     </View>
@@ -2143,6 +2255,7 @@ const s = StyleSheet.create({
   tabBtn: { flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 4, paddingVertical: 12, paddingHorizontal: 10 },
   tabBtnActive: { borderBottomWidth: 2, borderBottomColor: C.purple },
   tabBtnText: { fontSize: 12.5, color: C.textMuted, fontWeight: '500' },
+  tabDot: { width: 6, height: 6, borderRadius: 3, backgroundColor: C.danger },
   scroll: { padding: 16, paddingBottom: 40 },
   sectionLabel: { fontSize: 11, color: C.textMuted, fontWeight: '700', letterSpacing: 1, textTransform: 'uppercase', marginBottom: 12 },
   // Summary

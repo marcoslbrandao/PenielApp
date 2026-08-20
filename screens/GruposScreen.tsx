@@ -13,6 +13,7 @@ import { useCampoTraduzido } from '../lib/useTraducao';
 import { useAuth } from '../lib/useAuth';
 import GrupoAdminModal from '../components/GrupoAdminModal';
 import GrupoChatModal from '../components/GrupoChatModal';
+import ContatoModal from '../components/ContatoModal';
 import { useTheme } from '../lib/theme';
 
 // ─── Palette ──────────────────────────────────────────────────────────────────
@@ -92,8 +93,7 @@ function buildGrupos(t: (key: string) => string, C: Paleta) {
       cor: C.mulheres,
       corDim: C.mulheresDim,
       descricao: t('grupos.mulheresDescricao'),
-      whatsapp: '447540880456',
-      mensagemWA: 'Olá! Quero saber mais sobre o Grupo de Mulheres da Peniel Church.',
+      mensagemContato: 'Olá! Quero saber mais sobre o Grupo de Mulheres da Peniel Church.',
     },
     homens: {
       nome: t('grupos.homensNome'),
@@ -102,8 +102,7 @@ function buildGrupos(t: (key: string) => string, C: Paleta) {
       cor: C.homens,
       corDim: C.homensDim,
       descricao: t('grupos.homensDescricao'),
-      whatsapp: '447540880456',
-      mensagemWA: 'Olá! Quero saber mais sobre o Grupo de Homens da Peniel Church.',
+      mensagemContato: 'Olá! Quero saber mais sobre o Grupo de Homens da Peniel Church.',
     },
     jovens: {
       nome: t('grupos.jovensNome'),
@@ -112,8 +111,7 @@ function buildGrupos(t: (key: string) => string, C: Paleta) {
       cor: C.jovens,
       corDim: C.jovensDim,
       descricao: t('grupos.jovensDescricao'),
-      whatsapp: '447540880456',
-      mensagemWA: 'Olá! Quero saber mais sobre o Peniel Alive.',
+      mensagemContato: 'Olá! Quero saber mais sobre o Peniel Alive.',
     },
     estudo_biblico: {
       nome: t('grupos.estudoBiblicoNome'),
@@ -122,8 +120,7 @@ function buildGrupos(t: (key: string) => string, C: Paleta) {
       cor: C.estudoBiblico,
       corDim: C.estudoBiblicoDim,
       descricao: t('grupos.estudoBiblicoDescricao'),
-      whatsapp: '447540880456',
-      mensagemWA: 'Olá! Quero saber mais sobre o Estudo Bíblico da Peniel Church.',
+      mensagemContato: 'Olá! Quero saber mais sobre o Estudo Bíblico da Peniel Church.',
     },
   };
 }
@@ -532,6 +529,7 @@ export default function GruposScreen() {
   const [adminModalVisible, setAdminModalVisible] = useState(false);
   const [chatModalVisible, setChatModalVisible] = useState(false);
   const [lideresModalVisible, setLideresModalVisible] = useState(false);
+  const [contatoModalVisible, setContatoModalVisible] = useState(false);
 
   const grupo = GRUPOS[activeTab];
   const souLiderDesteGrupo = isAdmin || gruposLiderados.includes(activeTab);
@@ -597,10 +595,7 @@ export default function GruposScreen() {
     fetchGrupoData(activeTab, temAcessoConteudo);
   }, [activeTab, temAcessoConteudo, permissoesCarregadas, fetchGrupoData]);
 
-  const openWhatsApp = () => {
-    const url = `https://wa.me/${grupo.whatsapp}?text=${encodeURIComponent(grupo.mensagemWA)}`;
-    Linking.openURL(url).catch(() => Alert.alert(t('common.erro'), t('grupos.erroWhatsapp')));
-  };
+  const abrirContato = () => setContatoModalVisible(true);
 
   const tipoTag = (tipo: string) => {
     switch (tipo) {
@@ -661,8 +656,8 @@ export default function GruposScreen() {
               <Ionicons name="ribbon-outline" size={16} color="#fff" />
             </TouchableOpacity>
           )}
-          <TouchableOpacity style={[s.waBtn, { backgroundColor: grupo.cor + '20', borderColor: grupo.cor + '40' }]} onPress={openWhatsApp}>
-            <Ionicons name="logo-whatsapp" size={16} color={grupo.cor} />
+          <TouchableOpacity style={[s.waBtn, { backgroundColor: grupo.cor + '20', borderColor: grupo.cor + '40' }]} onPress={abrirContato}>
+            <Ionicons name="chatbubble-ellipses-outline" size={16} color={grupo.cor} />
             <Text style={[s.waBtnText, { color: grupo.cor }]}>{t('grupos.contato')}</Text>
           </TouchableOpacity>
         </View>
@@ -822,13 +817,22 @@ export default function GruposScreen() {
         )}
 
         {/* Botão de contato */}
-        <TouchableOpacity style={[s.contactBtn, { backgroundColor: grupo.cor }]} onPress={openWhatsApp}>
-          <Ionicons name="logo-whatsapp" size={20} color="#fff" />
+        <TouchableOpacity style={[s.contactBtn, { backgroundColor: grupo.cor }]} onPress={abrirContato}>
+          <Ionicons name="chatbubble-ellipses-outline" size={20} color="#fff" />
           <Text style={s.contactBtnText}>{t('grupos.entrarContatoLider')}</Text>
         </TouchableOpacity>
 
         <View style={{ height: 32 }} />
       </ScrollView>
+
+      <ContatoModal
+        visible={contatoModalVisible}
+        grupo={activeTab}
+        grupoNome={grupo.nome}
+        cor={grupo.cor}
+        mensagemInicial={grupo.mensagemContato}
+        onClose={() => setContatoModalVisible(false)}
+      />
 
       <GerenciarParticipantesModal
         visible={participantesModalVisible}

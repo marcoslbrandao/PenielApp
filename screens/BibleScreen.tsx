@@ -3,6 +3,7 @@ import { Ionicons } from '@expo/vector-icons';
 import { useState, useEffect, useMemo } from 'react';
 import { useTranslation } from 'react-i18next';
 import { useRoute, useNavigation } from '@react-navigation/native';
+import AsyncStorage from '@react-native-async-storage/async-storage';
 import { supabase } from '../lib/supabase';
 import { useAuth } from '../lib/useAuth';
 import { getVersiculoDoDia, parseReferencia, getTextoVersiculo, getReferenciaVersiculo, getVersaoVersiculo } from '../lib/versiculoDoDia';
@@ -82,6 +83,7 @@ function LeitorModal({ livro, versao, capInicial, onClose }: {
   const [versos, setVersos] = useState<Verso[]>([]);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
+  const [doCache, setDoCache] = useState(false);
   const langKey = getLangKey(versao.apiId);
   const nomeExibido = livro ? nomeLivro(livro, langKey) : '';
 
@@ -95,36 +97,92 @@ function LeitorModal({ livro, versao, capInicial, onClose }: {
     }).then(() => {});
   };
 
+  // Cache local do que a própria pessoa já leu (não é uma cópia da Bíblia
+  // inteira — só vai guardando capítulo por capítulo conforme o usuário
+  // acessa). Serve pra continuar funcionando quando o provedor externo
+  // (abibliadigital.com.br) está fora do ar, sem depender de redistribuir o
+  // texto todo — só o que já foi legitimamente carregado nesse aparelho.
+  const chaveCache = (cap: number) => `@biblia_cache_${versao.apiId}_${livro?.slug}_${cap}`;
+
+  const salvarNoCache = (cap: number, lista: Verso[]) => {
+    AsyncStorage.setItem(chaveCache(cap), JSON.stringify(lista)).catch(() => {});
+  };
+
+  const carregarDoCache = async (cap: number): Promise<Verso[] | null> => {
+    try {
+      const raw = await AsyncStorage.getItem(chaveCache(cap));
+      return raw ? (JSON.parse(raw) as Verso[]) : null;
+    } catch {
+      return null;
+    }
+  };
+
   const buscarCapitulo = async (cap: number) => {
     if (!livro) return;
     setLoading(true);
     setError('');
     setVersos([]);
+    setDoCache(false);
+    // Distingue "sem internet" (fetch nunca chega a responder) de "o serviço
+    // externo (abibliadigital.com.br) está fora do ar" (respondeu, mas com
+    // erro/HTTP não-ok/corpo inválido) — antes os dois casos caíam no mesmo
+    // catch e mostravam "sem conexão", o que confundia quando o problema era
+    // do provedor da Bíblia, não da internet do usuário.
+    let recebeuAlgumaResposta = false;
     try {
       const token = process.env.EXPO_PUBLIC_BIBLE_API_TOKEN;
       const headers: Record<string, string> = token ? { Authorization: `Bearer ${token}` } : {};
       // Tenta a abreviação "nativa" da versão primeiro (pt para nvi/ra, en para
       // kjv); se não encontrar, tenta a outra abreviação antes de desistir.
       let data: any = null;
+      let servicoIndisponivel = false;
       for (const abbrev of abreviaturasParaTentar(livro, versao.apiId)) {
         const url = `https://www.abibliadigital.com.br/api/verses/${versao.apiId}/${abbrev}/${cap}`;
         const res = await fetch(url, { headers });
-        data = await res.json();
-        if (!data?.error && data?.verses?.length > 0) break;
+        recebeuAlgumaResposta = true;
+        if (!res.ok) { servicoIndisponivel = true; continue; }
+        try {
+          data = await res.json();
+        } catch {
+          // Resposta não-JSON (ex.: página de erro HTML do provedor) — serviço fora do ar.
+          servicoIndisponivel = true;
+          data = null;
+          continue;
+        }
+        if (!data?.error && data?.verses?.length > 0) { servicoIndisponivel = false; break; }
       }
-      if (!data || data.error || !data.verses || data.verses.length === 0) {
+      if (servicoIndisponivel && (!data || !data.verses || data.verses.length === 0)) {
+        const doCacheLista = await carregarDoCache(cap);
+        if (doCacheLista && doCacheLista.length > 0) {
+          setVersos(doCacheLista);
+          setDoCache(true);
+        } else {
+          setError(t('biblia.servicoIndisponivel'));
+        }
+      } else if (!data || data.error || !data.verses || data.verses.length === 0) {
         setError(t('biblia.capituloNaoEncontrado'));
       } else {
-        setVersos(data.verses.map((v: any) => ({
+        const lista = data.verses.map((v: any) => ({
           book_name: data.book?.name ?? nomeExibido,
           chapter: data.chapter?.number ?? cap,
           verse: v.number,
           text: v.text,
-        })));
+        }));
+        setVersos(lista);
+        salvarNoCache(cap, lista);
         registrarLeitura(data.book?.name ?? nomeExibido, data.chapter?.number ?? cap);
       }
     } catch {
-      setError(t('biblia.semConexao'));
+      // fetch nunca respondeu (falha de rede real) vs. respondeu e algo depois
+      // deu erro inesperado — só o primeiro caso é "sem conexão" de verdade.
+      // De qualquer forma, tenta o cache local antes de mostrar erro.
+      const doCacheLista = await carregarDoCache(cap);
+      if (doCacheLista && doCacheLista.length > 0) {
+        setVersos(doCacheLista);
+        setDoCache(true);
+      } else {
+        setError(recebeuAlgumaResposta ? t('biblia.servicoIndisponivel') : t('biblia.semConexao'));
+      }
     }
     setLoading(false);
   };
@@ -206,6 +264,12 @@ function LeitorModal({ livro, versao, capInicial, onClose }: {
               </TouchableOpacity>
             </View>
           )}
+          {!loading && !error && doCache && (
+            <View style={lr.cacheAviso}>
+              <Ionicons name="cloud-offline-outline" size={14} color="#F5C842" />
+              <Text style={lr.cacheAvisoTexto}>{t('biblia.mostrandoSalvoLocalmente')}</Text>
+            </View>
+          )}
           {!loading && !error && versos.map(v => (
             <View key={v.verse} style={lr.versoRow}>
               <Text style={lr.versoNum}>{v.verse}</Text>
@@ -239,6 +303,8 @@ const lr = StyleSheet.create({
   errorWrap: { alignItems: 'center', paddingTop: 60, gap: 12 },
   errorText: { color: 'rgba(255,255,255,0.5)', fontSize: 14, textAlign: 'center', lineHeight: 22 },
   retryBtn: { backgroundColor: 'rgba(245,200,66,0.2)', paddingHorizontal: 20, paddingVertical: 10, borderRadius: 20, marginTop: 8 },
+  cacheAviso: { flexDirection: 'row', alignItems: 'center', gap: 6, backgroundColor: 'rgba(245,200,66,0.12)', borderRadius: 10, paddingVertical: 8, paddingHorizontal: 12, marginBottom: 14 },
+  cacheAvisoTexto: { fontSize: 11.5, color: '#F5C842', flex: 1, lineHeight: 16 },
   retryBtnText: { color: '#F5C842', fontWeight: '600' },
   versoRow: { flexDirection: 'row', marginBottom: 12, gap: 10 },
   versoNum: { fontSize: 11, color: '#F5C842', fontWeight: '700', width: 22, paddingTop: 2 },
