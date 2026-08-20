@@ -10,6 +10,7 @@ import * as ImagePicker from 'expo-image-picker';
 import * as FileSystem from 'expo-file-system/legacy';
 import { decode } from 'base64-arraybuffer';
 import { useTranslation } from 'react-i18next';
+import { useNavigation } from '@react-navigation/native';
 import Constants from 'expo-constants';
 import * as Updates from 'expo-updates';
 import { supabase } from '../lib/supabase';
@@ -636,6 +637,7 @@ function buildDam(_C: Paleta) { return StyleSheet.create({
 // ─── Main Screen ──────────────────────────────────────────────────────────────
 export default function ProfileScreen() {
   const { t, i18n } = useTranslation();
+  const navigation = useNavigation();
   const { user, isLoggedIn } = useAuth();
   const { isDark, mode, setMode } = useTheme();
   const C = useMemo(() => paleta(isDark), [isDark]);
@@ -763,6 +765,7 @@ export default function ProfileScreen() {
     {
       title: t('perfil.minhaIgreja'),
       items: [
+        { icon: 'id-card-outline', label: t('perfil.meuCadastro'), onPress: () => isLoggedIn ? navigation.navigate('MeuCadastro' as never) : Alert.alert(t('common.atencao'), t('perfil.faceLoginEditarPerfil')) },
         { icon: 'bookmark-outline', label: t('perfil.versiculosSalvos'), onPress: () => isLoggedIn ? setSavedVersesVisible(true) : Alert.alert(t('common.atencao'), t('perfil.faceLoginVersiculos')) },
         { icon: 'book-outline', label: t('perfil.historicoDeEstudos'), onPress: () => isLoggedIn ? setReadingHistoryVisible(true) : Alert.alert(t('common.atencao'), t('perfil.faceLoginHistorico')) },
         { icon: 'heart-outline', label: t('perfil.pedidosDeOracao'), onPress: () => isLoggedIn ? setPrayerVisible(true) : Alert.alert(t('common.atencao'), t('perfil.faceLoginOracao')) },

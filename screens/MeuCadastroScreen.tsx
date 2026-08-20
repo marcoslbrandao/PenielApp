@@ -1,0 +1,467 @@
+import React, { useState, useEffect, useMemo, useRef } from 'react';
+import {
+  View, Text, StyleSheet, ScrollView, TouchableOpacity,
+  TextInput, Alert, StatusBar, ActivityIndicator,
+  KeyboardAvoidingView, Platform,
+} from 'react-native';
+import { SafeAreaView } from 'react-native-safe-area-context';
+import { Ionicons } from '@expo/vector-icons';
+import { useNavigation } from '@react-navigation/native';
+import { useTranslation } from 'react-i18next';
+import { supabase } from '../lib/supabase';
+import { useAuth } from '../lib/useAuth';
+import { useTheme } from '../lib/theme';
+
+// A chave fica embutida no bundle do app (padrão pra chaves de Google Maps/
+// Places — por isso restringimos ela só a essas 2 APIs no Google Cloud).
+// Precisa existir como EAS secret com esse nome exato (prefixo EXPO_PUBLIC_
+// é o que faz o Expo embutir o valor no build/update).
+const GOOGLE_PLACES_KEY = process.env.EXPO_PUBLIC_GOOGLE_PLACES_API_KEY as string | undefined;
+
+const PAISES = ['Reino Unido', 'Brasil', 'Portugal', 'Outro'];
+const ESTADO_CIVIL_OPCOES = ['Solteiro(a)', 'Casado(a)', 'Divorciado(a)', 'Viúvo(a)', 'União estável'];
+
+function paleta(isDark: boolean) {
+  return isDark ? {
+    primary: '#100D28', primaryLight: '#3B2E7A',
+    accent: '#F5C842', accentLight: '#FFD873',
+    bg: '#0E0B22', surface: '#1C1940', surfaceAlt: '#241F4D',
+    text: '#F1EFFA', textMuted: '#A6A0C7', textDim: '#726A99',
+    border: '#332D5C', danger: '#FF6B6B', success: '#4ADE80',
+  } : {
+    primary: '#1A1740', primaryLight: '#2D2870',
+    accent: '#C8960A', accentLight: '#F5C842',
+    bg: '#F7F4EE', surface: '#FFFFFF', surfaceAlt: '#F0EDE8',
+    text: '#1A1A2E', textMuted: '#6B7280', textDim: '#9CA3AF',
+    border: '#E5E0D8', danger: '#C0392B', success: '#27AE60',
+  };
+}
+type Paleta = ReturnType<typeof paleta>;
+
+type FormState = {
+  nome: string; sobrenome: string;
+  data_nascimento: string; estado_civil: string; nacionalidade: string; cidade: string;
+  email: string; telefone: string; instagram: string;
+  pais: string; cep: string; endereco: string; complemento: string; estado: string;
+  igreja_anterior: boolean; igreja_anterior_nome: string;
+  batizado: boolean; deseja_batizar: boolean;
+  membro_desde: string;
+  ministerio_anterior: boolean; ministerio_anterior_qual: string;
+  deseja_servir: boolean; deseja_servir_area: string;
+  compartilhar_mais: string;
+};
+
+const EMPTY: FormState = {
+  nome: '', sobrenome: '',
+  data_nascimento: '', estado_civil: '', nacionalidade: '', cidade: '',
+  email: '', telefone: '', instagram: '',
+  pais: 'Reino Unido', cep: '', endereco: '', complemento: '', estado: '',
+  igreja_anterior: false, igreja_anterior_nome: '',
+  batizado: false, deseja_batizar: false,
+  membro_desde: '',
+  ministerio_anterior: false, ministerio_anterior_qual: '',
+  deseja_servir: false, deseja_servir_area: '',
+  compartilhar_mais: '',
+};
+
+function formatDateBR(iso: string): string {
+  if (!iso) return '';
+  const [y, m, d] = iso.split('-');
+  return `${d}/${m}/${y}`;
+}
+function parseDateISO(br: string): string {
+  if (!br) return '';
+  const [d, m, y] = br.split('/');
+  if (!d || !m || !y || y.length !== 4) return '';
+  return `${y}-${m}-${d}`;
+}
+function formatMesAnoFromISO(iso: string): string {
+  if (!iso) return '';
+  const [y, m] = iso.split('-');
+  if (!y || !m) return '';
+  return `${m}/${y}`;
+}
+function parseMesAnoToISO(mmAAAA: string): string {
+  const [m, y] = mmAAAA.split('/');
+  if (!m || !y || y.length !== 4) return '';
+  return `${y}-${m}-01`;
+}
+
+type Sugestao = { placeId: string; texto: string };
+
+async function buscarSugestoesEndereco(cep: string): Promise<Sugestao[]> {
+  if (!GOOGLE_PLACES_KEY || cep.trim().length < 5) return [];
+  try {
+    const resp = await fetch('https://places.googleapis.com/v1/places:autocomplete', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'X-Goog-Api-Key': GOOGLE_PLACES_KEY },
+      body: JSON.stringify({ input: cep.trim(), includedRegionCodes: ['gb'] }),
+    });
+    const data = await resp.json();
+    return ((data.suggestions ?? []) as any[])
+      .map(s => s.placePrediction)
+      .filter(Boolean)
+      .map(p => ({ placeId: p.placeId as string, texto: (p.text?.text ?? '') as string }));
+  } catch {
+    return [];
+  }
+}
+
+async function buscarDetalhesEndereco(placeId: string) {
+  if (!GOOGLE_PLACES_KEY) return null;
+  try {
+    const resp = await fetch(`https://places.googleapis.com/v1/places/${placeId}`, {
+      headers: { 'X-Goog-Api-Key': GOOGLE_PLACES_KEY, 'X-Goog-FieldMask': 'addressComponents' },
+    });
+    const data = await resp.json();
+    const comps = (data.addressComponents ?? []) as any[];
+    const parte = (tipo: string) => comps.find(c => (c.types ?? []).includes(tipo))?.longText ?? '';
+    const numero = parte('street_number');
+    const rua = parte('route');
+    return {
+      endereco: [numero, rua].filter(Boolean).join(' '),
+      cidade: parte('postal_town') || parte('locality'),
+      estado: parte('administrative_area_level_2'),
+      cep: parte('postal_code'),
+    };
+  } catch {
+    return null;
+  }
+}
+
+export default function MeuCadastroScreen() {
+  const navigation = useNavigation();
+  const { t } = useTranslation();
+  const { user } = useAuth();
+  const { isDark } = useTheme();
+  const C = useMemo(() => paleta(isDark), [isDark]);
+  const s = useMemo(() => buildStyles(C), [C]);
+
+  const [form, setForm] = useState<FormState>({ ...EMPTY });
+  const [existingId, setExistingId] = useState<string | null>(null);
+  const [loading, setLoading] = useState(true);
+  const [saving, setSaving] = useState(false);
+  const [sugestoes, setSugestoes] = useState<Sugestao[]>([]);
+  const [buscandoCep, setBuscandoCep] = useState(false);
+  const [enderecoConfirmado, setEnderecoConfirmado] = useState(false);
+  const cepDebounce = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  useEffect(() => {
+    if (!user) return;
+    (async () => {
+      const { data } = await supabase.from('members').select('*').eq('profile_id', user.id).maybeSingle();
+      if (data) {
+        setExistingId(data.id);
+        setForm({
+          ...EMPTY,
+          ...data,
+          data_nascimento: formatDateBR(data.data_nascimento ?? ''),
+          membro_desde: formatMesAnoFromISO(data.membro_desde ?? ''),
+        });
+        if (data.endereco) setEnderecoConfirmado(true);
+      } else {
+        const nomeCompleto = (user.user_metadata?.full_name ?? '').trim();
+        const [primeiro, ...resto] = nomeCompleto.split(' ');
+        setForm(prev => ({ ...prev, nome: primeiro ?? '', sobrenome: resto.join(' '), email: user.email ?? '' }));
+      }
+      setLoading(false);
+    })();
+  }, [user]);
+
+  const set = (field: keyof FormState) => (val: any) => setForm(prev => ({ ...prev, [field]: val }));
+
+  const formatDate = (text: string, field: 'data_nascimento') => {
+    const digits = text.replace(/\D/g, '').slice(0, 8);
+    let f = digits;
+    if (digits.length > 2) f = digits.slice(0, 2) + '/' + digits.slice(2);
+    if (digits.length > 4) f = digits.slice(0, 2) + '/' + digits.slice(2, 4) + '/' + digits.slice(4);
+    set(field)(f);
+  };
+  const formatMesAno = (text: string) => {
+    const digits = text.replace(/\D/g, '').slice(0, 6);
+    let f = digits;
+    if (digits.length > 2) f = digits.slice(0, 2) + '/' + digits.slice(2);
+    set('membro_desde')(f);
+  };
+  const formatPhone = (text: string) => {
+    const digits = text.replace(/\D/g, '').slice(0, 13);
+    set('telefone')(digits.length ? '+' + digits : '');
+  };
+
+  // Busca sugestões de endereço enquanto digita o CEP (só faz sentido pro
+  // Reino Unido — é o único país com essa integração por enquanto).
+  const onChangeCep = (texto: string) => {
+    set('cep')(texto);
+    setEnderecoConfirmado(false);
+    if (cepDebounce.current) clearTimeout(cepDebounce.current);
+    if (form.pais !== 'Reino Unido' || texto.trim().length < 5) { setSugestoes([]); return; }
+    setBuscandoCep(true);
+    cepDebounce.current = setTimeout(async () => {
+      const r = await buscarSugestoesEndereco(texto);
+      setSugestoes(r);
+      setBuscandoCep(false);
+    }, 500);
+  };
+
+  const selecionarSugestao = async (sug: Sugestao) => {
+    setBuscandoCep(true);
+    const detalhes = await buscarDetalhesEndereco(sug.placeId);
+    setBuscandoCep(false);
+    setSugestoes([]);
+    if (detalhes) {
+      setForm(prev => ({
+        ...prev,
+        endereco: detalhes.endereco || prev.endereco,
+        cidade: detalhes.cidade || prev.cidade,
+        estado: detalhes.estado || prev.estado,
+        cep: detalhes.cep || prev.cep,
+      }));
+    }
+    setEnderecoConfirmado(true);
+  };
+
+  const handleSave = async () => {
+    if (!form.nome.trim()) { Alert.alert(t('common.atencao'), 'Nome é obrigatório.'); return; }
+    if (!form.telefone.trim()) { Alert.alert(t('common.atencao'), 'Celular é obrigatório.'); return; }
+    setSaving(true);
+
+    const payload = {
+      ...form,
+      profile_id: user!.id,
+      data_nascimento: parseDateISO(form.data_nascimento) || null,
+      membro_desde: parseMesAnoToISO(form.membro_desde) || null,
+    };
+
+    let error;
+    if (existingId) {
+      ({ error } = await supabase.from('members').update(payload).eq('id', existingId));
+    } else {
+      const r = await supabase.from('members').insert(payload).select('id').single();
+      error = r.error;
+      if (!error) setExistingId(r.data?.id ?? null);
+    }
+
+    setSaving(false);
+    if (error) {
+      Alert.alert(t('common.erro'), t('cadastroMembro.erroSalvar'));
+    } else {
+      Alert.alert(t('cadastroMembro.salvo'));
+      navigation.goBack();
+    }
+  };
+
+  const Field = ({ label, value, onChangeText, placeholder = '', keyboardType = 'default', maxLength, autoCapitalize = 'sentences' }: {
+    label: string; value: string; onChangeText: (v: string) => void;
+    placeholder?: string; keyboardType?: any; maxLength?: number; autoCapitalize?: 'none' | 'sentences' | 'words' | 'characters';
+  }) => (
+    <View style={s.fieldWrap}>
+      <Text style={s.fieldLabel}>{label}</Text>
+      <TextInput
+        style={s.fieldInput} value={value} onChangeText={onChangeText}
+        placeholder={placeholder} placeholderTextColor={C.textDim}
+        keyboardType={keyboardType} maxLength={maxLength} autoCapitalize={autoCapitalize}
+      />
+    </View>
+  );
+
+  const SelectPill = ({ label, options, value, onChange }: {
+    label: string; options: string[]; value: string; onChange: (v: string) => void;
+  }) => (
+    <View style={s.fieldWrap}>
+      <Text style={s.fieldLabel}>{label}</Text>
+      <ScrollView horizontal showsHorizontalScrollIndicator={false} style={{ marginTop: 4 }}>
+        <View style={{ flexDirection: 'row', gap: 8 }}>
+          {options.map(opt => (
+            <TouchableOpacity key={opt} style={[s.pill, value === opt && s.pillActive]} onPress={() => onChange(opt)}>
+              <Text style={[s.pillText, value === opt && s.pillTextActive]}>{opt}</Text>
+            </TouchableOpacity>
+          ))}
+        </View>
+      </ScrollView>
+    </View>
+  );
+
+  const ToggleRow = ({ label, value, onToggle, icon }: {
+    label: string; value: boolean; onToggle: () => void; icon: string;
+  }) => (
+    <View style={s.toggleRow}>
+      <View style={{ flex: 1 }}>
+        <Text style={s.fieldLabel}>{label}</Text>
+        <Text style={[s.toggleStatus, { color: value ? C.success : C.textMuted }]}>
+          {value ? t('cadastroMembro.sim') : t('cadastroMembro.nao')}
+        </Text>
+      </View>
+      <TouchableOpacity style={[s.toggleBtn, value && s.toggleBtnActive]} onPress={onToggle}>
+        <Ionicons name={icon as any} size={20} color={value ? '#fff' : C.textMuted} />
+      </TouchableOpacity>
+    </View>
+  );
+
+  const SectionTitle = ({ children }: { children: React.ReactNode }) => (
+    <Text style={s.sectionTitle}>{children}</Text>
+  );
+
+  if (loading) {
+    return (
+      <SafeAreaView style={s.safe}>
+        <View style={{ flex: 1, alignItems: 'center', justifyContent: 'center' }}>
+          <ActivityIndicator color={C.accent} />
+        </View>
+      </SafeAreaView>
+    );
+  }
+
+  return (
+    <SafeAreaView style={s.safe} edges={['top']}>
+      <StatusBar barStyle="light-content" backgroundColor={C.primary} />
+      <View style={s.header}>
+        <TouchableOpacity onPress={() => navigation.goBack()} style={s.backBtn}>
+          <Ionicons name="chevron-back" size={24} color="#fff" />
+        </TouchableOpacity>
+        <Text style={s.headerTitle}>{t('cadastroMembro.titulo')}</Text>
+        <View style={{ width: 40 }} />
+      </View>
+
+      <KeyboardAvoidingView behavior={Platform.OS === 'ios' ? 'padding' : undefined} style={{ flex: 1 }}>
+        <ScrollView contentContainerStyle={{ padding: 16, paddingBottom: 40 }} showsVerticalScrollIndicator={false}>
+          <Text style={s.subtitulo}>{t('cadastroMembro.subtitulo')}</Text>
+
+          <SectionTitle>{t('cadastroMembro.secaoPessoal')}</SectionTitle>
+          <View style={s.card}>
+            <View style={{ flexDirection: 'row', gap: 12 }}>
+              <View style={{ flex: 1 }}><Field label="Nome *" value={form.nome} onChangeText={set('nome')} placeholder="Nome" /></View>
+              <View style={{ flex: 1.5 }}><Field label="Sobrenome" value={form.sobrenome} onChangeText={set('sobrenome')} placeholder="Sobrenome" /></View>
+            </View>
+            <Field label={t('cadastroMembro.dataNascimento')} value={form.data_nascimento} onChangeText={t2 => formatDate(t2, 'data_nascimento')} placeholder="DD/MM/AAAA" keyboardType="numeric" maxLength={10} />
+            <SelectPill label={t('cadastroMembro.estadoCivil')} options={ESTADO_CIVIL_OPCOES} value={form.estado_civil} onChange={set('estado_civil')} />
+            <Field label={t('cadastroMembro.nacionalidade')} value={form.nacionalidade} onChangeText={set('nacionalidade')} placeholder="Ex: Brasileira" />
+            <Field label={t('cadastroMembro.cidade')} value={form.cidade} onChangeText={set('cidade')} placeholder="Cidade" />
+          </View>
+
+          <SectionTitle>{t('cadastroMembro.secaoContato')}</SectionTitle>
+          <View style={s.card}>
+            <Field label={t('cadastroMembro.email')} value={form.email} onChangeText={set('email')} placeholder="email@exemplo.com" keyboardType="email-address" />
+            <Field label={`${t('cadastroMembro.celular')} *`} value={form.telefone} onChangeText={formatPhone} placeholder="+44 7000 000000" keyboardType="phone-pad" maxLength={14} />
+            <Field label={t('cadastroMembro.instagram')} value={form.instagram} onChangeText={set('instagram')} placeholder={t('cadastroMembro.instagramPlaceholder')} />
+          </View>
+
+          <SectionTitle>{t('cadastroMembro.secaoEndereco')}</SectionTitle>
+          <View style={s.card}>
+            <SelectPill label={t('cadastroMembro.pais')} options={PAISES} value={form.pais} onChange={v => { set('pais')(v); setSugestoes([]); }} />
+
+            {form.pais === 'Reino Unido' ? (
+              <>
+                <Field label={t('cadastroMembro.cep')} value={form.cep} onChangeText={onChangeCep} placeholder={t('cadastroMembro.cepPlaceholderUK')} autoCapitalize="characters" />
+                {buscandoCep && (
+                  <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8, marginBottom: 10 }}>
+                    <ActivityIndicator size="small" color={C.accent} />
+                    <Text style={{ fontSize: 12, color: C.textMuted }}>{t('cadastroMembro.buscandoEndereco')}</Text>
+                  </View>
+                )}
+                {sugestoes.length > 0 && (
+                  <View style={s.sugestoesBox}>
+                    <Text style={s.fieldLabel}>{t('cadastroMembro.selecioneEndereco')}</Text>
+                    {sugestoes.map(sug => (
+                      <TouchableOpacity key={sug.placeId} style={s.sugestaoItem} onPress={() => selecionarSugestao(sug)}>
+                        <Ionicons name="location-outline" size={16} color={C.accent} />
+                        <Text style={s.sugestaoText}>{sug.texto}</Text>
+                      </TouchableOpacity>
+                    ))}
+                  </View>
+                )}
+                {!GOOGLE_PLACES_KEY && (
+                  <Text style={{ fontSize: 11, color: C.textDim, marginBottom: 10 }}>
+                    Busca automática de endereço indisponível no momento — preencha manualmente abaixo.
+                  </Text>
+                )}
+              </>
+            ) : (
+              <Field label={t('cadastroMembro.cep')} value={form.cep} onChangeText={set('cep')} placeholder="00000-000" />
+            )}
+
+            <Field label={t('cadastroMembro.enderecoManual')} value={form.endereco} onChangeText={set('endereco')} placeholder="Ex: 45 Abbey Square" />
+            <Field label={t('cadastroMembro.complemento')} value={form.complemento} onChangeText={set('complemento')} placeholder="Ex: Apto 3B, próximo ao mercado" />
+          </View>
+
+          <SectionTitle>{t('cadastroMembro.secaoIgreja')}</SectionTitle>
+          <View style={s.card}>
+            <ToggleRow label={t('cadastroMembro.veioOutraIgreja')} value={form.igreja_anterior} onToggle={() => set('igreja_anterior')(!form.igreja_anterior)} icon={form.igreja_anterior ? 'business' : 'business-outline'} />
+            {form.igreja_anterior && (
+              <Field label={t('cadastroMembro.nomeDaIgreja')} value={form.igreja_anterior_nome} onChangeText={set('igreja_anterior_nome')} placeholder={t('cadastroMembro.nomeDaIgreja')} />
+            )}
+
+            <ToggleRow label={t('cadastroMembro.ehBatizado')} value={form.batizado} onToggle={() => set('batizado')(!form.batizado)} icon={form.batizado ? 'water' : 'water-outline'} />
+            {!form.batizado && (
+              <ToggleRow label={t('cadastroMembro.desejaBatizar')} value={form.deseja_batizar} onToggle={() => set('deseja_batizar')(!form.deseja_batizar)} icon={form.deseja_batizar ? 'heart' : 'heart-outline'} />
+            )}
+
+            <Field label={t('cadastroMembro.quandoChegou')} value={form.membro_desde} onChangeText={formatMesAno} placeholder={t('cadastroMembro.quandoChegouPlaceholder')} keyboardType="numeric" maxLength={7} />
+
+            <ToggleRow label={t('cadastroMembro.jaServiuArea')} value={form.ministerio_anterior} onToggle={() => set('ministerio_anterior')(!form.ministerio_anterior)} icon={form.ministerio_anterior ? 'people' : 'people-outline'} />
+            {form.ministerio_anterior && (
+              <Field label={t('cadastroMembro.qualArea')} value={form.ministerio_anterior_qual} onChangeText={set('ministerio_anterior_qual')} placeholder={t('cadastroMembro.qualArea')} />
+            )}
+
+            <ToggleRow label={t('cadastroMembro.desejaServir')} value={form.deseja_servir} onToggle={() => set('deseja_servir')(!form.deseja_servir)} icon={form.deseja_servir ? 'hand-right' : 'hand-right-outline'} />
+            {form.deseja_servir && (
+              <Field label={t('cadastroMembro.qualArea')} value={form.deseja_servir_area} onChangeText={set('deseja_servir_area')} placeholder={t('cadastroMembro.qualArea')} />
+            )}
+
+            <View style={s.fieldWrap}>
+              <Text style={s.fieldLabel}>{t('cadastroMembro.compartilharMais')}</Text>
+              <TextInput
+                style={[s.fieldInput, { height: 90, textAlignVertical: 'top', paddingTop: 12 }]}
+                value={form.compartilhar_mais} onChangeText={set('compartilhar_mais')}
+                placeholder={t('cadastroMembro.compartilharMaisPlaceholder')} placeholderTextColor={C.textDim}
+                multiline
+              />
+            </View>
+          </View>
+
+          <TouchableOpacity style={s.saveBtn} onPress={handleSave} disabled={saving}>
+            {saving ? <ActivityIndicator color="#fff" /> : (
+              <>
+                <Ionicons name="checkmark-circle-outline" size={20} color="#fff" />
+                <Text style={s.saveBtnText}>{t('cadastroMembro.salvar')}</Text>
+              </>
+            )}
+          </TouchableOpacity>
+        </ScrollView>
+      </KeyboardAvoidingView>
+    </SafeAreaView>
+  );
+}
+
+function buildStyles(C: Paleta) {
+  return StyleSheet.create({
+    safe: { flex: 1, backgroundColor: C.bg },
+    header: {
+      flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between',
+      backgroundColor: C.primary, paddingHorizontal: 8, paddingVertical: 12,
+    },
+    backBtn: { width: 40, height: 40, alignItems: 'center', justifyContent: 'center' },
+    headerTitle: { fontSize: 17, fontWeight: '800', color: '#fff' },
+    subtitulo: { fontSize: 13, color: C.textMuted, lineHeight: 19, marginBottom: 18 },
+    sectionTitle: {
+      fontSize: 12, fontWeight: '800', color: C.accent, letterSpacing: 0.6,
+      textTransform: 'uppercase', marginBottom: 8, marginTop: 6,
+    },
+    card: { backgroundColor: C.surface, borderRadius: 16, borderWidth: 1, borderColor: C.border, padding: 16, marginBottom: 20 },
+    fieldWrap: { marginBottom: 12 },
+    fieldLabel: { fontSize: 11, color: C.textMuted, fontWeight: '700', letterSpacing: 0.6, textTransform: 'uppercase', marginBottom: 6 },
+    fieldInput: { backgroundColor: C.surfaceAlt, borderWidth: 1, borderColor: C.border, borderRadius: 10, paddingHorizontal: 14, height: 46, fontSize: 15, color: C.text },
+    pill: { paddingHorizontal: 12, paddingVertical: 6, borderRadius: 20, backgroundColor: C.surfaceAlt, borderWidth: 1, borderColor: C.border },
+    pillActive: { backgroundColor: C.accent + '22', borderColor: C.accent },
+    pillText: { fontSize: 12, color: C.textMuted, fontWeight: '500' },
+    pillTextActive: { color: C.accent, fontWeight: '700' },
+    toggleRow: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', backgroundColor: C.surfaceAlt, borderRadius: 12, padding: 14, marginBottom: 12 },
+    toggleStatus: { fontSize: 13, marginTop: 3 },
+    toggleBtn: { width: 44, height: 44, borderRadius: 22, backgroundColor: C.surface, borderWidth: 1, borderColor: C.border, alignItems: 'center', justifyContent: 'center' },
+    toggleBtnActive: { backgroundColor: C.success, borderColor: C.success },
+    sugestoesBox: { backgroundColor: C.surfaceAlt, borderRadius: 10, borderWidth: 1, borderColor: C.border, padding: 10, marginBottom: 12 },
+    sugestaoItem: { flexDirection: 'row', alignItems: 'center', gap: 8, paddingVertical: 8, borderBottomWidth: 1, borderBottomColor: C.border },
+    sugestaoText: { fontSize: 13, color: C.text, flex: 1 },
+    saveBtn: { flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 8, backgroundColor: C.success, borderRadius: 14, paddingVertical: 16, marginTop: 4 },
+    saveBtnText: { fontSize: 15, fontWeight: '800', color: '#fff' },
+  });
+}
