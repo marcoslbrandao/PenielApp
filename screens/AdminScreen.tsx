@@ -67,6 +67,12 @@ type ContactMessage = {
   mensagem: string; status: 'novo' | 'lido' | 'respondido'; created_at: string;
 };
 
+type PrayerRequest = {
+  id: string; user_id: string; titulo: string; descricao: string;
+  status: 'aberto' | 'em_oracao' | 'respondido'; created_at: string;
+  profiles?: { full_name: string | null } | null;
+};
+
 const NOME_GRUPO: Record<string, string> = {
   mulheres: 'Grupo de Mulheres', homens: 'Grupo de Homens',
   jovens: 'Peniel Alive', estudo_biblico: 'Estudo Bíblico',
@@ -1335,6 +1341,7 @@ export default function AdminScreen() {
   const [shorts, setShorts] = useState<ShortVideo[]>([]);
   const [mensagens, setMensagens] = useState<MensagemBlog[]>([]);
   const [contatoMensagens, setContatoMensagens] = useState<ContactMessage[]>([]);
+  const [pedidosOracao, setPedidosOracao] = useState<PrayerRequest[]>([]);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   const [modalVisible, setModalVisible] = useState(false);
@@ -1350,7 +1357,7 @@ export default function AdminScreen() {
   const [areaModalVisible, setAreaModalVisible] = useState(false);
   const [areaGerenciarVisible, setAreaGerenciarVisible] = useState<EscalaArea | null>(null);
   const [gerarEscalaModalVisible, setGerarEscalaModalVisible] = useState(false);
-  const [activeTab, setActiveTab] = useState<'convites' | 'stats' | 'ofertas' | 'avisos' | 'devocionais' | 'agenda' | 'shorts' | 'mensagens' | 'escalas' | 'contato'>('convites');
+  const [activeTab, setActiveTab] = useState<'convites' | 'stats' | 'ofertas' | 'avisos' | 'devocionais' | 'agenda' | 'shorts' | 'mensagens' | 'escalas' | 'contato' | 'oracao'>('convites');
   // São 9 abas e só ~3 cabem na tela por vez — sem esse indicador, dava a
   // impressão de que a lista de abas estava cortada/quebrada (só aparecia
   // uma lasquinha do ícone da 4ª aba na borda). A setinha "→" avisa que dá
@@ -1411,6 +1418,13 @@ export default function AdminScreen() {
     const { data: contatoData } = await supabase
       .from('contact_messages').select('*').order('created_at', { ascending: false }).limit(200);
     if (contatoData) setContatoMensagens(contatoData as ContactMessage[]);
+    // Pedidos de oração (enviados pelo Perfil > Pedidos de Oração)
+    const { data: oracaoData } = await supabase
+      .from('prayer_requests')
+      .select('*, profiles!prayer_requests_user_id_fkey(full_name)')
+      .order('created_at', { ascending: false })
+      .limit(200);
+    if (oracaoData) setPedidosOracao(oracaoData as unknown as PrayerRequest[]);
     // Escalas — áreas, time de cada uma, e quais áreas o usuário logado lidera
     const { data: areasData } = await supabase.from('escala_areas').select('*').order('nome');
     if (areasData) setEscalaAreas(areasData as EscalaArea[]);
@@ -1481,6 +1495,12 @@ export default function AdminScreen() {
     if (!msg.email) return;
     const assunto = msg.grupo ? `Re: ${NOME_GRUPO[msg.grupo] ?? msg.grupo} — Peniel Church App` : 'Re: Peniel Church App';
     Linking.openURL(`mailto:${msg.email}?subject=${encodeURIComponent(assunto)}`).catch(() => {});
+  };
+
+  const avancarStatusOracao = async (pedido: PrayerRequest) => {
+    const proximo = pedido.status === 'aberto' ? 'em_oracao' : 'respondido';
+    await supabase.from('prayer_requests').update({ status: proximo, updated_at: new Date().toISOString() }).eq('id', pedido.id);
+    fetchData();
   };
 
   const deleteEvento = (id: string) => {
@@ -1568,7 +1588,7 @@ export default function AdminScreen() {
           <Text style={s.headerTitle}>Painel Admin</Text>
           <Text style={s.headerSub}>{role === 'admin' ? 'Administrador' : 'Líder'}</Text>
         </View>
-        {!(activeTab === 'escalas' && role !== 'admin') && activeTab !== 'contato' && (
+        {!(activeTab === 'escalas' && role !== 'admin') && activeTab !== 'contato' && activeTab !== 'oracao' && (
           <TouchableOpacity
             style={s.newBtn}
             onPress={() => {
@@ -1603,22 +1623,25 @@ export default function AdminScreen() {
             setTabsScrollFim(contentOffset.x + layoutMeasurement.width >= contentSize.width - 12);
           }}
         >
-          {(['convites', 'avisos', 'devocionais', 'mensagens', 'contato', 'agenda', 'shorts', 'ofertas', 'escalas', 'stats'] as const).map(tab => (
+          {(['convites', 'avisos', 'devocionais', 'mensagens', 'contato', 'oracao', 'agenda', 'shorts', 'ofertas', 'escalas', 'stats'] as const).map(tab => (
             <TouchableOpacity
               key={tab}
               style={[s.tabBtn, activeTab === tab && s.tabBtnActive]}
               onPress={() => setActiveTab(tab)}
             >
               <Ionicons
-                name={tab === 'convites' ? 'ticket-outline' : tab === 'avisos' ? 'megaphone-outline' : tab === 'devocionais' ? 'book-outline' : tab === 'mensagens' ? 'newspaper-outline' : tab === 'contato' ? 'chatbubble-ellipses-outline' : tab === 'agenda' ? 'calendar-outline' : tab === 'shorts' ? 'film-outline' : tab === 'ofertas' ? 'gift-outline' : tab === 'escalas' ? 'people-circle-outline' : 'bar-chart-outline'}
+                name={tab === 'convites' ? 'ticket-outline' : tab === 'avisos' ? 'megaphone-outline' : tab === 'devocionais' ? 'book-outline' : tab === 'mensagens' ? 'newspaper-outline' : tab === 'contato' ? 'chatbubble-ellipses-outline' : tab === 'oracao' ? 'heart-outline' : tab === 'agenda' ? 'calendar-outline' : tab === 'shorts' ? 'film-outline' : tab === 'ofertas' ? 'gift-outline' : tab === 'escalas' ? 'people-circle-outline' : 'bar-chart-outline'}
                 size={14}
                 color={activeTab === tab ? C.purple : C.textMuted}
               />
               {tab === 'contato' && contatoMensagens.some(m => m.status === 'novo') && (
                 <View style={s.tabDot} />
               )}
+              {tab === 'oracao' && pedidosOracao.some(p => p.status === 'aberto') && (
+                <View style={s.tabDot} />
+              )}
               <Text style={[s.tabBtnText, activeTab === tab && { color: C.purple, fontWeight: '700' }]}>
-                {tab === 'convites' ? 'Convites' : tab === 'avisos' ? 'Avisos' : tab === 'devocionais' ? 'Devocionais' : tab === 'mensagens' ? 'Mensagens' : tab === 'contato' ? 'Contato' : tab === 'agenda' ? 'Agenda' : tab === 'shorts' ? 'Shorts' : tab === 'ofertas' ? 'Ofertas' : tab === 'escalas' ? 'Escalas' : 'Estatísticas'}
+                {tab === 'convites' ? 'Convites' : tab === 'avisos' ? 'Avisos' : tab === 'devocionais' ? 'Devocionais' : tab === 'mensagens' ? 'Mensagens' : tab === 'contato' ? 'Contato' : tab === 'oracao' ? 'Oração' : tab === 'agenda' ? 'Agenda' : tab === 'shorts' ? 'Shorts' : tab === 'ofertas' ? 'Ofertas' : tab === 'escalas' ? 'Escalas' : 'Estatísticas'}
               </Text>
             </TouchableOpacity>
           ))}
@@ -1901,6 +1924,66 @@ export default function AdminScreen() {
                         <Ionicons name="trash-outline" size={16} color={C.danger} />
                       </TouchableOpacity>
                     </View>
+                  </View>
+                ))
+              )}
+            </>
+          )}
+
+          {/* ══ ORAÇÃO ═════════════════════════════════════════════════════════ */}
+          {activeTab === 'oracao' && (
+            <>
+              <Text style={{ fontSize: 12, color: C.textMuted, marginBottom: 12, lineHeight: 18 }}>
+                Pedidos enviados pelo Perfil {'>'} Pedidos de Oração. Só admin/líder vê — inclusive o próprio membro só vê os dele.
+              </Text>
+              <View style={s.summaryRow}>
+                <View style={s.summaryCard}>
+                  <Text style={[s.summaryNum, { color: C.danger }]}>{pedidosOracao.filter(p => p.status === 'aberto').length}</Text>
+                  <Text style={s.summaryLabel}>Abertos</Text>
+                </View>
+                <View style={s.summaryCard}>
+                  <Text style={[s.summaryNum, { color: C.accentDim }]}>{pedidosOracao.filter(p => p.status === 'em_oracao').length}</Text>
+                  <Text style={s.summaryLabel}>Em oração</Text>
+                </View>
+                <View style={s.summaryCard}>
+                  <Text style={[s.summaryNum, { color: C.purple }]}>{pedidosOracao.length}</Text>
+                  <Text style={s.summaryLabel}>Total</Text>
+                </View>
+              </View>
+              {pedidosOracao.length === 0 ? (
+                <View style={s.empty}>
+                  <Ionicons name="heart-outline" size={40} color={C.textDim} />
+                  <Text style={s.emptyText}>Nenhum pedido de oração ainda</Text>
+                </View>
+              ) : (
+                pedidosOracao.map(p => (
+                  <View key={p.id} style={s.inviteCard}>
+                    <View style={s.inviteLeft}>
+                      <Text style={s.inviteCode}>{p.titulo}</Text>
+                      <View style={s.inviteEmailRow}>
+                        <Ionicons name="person-outline" size={12} color={C.textMuted} />
+                        <Text style={s.inviteEmail}>{p.profiles?.full_name ?? '—'}</Text>
+                      </View>
+                      <Text style={[s.inviteEmail, { marginTop: 4 }]}>{p.descricao}</Text>
+                      <View style={s.inviteMetaRow}>
+                        <View style={[s.statusBadge, {
+                          backgroundColor: p.status === 'respondido' ? C.success + '18' : p.status === 'em_oracao' ? C.accentDim + '18' : C.danger + '18',
+                        }]}>
+                          <Text style={[s.statusBadgeText, {
+                            color: p.status === 'respondido' ? C.success : p.status === 'em_oracao' ? C.accentDim : C.danger,
+                          }]}>
+                            {p.status === 'respondido' ? '✓ Respondido' : p.status === 'em_oracao' ? '🙏 Em oração' : '● Aberto'} · {formatDate(p.created_at)}
+                          </Text>
+                        </View>
+                      </View>
+                    </View>
+                    {p.status !== 'respondido' && (
+                      <View style={s.inviteActions}>
+                        <TouchableOpacity style={[s.actionBtn, { borderColor: C.success + '40' }]} onPress={() => avancarStatusOracao(p)}>
+                          <Ionicons name={p.status === 'aberto' ? 'heart-half-outline' : 'checkmark-circle-outline'} size={16} color={C.success} />
+                        </TouchableOpacity>
+                      </View>
+                    )}
                   </View>
                 ))
               )}
