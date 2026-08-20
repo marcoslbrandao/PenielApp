@@ -1,5 +1,7 @@
 // supabase/functions/birthday-notifications/index.ts
-// Roda todo dia às 8h (UK time) e envia push para líderes com aniversariantes do dia
+// Roda todo dia às 8h (UK time) e envia push para todos os MEMBROS (role !=
+// 'visitante' — ou seja, membro/líder/admin) avisando quem faz aniversário
+// hoje. Visitantes não recebem.
 
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2';
 
@@ -34,25 +36,25 @@ Deno.serve(async (_req) => {
       return new Response(JSON.stringify({ message: 'Nenhum aniversário hoje.' }), { status: 200 });
     }
 
-    // 2. Busca tokens de push dos líderes e admins
-    const { data: lideres, error: lideresError } = await supabase
+    // 2. Busca tokens de push de todos os membros (exclui visitantes)
+    const { data: membrosApp, error: membrosAppError } = await supabase
       .from('profiles')
       .select('id, full_name')
-      .in('role', ['lider', 'admin']);
+      .neq('role', 'visitante');
 
-    if (lideresError) throw lideresError;
+    if (membrosAppError) throw membrosAppError;
 
-    const liderIds = (lideres ?? []).map((l: any) => l.id);
+    const membroIds = (membrosApp ?? []).map((l: any) => l.id);
 
     const { data: tokens, error: tokensError } = await supabase
       .from('push_tokens')
       .select('token')
-      .in('user_id', liderIds);
+      .in('user_id', membroIds);
 
     if (tokensError) throw tokensError;
 
     if (!tokens || tokens.length === 0) {
-      return new Response(JSON.stringify({ message: 'Nenhum token de líder encontrado.' }), { status: 200 });
+      return new Response(JSON.stringify({ message: 'Nenhum token de membro encontrado.' }), { status: 200 });
     }
 
     // 3. Monta a mensagem
