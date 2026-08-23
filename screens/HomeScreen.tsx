@@ -681,6 +681,15 @@ export default function HomeScreen({ navigation }: { navigation?: any }) {
           </TouchableOpacity>
         )}
 
+        <TouchableOpacity
+          style={styles.verTodosDevocionais}
+          activeOpacity={0.7}
+          onPress={() => navigation?.navigate('Devocionais')}
+        >
+          <Text style={styles.verTodosDevocionaisTexto}>{t('home.verTodosDevocionais')}</Text>
+          <Ionicons name="arrow-forward" size={14} color="#F5C842" />
+        </TouchableOpacity>
+
         {/* ── Ao vivo ──────────────────────────────────────────────────────── */}
         <View style={styles.secaoHeader}>
           <Text style={styles.secaoTitulo}>{t('home.aoVivoAgora')}</Text>
@@ -877,6 +886,8 @@ function buildStyles(C: PaletaHome) { return StyleSheet.create({
   devocionalVersiculo: { fontSize: 13, color: 'rgba(255,255,255,0.85)', fontStyle: 'italic', lineHeight: 20 },
   devocionalRef: { fontSize: 11, fontWeight: '700', color: '#F5C842', marginTop: 6 },
   devocionalTexto: { fontSize: 13, color: 'rgba(255,255,255,0.7)', lineHeight: 20, marginTop: 10 },
+  verTodosDevocionais: { flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 6, marginTop: -8, marginBottom: 16 },
+  verTodosDevocionaisTexto: { fontSize: 13, fontWeight: '700', color: '#F5C842' },
   // Live
   secaoHeader: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginBottom: 10 },
   secaoTitulo: { fontSize: 14, fontWeight: '500', color: C.textPrimary, marginBottom: 10 },

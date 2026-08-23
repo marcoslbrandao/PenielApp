@@ -61,7 +61,8 @@
     "digiteDuasLetras": "Tapez au moins 2 lettres pour rechercher.",
     "avisosSectionTitle": "Annonces",
     "nenhumAvisoEncontrado": "Aucune annonce trouvée.",
-    "nadaEncontradoPara": "Aucun résultat pour « {{query}} »."
+    "nadaEncontradoPara": "Aucun résultat pour « {{query}} ».",
+    "verTodosDevocionais": "Voir toutes les dévotions"
   },
   "auth": {
     "entrarNaConta": "Connectez-vous à votre compte",
@@ -231,6 +232,11 @@
     "estudoBiblicoNome": "Étude Biblique",
     "estudoBiblicoSubtitulo": "Tous les vendredis, 20h · Zoom",
     "estudoBiblicoDescricao": "Étude biblique hebdomadaire en direct sur Zoom, tous les vendredis à 20h. Retrouvez ici les documents et annonces du cours."
+  },
+  "devocionais": {
+    "titulo": "Dévotions",
+    "nenhumDevocional": "Aucune dévotion publiée pour le moment.",
+    "geral": "Général"
   },
   "contato": {
     "titulo": "Contactez-nous",

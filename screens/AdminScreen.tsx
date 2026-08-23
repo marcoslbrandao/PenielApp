@@ -46,7 +46,7 @@ type Aviso = { id: string; titulo: string; texto: string; data: string; tipo: st
 
 type DevocionalGeral = {
   id: string; titulo: string; versiculo: string; referencia: string;
-  texto: string; autor: string | null; data: string;
+  texto: string; autor: string | null; data: string; grupo: string | null;
 };
 
 type AgendaEvento = {
@@ -77,6 +77,18 @@ const NOME_GRUPO: Record<string, string> = {
   mulheres: 'Grupo de Mulheres', homens: 'Grupo de Homens',
   jovens: 'Peniel Alive', estudo_biblico: 'Estudo Bíblico',
 };
+
+// Opções de destino do devocional: geral (aparece pra todo mundo na Home)
+// ou de um grupo específico (só quem tem acesso ao grupo vê — a RLS de
+// `devocionais` já trata isso, não precisa de nada extra aqui além de
+// mandar o valor certo de `grupo` no insert).
+const GRUPO_DEVOCIONAL_OPCOES: { valor: string | null; label: string }[] = [
+  { valor: null, label: '🏠 Geral (Home)' },
+  { valor: 'mulheres', label: 'Mulheres' },
+  { valor: 'homens', label: 'Homens' },
+  { valor: 'jovens', label: 'Peniel Alive' },
+  { valor: 'estudo_biblico', label: 'Estudo Bíblico' },
+];
 
 type EscalaArea = { id: string; nome: string; vagas_padrao: number };
 type AreaVoluntario = { id: string; area_id: string; membro_id: string; nome: string; sobrenome: string };
@@ -464,10 +476,11 @@ function NovoDevocionalModal({ visible, onClose, onSaved }: {
   const [versiculo, setVersiculo] = useState('');
   const [referencia, setReferencia] = useState('');
   const [texto, setTexto] = useState('');
+  const [grupo, setGrupo] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
 
   useEffect(() => {
-    if (!visible) { setTitulo(''); setVersiculo(''); setReferencia(''); setTexto(''); }
+    if (!visible) { setTitulo(''); setVersiculo(''); setReferencia(''); setTexto(''); setGrupo(null); }
   }, [visible]);
 
   const handleSave = async () => {
@@ -478,7 +491,7 @@ function NovoDevocionalModal({ visible, onClose, onSaved }: {
     setSaving(true);
     const { error } = await supabase.from('devocionais').insert({
       titulo: titulo.trim(), versiculo: versiculo.trim(), referencia: referencia.trim(),
-      texto: texto.trim(), autor: 'Peniel Church', data: new Date().toISOString(), grupo: null,
+      texto: texto.trim(), autor: 'Peniel Church', data: new Date().toISOString(), grupo,
     });
     setSaving(false);
     if (error) { Alert.alert('Erro', error.message); return; }
@@ -497,6 +510,21 @@ function NovoDevocionalModal({ visible, onClose, onSaved }: {
               <TouchableOpacity onPress={onClose}>
                 <Ionicons name="close" size={22} color={C.textMuted} />
               </TouchableOpacity>
+            </View>
+
+            <View style={mo.fieldWrap}>
+              <Text style={mo.fieldLabel}>Destino</Text>
+              <View style={[mo.daysRow, { flexWrap: 'wrap' }]}>
+                {GRUPO_DEVOCIONAL_OPCOES.map(op => (
+                  <TouchableOpacity
+                    key={op.label}
+                    style={[mo.dayPill, grupo === op.valor && mo.dayPillActive]}
+                    onPress={() => setGrupo(op.valor)}
+                  >
+                    <Text style={[mo.dayPillText, grupo === op.valor && mo.dayPillTextActive]}>{op.label}</Text>
+                  </TouchableOpacity>
+                ))}
+              </View>
             </View>
 
             <View style={mo.fieldWrap}>
@@ -1414,9 +1442,10 @@ export default function AdminScreen() {
     const { data: avisosData } = await supabase
       .from('avisos').select('*').is('grupo', null).order('created_at', { ascending: false }).limit(50);
     if (avisosData) setAvisos(avisosData as Aviso[]);
-    // Devocionais gerais (grupo = null, aparecem em destaque na Home)
+    // Devocionais — geral (grupo = null, aparece em destaque na Home) e os
+    // de cada grupo (admin vê e gerencia todos, RLS permite).
     const { data: devData } = await supabase
-      .from('devocionais').select('*').is('grupo', null).order('data', { ascending: false }).limit(50);
+      .from('devocionais').select('*').order('data', { ascending: false }).limit(50);
     if (devData) setDevocionais(devData as DevocionalGeral[]);
     // Agenda
     const { data: agendaData } = await supabase
@@ -1798,7 +1827,7 @@ export default function AdminScreen() {
           {activeTab === 'devocionais' && (
             <>
               <Text style={{ fontSize: 12, color: C.textMuted, marginBottom: 12, lineHeight: 18 }}>
-                Devocionais publicados aqui aparecem em destaque na tela inicial (Home) do app para todos.
+                Devocionais gerais aparecem em destaque na Home pra todo mundo. Devocionais de grupo só aparecem pra quem tem acesso àquele grupo.
               </Text>
               {devocionais.length === 0 ? (
                 <View style={s.empty}>
@@ -1819,6 +1848,11 @@ export default function AdminScreen() {
                       <View style={s.inviteMetaRow}>
                         <View style={[s.statusBadge, { backgroundColor: C.purple + '18' }]}>
                           <Text style={[s.statusBadgeText, { color: C.purple }]}>{formatDate(d.data)}</Text>
+                        </View>
+                        <View style={[s.statusBadge, { backgroundColor: (d.grupo ? C.accentDim : C.success) + '18' }]}>
+                          <Text style={[s.statusBadgeText, { color: d.grupo ? C.accentDim : C.success }]}>
+                            {d.grupo ? (NOME_GRUPO[d.grupo] ?? d.grupo) : '🏠 Geral'}
+                          </Text>
                         </View>
                       </View>
                     </View>

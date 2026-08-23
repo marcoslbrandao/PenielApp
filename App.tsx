@@ -16,6 +16,7 @@ import AreaMembroScreen from './screens/AreaMembroScreen';
 import OfertaScreen from './screens/OfertaScreen';
 import NovaSenhaScreen from './screens/NovaSenhaScreen';
 import MeuCadastroScreen from './screens/MeuCadastroScreen';
+import DevocionaisScreen from './screens/DevocionaisScreen';
 import { supabase } from './lib/supabase';
 import { carregarIdiomaSalvo } from './lib/i18n';
 import { ThemeProvider, useTheme } from './lib/theme';
@@ -159,6 +160,11 @@ export default function App() {
               <Stack.Screen
                 name="MeuCadastro"
                 component={MeuCadastroScreen}
+                options={{ presentation: 'modal' }}
+              />
+              <Stack.Screen
+                name="Devocionais"
+                component={DevocionaisScreen}
                 options={{ presentation: 'modal' }}
               />
               <Stack.Screen

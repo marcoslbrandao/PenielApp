@@ -61,7 +61,8 @@
     "digiteDuasLetras": "Digite ao menos 2 letras para buscar.",
     "avisosSectionTitle": "Avisos",
     "nenhumAvisoEncontrado": "Nenhum aviso encontrado.",
-    "nadaEncontradoPara": "Nada encontrado para \"{{query}}\"."
+    "nadaEncontradoPara": "Nada encontrado para \"{{query}}\".",
+    "verTodosDevocionais": "Ver todos os devocionais"
   },
   "auth": {
     "entrarNaConta": "Entre na sua conta",
@@ -231,6 +232,11 @@
     "estudoBiblicoNome": "Estudo Bíblico",
     "estudoBiblicoSubtitulo": "Toda sexta, 20h · Zoom",
     "estudoBiblicoDescricao": "Estudo bíblico semanal ao vivo pelo Zoom, toda sexta às 20h. Acompanhe os materiais e avisos da turma por aqui."
+  },
+  "devocionais": {
+    "titulo": "Devocionais",
+    "nenhumDevocional": "Nenhum devocional publicado ainda.",
+    "geral": "Geral"
   },
   "contato": {
     "titulo": "Fale com a gente",

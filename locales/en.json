@@ -61,7 +61,8 @@
     "digiteDuasLetras": "Type at least 2 letters to search.",
     "avisosSectionTitle": "Announcements",
     "nenhumAvisoEncontrado": "No announcements found.",
-    "nadaEncontradoPara": "Nothing found for \"{{query}}\"."
+    "nadaEncontradoPara": "Nothing found for \"{{query}}\".",
+    "verTodosDevocionais": "See all devotionals"
   },
   "auth": {
     "entrarNaConta": "Sign in to your account",
@@ -231,6 +232,11 @@
     "estudoBiblicoNome": "Bible Study",
     "estudoBiblicoSubtitulo": "Every Friday, 8pm · Zoom",
     "estudoBiblicoDescricao": "Weekly live Bible study on Zoom, every Friday at 8pm. Find class materials and updates here."
+  },
+  "devocionais": {
+    "titulo": "Devotionals",
+    "nenhumDevocional": "No devotionals published yet.",
+    "geral": "General"
   },
   "contato": {
     "titulo": "Get in touch",

@@ -81,10 +81,15 @@ async function registerForPushNotifications(userId: string) {
     const { data: token } = await Notifications.getExpoPushTokenAsync({ projectId });
     if (!token) return;
 
-    // Salva o token no Supabase
+    // Salva o token no Supabase. onConflict é o token (o aparelho), não o
+    // user_id — assim, se essa pessoa logar com outra conta no mesmo
+    // aparelho depois, a MESMA linha é atualizada pro novo user_id em vez
+    // de criar uma linha nova (o que causava notificação duplicada: um
+    // aparelho registrado em várias contas recebia o mesmo push várias
+    // vezes). Ver migração 20260823120000_push_tokens_unico_por_token.sql.
     await supabase.from('push_tokens').upsert(
       { user_id: userId, token },
-      { onConflict: 'user_id' }
+      { onConflict: 'token' }
     );
 
     console.log('Push token registrado:', token);

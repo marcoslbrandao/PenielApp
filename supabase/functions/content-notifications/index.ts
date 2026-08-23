@@ -123,8 +123,13 @@ Deno.serve(async (req) => {
       return new Response(JSON.stringify({ message: 'Nenhum token de push encontrado.' }), { status: 200 });
     }
 
-    const mensagens = tokens.map((t: any) => ({
-      to: t.token,
+    // Defesa extra contra notificação duplicada: mesmo com a constraint
+    // UNIQUE(token) no banco (migração 20260823120000), garante que nunca
+    // manda 2 pushes pro mesmo token numa única chamada.
+    const tokensUnicos = [...new Set(tokens.map((t: any) => t.token))];
+
+    const mensagens = tokensUnicos.map((token: string) => ({
+      to: token,
       title: titulo,
       body: corpo,
       sound: 'default',
@@ -145,7 +150,7 @@ Deno.serve(async (req) => {
       resultados.push(await response.json());
     }
 
-    return new Response(JSON.stringify({ success: true, enviados: tokens.length, resultados }), { status: 200 });
+    return new Response(JSON.stringify({ success: true, enviados: tokensUnicos.length, resultados }), { status: 200 });
   } catch (err: any) {
     return new Response(JSON.stringify({ error: err.message }), { status: 500 });
   }
