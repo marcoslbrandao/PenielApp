@@ -24,16 +24,20 @@ function paletaBiblia(isDark: boolean) {
 type PaletaBiblia = ReturnType<typeof paletaBiblia>;
 
 // ─── Versões com API IDs ──────────────────────────────────────────────────────
-// Fonte: abibliadigital.com.br. Francês removido — sem fonte gratuita confiável
-// disponível no momento. Esta API oferece no total 3 versões em português,
-// 2 em inglês e 1 em espanhol — é o máximo possível sem contratar outra fonte.
+// Fonte: bolls.life (trocado de abibliadigital.com.br em 23 Ago 2026 — esse
+// provedor antigo ficou fora do ar por dias seguidos, sem previsão de volta).
+// apiId é o "short_name" da tradução na Bolls API (bolls.life/static/bolls/
+// app/views/languages.json). Bônus: a Bolls tem tradução em francês
+// disponível (FRLSG), então o francês volta a ter Bíblia completa no app —
+// antes só tinha o versículo do dia estático (ver lib/versiculoDoDia.ts).
 const versoes = [
-  { sigla: 'NVI', nome: 'Nova Versão Internacional',    idioma: '🇧🇷 Português', apiId: 'nvi' },
-  { sigla: 'ARA', nome: 'Almeida Revista e Atualizada', idioma: '🇧🇷 Português', apiId: 'ra'  },
-  { sigla: 'ACF', nome: 'Almeida Corrigida Fiel',       idioma: '🇧🇷 Português', apiId: 'acf' },
-  { sigla: 'KJV', nome: 'King James Version',           idioma: '🇬🇧 English',   apiId: 'kjv' },
-  { sigla: 'BBE', nome: 'Bible in Basic English',       idioma: '🇬🇧 English',   apiId: 'bbe' },
-  { sigla: 'RVR', nome: 'Reina Valera',                 idioma: '🇪🇸 Español',   apiId: 'rvr' },
+  { sigla: 'NVI', nome: 'Nova Versão Internacional',    idioma: '🇧🇷 Português', apiId: 'NVIPT' },
+  { sigla: 'ARA', nome: 'Almeida Revista e Atualizada', idioma: '🇧🇷 Português', apiId: 'ARA'   },
+  { sigla: 'ACF', nome: 'Almeida Corrigida Fiel',       idioma: '🇧🇷 Português', apiId: 'ACF11' },
+  { sigla: 'KJV', nome: 'King James Version',           idioma: '🇬🇧 English',   apiId: 'KJV'   },
+  { sigla: 'WEB', nome: 'World English Bible',          idioma: '🇬🇧 English',   apiId: 'WEB'   },
+  { sigla: 'RVR', nome: 'Reina Valera',                 idioma: '🇪🇸 Español',   apiId: 'RV1960'},
+  { sigla: 'LSG', nome: 'Louis Segond',                 idioma: '🇫🇷 Français',  apiId: 'FRLSG' },
 ];
 
 const VERSICULO_DIA_RAW = getVersiculoDoDia();
@@ -60,17 +64,28 @@ type Verso = { book_name: string; chapter: number; verse: number; text: string }
 type LangKey = 'pt' | 'en' | 'es' | 'fr';
 
 function getLangKey(apiId: string): LangKey {
-  if (apiId === 'kjv' || apiId === 'bbe') return 'en';
-  if (apiId === 'rvr') return 'es';
+  if (apiId === 'KJV' || apiId === 'WEB') return 'en';
+  if (apiId === 'RV1960') return 'es';
+  if (apiId === 'FRLSG') return 'fr';
   return 'pt';
 }
 function nomeLivro(livro: Livro, langKey: LangKey): string { return livro[langKey]; }
 
-// A API indexa os livros por abreviação em pt ou en — nem toda versão aceita as
-// duas, então tentamos a abreviação "nativa" da versão e caímos para a outra em
-// caso de falha (ver buscarCapitulo).
-function abreviaturasParaTentar(livro: Livro, apiId: string): string[] {
-  return apiId === 'kjv' || apiId === 'bbe' ? [livro.apiEn, livro.apiPt] : [livro.apiPt, livro.apiEn];
+// A Bolls API identifica o livro por um número (1-66, ordem padrão protestante:
+// AT = 1-39 na ordem de livrosAT, NT = 40-66 na ordem de livrosNT) — não por
+// abreviação como a API antiga, então não depende mais de apiPt/apiEn.
+function bookIdBolls(livro: Livro): number {
+  const idxAT = livrosAT.findIndex(l => l.slug === livro.slug);
+  if (idxAT !== -1) return idxAT + 1;
+  const idxNT = livrosNT.findIndex(l => l.slug === livro.slug);
+  return livrosAT.length + idxNT + 1;
+}
+
+// Algumas traduções da Bolls (ex.: a KJV com números de Strong) embutem
+// marcação tipo <S>1234</S> ou <sup>nota</sup> dentro do texto do versículo —
+// removida aqui pra exibir sempre texto puro, em qualquer versão.
+function limparTextoVerso(texto: string): string {
+  return texto.replace(/<[^>]+>/g, '').replace(/\s{2,}/g, ' ').trim();
 }
 
 // ─── Leitor Modal ─────────────────────────────────────────────────────────────
@@ -100,8 +115,8 @@ function LeitorModal({ livro, versao, capInicial, onClose }: {
   // Cache local do que a própria pessoa já leu (não é uma cópia da Bíblia
   // inteira — só vai guardando capítulo por capítulo conforme o usuário
   // acessa). Serve pra continuar funcionando quando o provedor externo
-  // (abibliadigital.com.br) está fora do ar, sem depender de redistribuir o
-  // texto todo — só o que já foi legitimamente carregado nesse aparelho.
+  // (bolls.life) está fora do ar, sem depender de redistribuir o texto todo
+  // — só o que já foi legitimamente carregado nesse aparelho.
   const chaveCache = (cap: number) => `@biblia_cache_${versao.apiId}_${livro?.slug}_${cap}`;
 
   const salvarNoCache = (cap: number, lista: Verso[]) => {
@@ -124,53 +139,47 @@ function LeitorModal({ livro, versao, capInicial, onClose }: {
     setVersos([]);
     setDoCache(false);
     // Distingue "sem internet" (fetch nunca chega a responder) de "o serviço
-    // externo (abibliadigital.com.br) está fora do ar" (respondeu, mas com
-    // erro/HTTP não-ok/corpo inválido) — antes os dois casos caíam no mesmo
-    // catch e mostravam "sem conexão", o que confundia quando o problema era
-    // do provedor da Bíblia, não da internet do usuário.
+    // externo (bolls.life) está fora do ar" (respondeu, mas com erro/HTTP
+    // não-ok/corpo inválido) — os dois casos caindo no mesmo catch mostravam
+    // "sem conexão", o que confundia quando o problema era do provedor da
+    // Bíblia, não da internet do usuário.
     let recebeuAlgumaResposta = false;
     try {
-      const token = process.env.EXPO_PUBLIC_BIBLE_API_TOKEN;
-      const headers: Record<string, string> = token ? { Authorization: `Bearer ${token}` } : {};
-      // Tenta a abreviação "nativa" da versão primeiro (pt para nvi/ra, en para
-      // kjv); se não encontrar, tenta a outra abreviação antes de desistir.
+      const bookId = bookIdBolls(livro);
+      const url = `https://bolls.life/get-text/${versao.apiId}/${bookId}/${cap}/`;
+      const res = await fetch(url);
+      recebeuAlgumaResposta = true;
       let data: any = null;
       let servicoIndisponivel = false;
-      for (const abbrev of abreviaturasParaTentar(livro, versao.apiId)) {
-        const url = `https://www.abibliadigital.com.br/api/verses/${versao.apiId}/${abbrev}/${cap}`;
-        const res = await fetch(url, { headers });
-        recebeuAlgumaResposta = true;
-        if (!res.ok) { servicoIndisponivel = true; continue; }
+      if (!res.ok) {
+        servicoIndisponivel = true;
+      } else {
         try {
           data = await res.json();
         } catch {
           // Resposta não-JSON (ex.: página de erro HTML do provedor) — serviço fora do ar.
           servicoIndisponivel = true;
           data = null;
-          continue;
         }
-        if (!data?.error && data?.verses?.length > 0) { servicoIndisponivel = false; break; }
       }
-      if (servicoIndisponivel && (!data || !data.verses || data.verses.length === 0)) {
+      if (servicoIndisponivel || !Array.isArray(data) || data.length === 0) {
         const doCacheLista = await carregarDoCache(cap);
         if (doCacheLista && doCacheLista.length > 0) {
           setVersos(doCacheLista);
           setDoCache(true);
         } else {
-          setError(t('biblia.servicoIndisponivel'));
+          setError(servicoIndisponivel ? t('biblia.servicoIndisponivel') : t('biblia.capituloNaoEncontrado'));
         }
-      } else if (!data || data.error || !data.verses || data.verses.length === 0) {
-        setError(t('biblia.capituloNaoEncontrado'));
       } else {
-        const lista = data.verses.map((v: any) => ({
-          book_name: data.book?.name ?? nomeExibido,
-          chapter: data.chapter?.number ?? cap,
-          verse: v.number,
-          text: v.text,
+        const lista = data.map((v: any) => ({
+          book_name: nomeExibido,
+          chapter: cap,
+          verse: v.verse,
+          text: limparTextoVerso(v.text ?? ''),
         }));
         setVersos(lista);
         salvarNoCache(cap, lista);
-        registrarLeitura(data.book?.name ?? nomeExibido, data.chapter?.number ?? cap);
+        registrarLeitura(nomeExibido, cap);
       }
     } catch {
       // fetch nunca respondeu (falha de rede real) vs. respondeu e algo depois
