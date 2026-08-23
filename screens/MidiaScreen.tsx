@@ -34,6 +34,23 @@ function MensagemCard({ msg, onPress }: { msg: Mensagem; onPress: () => void }) 
   );
 }
 
+// Card de aviso na lista — título e texto traduzidos pro idioma do app.
+function AvisoCard({ aviso, t }: { aviso: Aviso; t: (key: string) => string }) {
+  const titulo = useCampoTraduzido(aviso.titulo, 'avisos', aviso.id, 'titulo');
+  const texto = useCampoTraduzido(aviso.texto, 'avisos', aviso.id, 'texto');
+  const cor = tipoAvisoCor(aviso.tipo, t);
+  return (
+    <View style={[s.avisoCard, { backgroundColor: cor.bg, borderColor: cor.border }]}>
+      <View style={s.avisoHeader}>
+        <Text style={[s.avisoTipo, { color: cor.text }]}>{cor.label}</Text>
+        <Text style={s.avisoData}>{timeAgo(aviso.data, t)}</Text>
+      </View>
+      <Text style={s.avisoTitulo}>{titulo}</Text>
+      <Text style={s.avisoTexto}>{texto}</Text>
+    </View>
+  );
+}
+
 // ─── Config ───────────────────────────────────────────────────────────────────
 const YOUTUBE_API_KEY = process.env.EXPO_PUBLIC_YOUTUBE_API_KEY;
 const CHANNEL_ID = 'UCeipicy-AS_b66Asu65TBQQ';
@@ -381,19 +398,7 @@ export default function MidiaScreen() {
               <Text style={s.emptySub}>{t('midia.avisosApareceraoAqui')}</Text>
             </View>
           ) : (
-            avisos.map(aviso => {
-              const cor = tipoAvisoCor(aviso.tipo, t);
-              return (
-                <View key={aviso.id} style={[s.avisoCard, { backgroundColor: cor.bg, borderColor: cor.border }]}>
-                  <View style={s.avisoHeader}>
-                    <Text style={[s.avisoTipo, { color: cor.text }]}>{cor.label}</Text>
-                    <Text style={s.avisoData}>{timeAgo(aviso.data, t)}</Text>
-                  </View>
-                  <Text style={s.avisoTitulo}>{aviso.titulo}</Text>
-                  <Text style={s.avisoTexto}>{aviso.texto}</Text>
-                </View>
-              );
-            })
+            avisos.map(aviso => <AvisoCard key={aviso.id} aviso={aviso} t={t} />)
           )}
         </ScrollView>
       )}

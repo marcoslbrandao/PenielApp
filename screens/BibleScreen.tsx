@@ -85,7 +85,12 @@ function bookIdBolls(livro: Livro): number {
 // marcação tipo <S>1234</S> ou <sup>nota</sup> dentro do texto do versículo —
 // removida aqui pra exibir sempre texto puro, em qualquer versão.
 function limparTextoVerso(texto: string): string {
-  return texto.replace(/<[^>]+>/g, '').replace(/\s{2,}/g, ' ').trim();
+  return texto
+    .replace(/<S>[^<]*<\/S>/g, '')
+    .replace(/<sup>[\s\S]*?<\/sup>/g, '')
+    .replace(/<[^>]+>/g, '')
+    .replace(/\s{2,}/g, ' ')
+    .trim();
 }
 
 // ─── Leitor Modal ─────────────────────────────────────────────────────────────
