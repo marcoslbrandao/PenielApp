@@ -141,19 +141,20 @@ async function buscarDetalhesEndereco(placeId: string) {
 // fechando o teclado. Com os componentes fixos aqui fora, a identidade não
 // muda entre renders e o TextInput mantém o foco normalmente.
 
-function Field({ label, value, onChangeText, placeholder = '', keyboardType = 'default', maxLength, autoCapitalize = 'sentences', C, s }: {
+function Field({ label, value, onChangeText, placeholder = '', keyboardType = 'default', maxLength, autoCapitalize = 'sentences', error, C, s }: {
   label: string; value: string; onChangeText: (v: string) => void;
   placeholder?: string; keyboardType?: any; maxLength?: number; autoCapitalize?: 'none' | 'sentences' | 'words' | 'characters';
-  C: Paleta; s: Estilos;
+  error?: boolean; C: Paleta; s: Estilos;
 }) {
   return (
     <View style={s.fieldWrap}>
-      <Text style={s.fieldLabel}>{label}</Text>
+      <Text style={[s.fieldLabel, error && s.fieldLabelError]}>{label}</Text>
       <TextInput
-        style={s.fieldInput} value={value} onChangeText={onChangeText}
+        style={[s.fieldInput, error && s.fieldInputError]} value={value} onChangeText={onChangeText}
         placeholder={placeholder} placeholderTextColor={C.textDim}
         keyboardType={keyboardType} maxLength={maxLength} autoCapitalize={autoCapitalize}
       />
+      {error && <Text style={s.fieldErrorText}>Este campo é obrigatório.</Text>}
     </View>
   );
 }
@@ -175,22 +176,23 @@ function CampoMultilinha({ label, value, onChangeText, placeholder, C, s }: {
   );
 }
 
-function SelectPill({ label, options, value, onChange, s }: {
+function SelectPill({ label, options, value, onChange, error, s }: {
   label: string; options: string[]; value: string; onChange: (v: string) => void;
-  s: Estilos;
+  error?: boolean; s: Estilos;
 }) {
   return (
     <View style={s.fieldWrap}>
-      <Text style={s.fieldLabel}>{label}</Text>
+      <Text style={[s.fieldLabel, error && s.fieldLabelError]}>{label}</Text>
       <ScrollView horizontal showsHorizontalScrollIndicator={false} style={{ marginTop: 4 }}>
         <View style={{ flexDirection: 'row', gap: 8 }}>
           {options.map(opt => (
-            <TouchableOpacity key={opt} style={[s.pill, value === opt && s.pillActive]} onPress={() => onChange(opt)}>
+            <TouchableOpacity key={opt} style={[s.pill, value === opt && s.pillActive, error && s.pillError]} onPress={() => onChange(opt)}>
               <Text style={[s.pillText, value === opt && s.pillTextActive]}>{opt}</Text>
             </TouchableOpacity>
           ))}
         </View>
       </ScrollView>
+      {error && <Text style={s.fieldErrorText}>Este campo é obrigatório.</Text>}
     </View>
   );
 }
@@ -233,6 +235,7 @@ export default function MeuCadastroScreen() {
   const [sugestoes, setSugestoes] = useState<Sugestao[]>([]);
   const [buscandoCep, setBuscandoCep] = useState(false);
   const [enderecoConfirmado, setEnderecoConfirmado] = useState(false);
+  const [errors, setErrors] = useState<Partial<Record<keyof FormState, boolean>>>({});
   const cepDebounce = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   useEffect(() => {
@@ -257,7 +260,10 @@ export default function MeuCadastroScreen() {
     })();
   }, [user]);
 
-  const set = (field: keyof FormState) => (val: any) => setForm(prev => ({ ...prev, [field]: val }));
+  const set = (field: keyof FormState) => (val: any) => {
+    setForm(prev => ({ ...prev, [field]: val }));
+    setErrors(prev => (prev[field] ? { ...prev, [field]: false } : prev));
+  };
 
   const formatDate = (text: string, field: 'data_nascimento') => {
     const digits = text.replace(/\D/g, '').slice(0, 8);
@@ -309,9 +315,36 @@ export default function MeuCadastroScreen() {
     setEnderecoConfirmado(true);
   };
 
+  // Campos obrigatórios: todos os dados pessoais, e-mail e celular (contato),
+  // e o endereço. Verificados na ordem em que aparecem no formulário, pra que
+  // a primeira mensagem de erro corresponda ao primeiro campo vazio na tela.
+  const CAMPOS_OBRIGATORIOS: { field: keyof FormState; label: string }[] = [
+    { field: 'nome', label: 'Nome' },
+    { field: 'sobrenome', label: 'Sobrenome' },
+    { field: 'data_nascimento', label: t('cadastroMembro.dataNascimento') },
+    { field: 'estado_civil', label: t('cadastroMembro.estadoCivil') },
+    { field: 'nacionalidade', label: t('cadastroMembro.nacionalidade') },
+    { field: 'cidade', label: t('cadastroMembro.cidade') },
+    { field: 'email', label: t('cadastroMembro.email') },
+    { field: 'telefone', label: t('cadastroMembro.celular') },
+    { field: 'endereco', label: t('cadastroMembro.enderecoManual') },
+  ];
+
   const handleSave = async () => {
-    if (!form.nome.trim()) { Alert.alert(t('common.atencao'), 'Nome é obrigatório.'); return; }
-    if (!form.telefone.trim()) { Alert.alert(t('common.atencao'), 'Celular é obrigatório.'); return; }
+    const faltando = CAMPOS_OBRIGATORIOS.filter(c => !String(form[c.field] ?? '').trim());
+
+    if (faltando.length > 0) {
+      const novosErros: Partial<Record<keyof FormState, boolean>> = {};
+      faltando.forEach(c => { novosErros[c.field] = true; });
+      setErrors(novosErros);
+
+      const mensagem = faltando.length === 1
+        ? `O campo "${faltando[0].label}" está vazio e precisa ser preenchido para salvar o cadastro.`
+        : `Os seguintes campos estão vazios e precisam ser preenchidos para salvar o cadastro:\n\n${faltando.map(c => `• ${c.label}`).join('\n')}`;
+      Alert.alert(t('common.atencao'), mensagem);
+      return;
+    }
+    setErrors({});
     setSaving(true);
 
     const payload = {
@@ -367,19 +400,19 @@ export default function MeuCadastroScreen() {
           <SectionTitle s={s}>{t('cadastroMembro.secaoPessoal')}</SectionTitle>
           <View style={s.card}>
             <View style={{ flexDirection: 'row', gap: 12 }}>
-              <View style={{ flex: 1 }}><Field label="Nome *" value={form.nome} onChangeText={set('nome')} placeholder="Nome" C={C} s={s} /></View>
-              <View style={{ flex: 1.5 }}><Field label="Sobrenome" value={form.sobrenome} onChangeText={set('sobrenome')} placeholder="Sobrenome" C={C} s={s} /></View>
+              <View style={{ flex: 1 }}><Field label="Nome *" value={form.nome} onChangeText={set('nome')} placeholder="Nome" error={errors.nome} C={C} s={s} /></View>
+              <View style={{ flex: 1.5 }}><Field label="Sobrenome *" value={form.sobrenome} onChangeText={set('sobrenome')} placeholder="Sobrenome" error={errors.sobrenome} C={C} s={s} /></View>
             </View>
-            <Field label={t('cadastroMembro.dataNascimento')} value={form.data_nascimento} onChangeText={t2 => formatDate(t2, 'data_nascimento')} placeholder="DD/MM/AAAA" keyboardType="numeric" maxLength={10} C={C} s={s} />
-            <SelectPill label={t('cadastroMembro.estadoCivil')} options={ESTADO_CIVIL_OPCOES} value={form.estado_civil} onChange={set('estado_civil')} s={s} />
-            <Field label={t('cadastroMembro.nacionalidade')} value={form.nacionalidade} onChangeText={set('nacionalidade')} placeholder="Ex: Brasileira" C={C} s={s} />
-            <Field label={t('cadastroMembro.cidade')} value={form.cidade} onChangeText={set('cidade')} placeholder="Cidade" C={C} s={s} />
+            <Field label={`${t('cadastroMembro.dataNascimento')} *`} value={form.data_nascimento} onChangeText={t2 => formatDate(t2, 'data_nascimento')} placeholder="DD/MM/AAAA" keyboardType="numeric" maxLength={10} error={errors.data_nascimento} C={C} s={s} />
+            <SelectPill label={`${t('cadastroMembro.estadoCivil')} *`} options={ESTADO_CIVIL_OPCOES} value={form.estado_civil} onChange={set('estado_civil')} error={errors.estado_civil} s={s} />
+            <Field label={`${t('cadastroMembro.nacionalidade')} *`} value={form.nacionalidade} onChangeText={set('nacionalidade')} placeholder="Ex: Brasileira" error={errors.nacionalidade} C={C} s={s} />
+            <Field label={`${t('cadastroMembro.cidade')} *`} value={form.cidade} onChangeText={set('cidade')} placeholder="Cidade" error={errors.cidade} C={C} s={s} />
           </View>
 
           <SectionTitle s={s}>{t('cadastroMembro.secaoContato')}</SectionTitle>
           <View style={s.card}>
-            <Field label={t('cadastroMembro.email')} value={form.email} onChangeText={set('email')} placeholder="email@exemplo.com" keyboardType="email-address" C={C} s={s} />
-            <Field label={`${t('cadastroMembro.celular')} *`} value={form.telefone} onChangeText={formatPhone} placeholder="+44 7000 000000" keyboardType="phone-pad" maxLength={14} C={C} s={s} />
+            <Field label={`${t('cadastroMembro.email')} *`} value={form.email} onChangeText={set('email')} placeholder="email@exemplo.com" keyboardType="email-address" error={errors.email} C={C} s={s} />
+            <Field label={`${t('cadastroMembro.celular')} *`} value={form.telefone} onChangeText={formatPhone} placeholder="+44 7000 000000" keyboardType="phone-pad" maxLength={14} error={errors.telefone} C={C} s={s} />
             <Field label={t('cadastroMembro.instagram')} value={form.instagram} onChangeText={set('instagram')} placeholder={t('cadastroMembro.instagramPlaceholder')} C={C} s={s} />
           </View>
 
@@ -417,7 +450,7 @@ export default function MeuCadastroScreen() {
               <Field label={t('cadastroMembro.cep')} value={form.cep} onChangeText={set('cep')} placeholder="00000-000" C={C} s={s} />
             )}
 
-            <Field label={t('cadastroMembro.enderecoManual')} value={form.endereco} onChangeText={set('endereco')} placeholder="Ex: 45 Abbey Square" C={C} s={s} />
+            <Field label={`${t('cadastroMembro.enderecoManual')} *`} value={form.endereco} onChangeText={set('endereco')} placeholder="Ex: 45 Abbey Square" error={errors.endereco} C={C} s={s} />
             <Field label={t('cadastroMembro.complemento')} value={form.complemento} onChangeText={set('complemento')} placeholder="Ex: Apto 3B, próximo ao mercado" C={C} s={s} />
           </View>
 
@@ -479,9 +512,13 @@ function buildStyles(C: Paleta) {
     card: { backgroundColor: C.surface, borderRadius: 16, borderWidth: 1, borderColor: C.border, padding: 16, marginBottom: 20 },
     fieldWrap: { marginBottom: 12 },
     fieldLabel: { fontSize: 11, color: C.textMuted, fontWeight: '700', letterSpacing: 0.6, textTransform: 'uppercase', marginBottom: 6 },
+    fieldLabelError: { color: C.danger },
     fieldInput: { backgroundColor: C.surfaceAlt, borderWidth: 1, borderColor: C.border, borderRadius: 10, paddingHorizontal: 14, height: 46, fontSize: 15, color: C.text },
+    fieldInputError: { borderColor: C.danger, borderWidth: 1.5 },
+    fieldErrorText: { fontSize: 11, color: C.danger, marginTop: 4 },
     pill: { paddingHorizontal: 12, paddingVertical: 6, borderRadius: 20, backgroundColor: C.surfaceAlt, borderWidth: 1, borderColor: C.border },
     pillActive: { backgroundColor: C.accent + '22', borderColor: C.accent },
+    pillError: { borderColor: C.danger },
     pillText: { fontSize: 12, color: C.textMuted, fontWeight: '500' },
     pillTextActive: { color: C.accent, fontWeight: '700' },
     toggleRow: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', backgroundColor: C.surfaceAlt, borderRadius: 12, padding: 14, marginBottom: 12 },
