@@ -886,8 +886,13 @@ function buildStyles(C: PaletaHome) { return StyleSheet.create({
   devocionalVersiculo: { fontSize: 13, color: 'rgba(255,255,255,0.85)', fontStyle: 'italic', lineHeight: 20 },
   devocionalRef: { fontSize: 11, fontWeight: '700', color: '#F5C842', marginTop: 6 },
   devocionalTexto: { fontSize: 13, color: 'rgba(255,255,255,0.7)', lineHeight: 20, marginTop: 10 },
-  verTodosDevocionais: { flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 6, marginTop: -8, marginBottom: 16 },
-  verTodosDevocionaisTexto: { fontSize: 13, fontWeight: '700', color: '#F5C842' },
+  verTodosDevocionais: {
+    flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 6,
+    marginTop: -4, marginBottom: 16, alignSelf: 'center',
+    paddingHorizontal: 16, paddingVertical: 8, borderRadius: 20,
+    backgroundColor: 'rgba(245,200,66,0.14)', borderWidth: 1, borderColor: 'rgba(245,200,66,0.4)',
+  },
+  verTodosDevocionaisTexto: { fontSize: 14, fontWeight: '700', color: '#F5C842' },
   // Live
   secaoHeader: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginBottom: 10 },
   secaoTitulo: { fontSize: 14, fontWeight: '500', color: C.textPrimary, marginBottom: 10 },
