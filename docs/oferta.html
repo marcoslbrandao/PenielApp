@@ -1,0 +1,154 @@
+<!DOCTYPE html>
+<html lang="pt">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Sua oferta — Peniel Church</title>
+<style>
+  * { box-sizing: border-box; }
+  html, body {
+    margin: 0;
+    min-height: 100%;
+  }
+  body {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    background: #1A1740;
+    font-family: 'Work Sans', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+    color: #fff;
+    padding: 24px;
+  }
+  .card {
+    background: #241F5C;
+    border-radius: 20px;
+    padding: 32px 24px;
+    max-width: 360px;
+    width: 100%;
+    text-align: center;
+    box-shadow: 0 12px 40px rgba(0,0,0,0.35);
+  }
+  h1 { font-size: 19px; margin: 0 0 4px; }
+  .sub { color: #B7B2E8; font-size: 13px; margin: 0 0 20px; }
+  .total-label { color: #B7B2E8; font-size: 12px; text-transform: uppercase; letter-spacing: 1px; margin: 0; }
+  .total { font-size: 46px; font-weight: 800; color: #F5C842; margin: 4px 0 22px; line-height: 1; transition: transform 0.12s ease; }
+  .total.bump { transform: scale(1.12); }
+  .grid { display: flex; flex-wrap: wrap; gap: 10px; justify-content: center; margin-bottom: 14px; }
+  .chip {
+    flex: 1 1 68px;
+    background: rgba(245,200,66,0.10);
+    border: 2px solid #F5C842;
+    color: #F5C842;
+    font-weight: 700;
+    font-size: 17px;
+    padding: 15px 0;
+    border-radius: 14px;
+    font-family: inherit;
+    cursor: pointer;
+    -webkit-tap-highlight-color: transparent;
+  }
+  .chip:active { background: #F5C842; color: #1A1740; }
+  .contribuir {
+    display: block;
+    background: #F5C842;
+    color: #1A1740;
+    font-weight: 800;
+    font-size: 16px;
+    padding: 16px;
+    border-radius: 14px;
+    text-decoration: none;
+    font-family: inherit;
+    border: none;
+    width: 100%;
+    cursor: pointer;
+    margin-top: 8px;
+  }
+  .contribuir:disabled { opacity: 0.35; cursor: not-allowed; }
+  .reset {
+    display: inline-block;
+    margin-top: 16px;
+    background: none;
+    border: none;
+    color: #9089C7;
+    font-size: 13px;
+    text-decoration: underline;
+    font-family: inherit;
+    cursor: pointer;
+    padding: 4px;
+  }
+</style>
+</head>
+<body>
+  <div class="card">
+    <h1>Sua oferta</h1>
+    <p class="sub">Toque nos valores para somar</p>
+    <p class="total-label">Total</p>
+    <div class="total" id="total">£0</div>
+    <div class="grid" id="grid"></div>
+    <button class="contribuir" id="contribuirBtn" disabled>Contribuir £0</button>
+    <button class="reset" id="resetBtn">Recomeçar</button>
+  </div>
+
+<script>
+  var FN_URL = 'https://yudulaqsqhzbbarhxbnr.supabase.co/functions/v1/create-checkout-session';
+  var MOEDA = 'gbp';
+  var passos = [5, 10, 20, 50];
+  var total = 0;
+
+  var params = new URLSearchParams(window.location.search);
+  var totalParam = parseInt(params.get('total'), 10);
+  if (!isNaN(totalParam) && totalParam > 0) {
+    total = totalParam;
+  }
+
+  var totalEl = document.getElementById('total');
+  var contribuirBtn = document.getElementById('contribuirBtn');
+  var grid = document.getElementById('grid');
+  var resetBtn = document.getElementById('resetBtn');
+
+  passos.forEach(function (valor) {
+    var chip = document.createElement('button');
+    chip.className = 'chip';
+    chip.type = 'button';
+    chip.textContent = '+£' + valor;
+    chip.addEventListener('click', function () {
+      total += valor;
+      render(true);
+    });
+    grid.appendChild(chip);
+  });
+
+  contribuirBtn.addEventListener('click', function () {
+    if (total <= 0) return;
+    contribuirBtn.disabled = true;
+    contribuirBtn.textContent = 'A abrir pagamento…';
+    window.location.href = FN_URL + '?valor=' + total + '&moeda=' + MOEDA;
+  });
+
+  resetBtn.addEventListener('click', function () {
+    total = 0;
+    render(false);
+  });
+
+  function render(bump) {
+    totalEl.textContent = '£' + total;
+    contribuirBtn.textContent = 'Contribuir £' + total;
+    contribuirBtn.disabled = total <= 0;
+    if (bump) {
+      totalEl.classList.remove('bump');
+      void totalEl.offsetWidth;
+      totalEl.classList.add('bump');
+    }
+    var url = new URL(window.location.href);
+    if (total > 0) {
+      url.searchParams.set('total', total);
+    } else {
+      url.searchParams.delete('total');
+    }
+    window.history.replaceState({}, '', url);
+  }
+
+  render(false);
+</script>
+</body>
+</html>
