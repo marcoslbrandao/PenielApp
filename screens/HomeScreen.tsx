@@ -1,5 +1,6 @@
-import React, { useEffect, useRef, useState, useMemo } from 'react';
+import React, { useEffect, useRef, useState, useMemo, useCallback } from 'react';
 import { View, Text, StyleSheet, ScrollView, TouchableOpacity, Image, Animated, PanResponder, Linking, Alert, Modal, TextInput, ActivityIndicator } from 'react-native';
+import { useFocusEffect } from '@react-navigation/native';
 import { Ionicons } from '@expo/vector-icons';
 import { useTranslation } from 'react-i18next';
 import { supabase } from '../lib/supabase';
@@ -130,6 +131,13 @@ function NotifAvisoCard({ aviso, onRemover }: { aviso: AvisoResult; onRemover: (
           <Text style={sm.notifTexto} numberOfLines={3}>{texto}</Text>
           <Text style={sm.notifData}>{new Date(aviso.data).toLocaleDateString(locale, { day: '2-digit', month: 'short' })}</Text>
         </View>
+        <TouchableOpacity
+          style={sm.notifExcluirBtn}
+          onPress={onRemover}
+          hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
+        >
+          <Ionicons name="trash-outline" size={16} color="rgba(255,255,255,0.45)" />
+        </TouchableOpacity>
       </View>
     </SwipeParaRemover>
   );
@@ -260,6 +268,7 @@ const sm = StyleSheet.create({
   notifTitulo: { fontSize: 14, fontWeight: '700', color: '#fff' },
   notifTexto: { fontSize: 12, color: 'rgba(255,255,255,0.6)', marginTop: 4, lineHeight: 18 },
   notifData: { fontSize: 10, color: 'rgba(255,255,255,0.4)', marginTop: 6 },
+  notifExcluirBtn: { alignSelf: 'flex-start', padding: 4 },
   overlay: { flex: 1, backgroundColor: '#1A1740', paddingTop: 55 },
   sheet: { flex: 1, paddingHorizontal: 18 },
   searchRow: { flexDirection: 'row', alignItems: 'center', gap: 10, backgroundColor: 'rgba(255,255,255,0.08)', borderRadius: 12, paddingHorizontal: 14, height: 46 },
@@ -435,16 +444,22 @@ export default function HomeScreen({ navigation }: { navigation?: any }) {
   const devocionalReferenciaTraduzida = useCampoTraduzido(devocional?.referencia, 'devocionais', devocional?.id, 'referencia');
   const devocionalTextoTraduzido = useCampoTraduzido(devocional?.texto, 'devocionais', devocional?.id, 'texto');
 
-  useEffect(() => {
-    supabase
-      .from('devocionais')
-      .select('id, titulo, versiculo, referencia, texto')
-      .is('grupo', null)
-      .order('data', { ascending: false })
-      .limit(1)
-      .maybeSingle()
-      .then(({ data }) => { if (data) setDevocional(data as any); });
-  }, []);
+  // useFocusEffect (não useEffect simples) — assim o card sempre mostra o
+  // devocional mais recente ao voltar pra Home, mesmo se o admin publicou um
+  // novo enquanto a aba já estava montada (a Home não desmonta ao trocar de
+  // aba, então um useEffect com [] só rodaria de novo se o app reabrisse).
+  useFocusEffect(
+    useCallback(() => {
+      supabase
+        .from('devocionais')
+        .select('id, titulo, versiculo, referencia, texto')
+        .is('grupo', null)
+        .order('data', { ascending: false })
+        .limit(1)
+        .maybeSingle()
+        .then(({ data }) => { setDevocional((data as any) ?? null); });
+    }, [])
+  );
 
   // ── Mensagem de domingo em destaque (blog) ────────────────────────────────
   const [mensagem, setMensagem] = useState<Mensagem | null>(null);
@@ -452,15 +467,17 @@ export default function HomeScreen({ navigation }: { navigation?: any }) {
   const mensagemTituloTraduzido = useCampoTraduzido(mensagem?.titulo, 'mensagens', mensagem?.id, 'titulo');
   const mensagemResumoTraduzido = useCampoTraduzido(mensagem?.resumo, 'mensagens', mensagem?.id, 'resumo');
 
-  useEffect(() => {
-    supabase
-      .from('mensagens')
-      .select('id, titulo, resumo, conteudo, imagem_url, autor, data')
-      .order('data', { ascending: false })
-      .limit(1)
-      .maybeSingle()
-      .then(({ data }) => { if (data) setMensagem(data as Mensagem); });
-  }, []);
+  useFocusEffect(
+    useCallback(() => {
+      supabase
+        .from('mensagens')
+        .select('id, titulo, resumo, conteudo, imagem_url, autor, data')
+        .order('data', { ascending: false })
+        .limit(1)
+        .maybeSingle()
+        .then(({ data }) => { setMensagem((data as Mensagem) ?? null); });
+    }, [])
+  );
 
   // ── Notificações (sininho) ────────────────────────────────────────────────
   const [notifModalVisible, setNotifModalVisible] = useState(false);

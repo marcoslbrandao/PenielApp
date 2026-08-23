@@ -137,6 +137,7 @@ function NovoConviteModal({ visible, onClose, onSaved }: {
   return (
     <Modal visible={visible} animationType="slide" transparent>
       <View style={mo.overlay}>
+        <KeyboardAvoidingView behavior={Platform.OS === 'ios' ? 'padding' : undefined} style={{ width: '100%' }}>
         <View style={mo.sheet}>
           <View style={mo.header}>
             <Text style={mo.title}>Novo Convite</Text>
@@ -199,6 +200,7 @@ function NovoConviteModal({ visible, onClose, onSaved }: {
             )}
           </TouchableOpacity>
         </View>
+        </KeyboardAvoidingView>
       </View>
     </Modal>
   );
@@ -271,8 +273,9 @@ function NovaOfertaModal({ visible, onClose, onSaved, adminId }: {
   return (
     <Modal visible={visible} animationType="slide" transparent>
       <View style={mo.overlay}>
-        <View style={[mo.sheet, { maxHeight: '85%' }]}>
-          <ScrollView showsVerticalScrollIndicator={false}>
+        <KeyboardAvoidingView behavior={Platform.OS === 'ios' ? 'padding' : undefined} style={{ width: '100%', maxHeight: '85%' }}>
+        <View style={[mo.sheet, { maxHeight: '100%' }]}>
+          <ScrollView showsVerticalScrollIndicator={false} keyboardShouldPersistTaps="handled">
             <View style={mo.header}>
               <Text style={mo.title}>Registrar Oferta</Text>
               <TouchableOpacity onPress={onClose}>
@@ -364,6 +367,7 @@ function NovaOfertaModal({ visible, onClose, onSaved, adminId }: {
             </TouchableOpacity>
           </ScrollView>
         </View>
+        </KeyboardAvoidingView>
       </View>
     </Modal>
   );
@@ -397,8 +401,9 @@ function NovoAvisoModal({ visible, onClose, onSaved }: {
   return (
     <Modal visible={visible} animationType="slide" transparent>
       <View style={mo.overlay}>
-        <View style={[mo.sheet, { maxHeight: '85%' }]}>
-          <ScrollView showsVerticalScrollIndicator={false}>
+        <KeyboardAvoidingView behavior={Platform.OS === 'ios' ? 'padding' : undefined} style={{ width: '100%', maxHeight: '85%' }}>
+        <View style={[mo.sheet, { maxHeight: '100%' }]}>
+          <ScrollView showsVerticalScrollIndicator={false} keyboardShouldPersistTaps="handled">
             <View style={mo.header}>
               <Text style={mo.title}>Novo Aviso</Text>
               <TouchableOpacity onPress={onClose}>
@@ -445,6 +450,7 @@ function NovoAvisoModal({ visible, onClose, onSaved }: {
             </TouchableOpacity>
           </ScrollView>
         </View>
+        </KeyboardAvoidingView>
       </View>
     </Modal>
   );
@@ -483,8 +489,9 @@ function NovoDevocionalModal({ visible, onClose, onSaved }: {
   return (
     <Modal visible={visible} animationType="slide" transparent>
       <View style={mo.overlay}>
-        <View style={[mo.sheet, { maxHeight: '85%' }]}>
-          <ScrollView showsVerticalScrollIndicator={false}>
+        <KeyboardAvoidingView behavior={Platform.OS === 'ios' ? 'padding' : undefined} style={{ width: '100%', maxHeight: '85%' }}>
+        <View style={[mo.sheet, { maxHeight: '100%' }]}>
+          <ScrollView showsVerticalScrollIndicator={false} keyboardShouldPersistTaps="handled">
             <View style={mo.header}>
               <Text style={mo.title}>Novo Devocional</Text>
               <TouchableOpacity onPress={onClose}>
@@ -537,6 +544,7 @@ function NovoDevocionalModal({ visible, onClose, onSaved }: {
             </TouchableOpacity>
           </ScrollView>
         </View>
+        </KeyboardAvoidingView>
       </View>
     </Modal>
   );
@@ -599,8 +607,9 @@ function NovoEventoModal({ visible, onClose, onSaved }: {
   return (
     <Modal visible={visible} animationType="slide" transparent>
       <View style={mo.overlay}>
-        <View style={[mo.sheet, { maxHeight: '90%' }]}>
-          <ScrollView showsVerticalScrollIndicator={false}>
+        <KeyboardAvoidingView behavior={Platform.OS === 'ios' ? 'padding' : undefined} style={{ width: '100%', maxHeight: '90%' }}>
+        <View style={[mo.sheet, { maxHeight: '100%' }]}>
+          <ScrollView showsVerticalScrollIndicator={false} keyboardShouldPersistTaps="handled">
             <View style={mo.header}>
               <Text style={mo.title}>Novo Evento</Text>
               <TouchableOpacity onPress={onClose}>
@@ -719,6 +728,7 @@ function NovoEventoModal({ visible, onClose, onSaved }: {
             </TouchableOpacity>
           </ScrollView>
         </View>
+        </KeyboardAvoidingView>
       </View>
     </Modal>
   );
@@ -752,8 +762,9 @@ function NovoShortModal({ visible, onClose, onSaved }: {
   return (
     <Modal visible={visible} animationType="slide" transparent>
       <View style={mo.overlay}>
-        <View style={[mo.sheet, { maxHeight: '80%' }]}>
-          <ScrollView showsVerticalScrollIndicator={false}>
+        <KeyboardAvoidingView behavior={Platform.OS === 'ios' ? 'padding' : undefined} style={{ width: '100%', maxHeight: '80%' }}>
+        <View style={[mo.sheet, { maxHeight: '100%' }]}>
+          <ScrollView showsVerticalScrollIndicator={false} keyboardShouldPersistTaps="handled">
             <View style={mo.header}>
               <Text style={mo.title}>Novo Short</Text>
               <TouchableOpacity onPress={onClose}>
@@ -799,6 +810,7 @@ function NovoShortModal({ visible, onClose, onSaved }: {
             </TouchableOpacity>
           </ScrollView>
         </View>
+        </KeyboardAvoidingView>
       </View>
     </Modal>
   );
@@ -880,8 +892,9 @@ function NovaMensagemModal({ visible, onClose, onSaved }: {
   return (
     <Modal visible={visible} animationType="slide" transparent>
       <View style={mo.overlay}>
-        <View style={[mo.sheet, { maxHeight: '90%' }]}>
-          <ScrollView showsVerticalScrollIndicator={false}>
+        <KeyboardAvoidingView behavior={Platform.OS === 'ios' ? 'padding' : undefined} style={{ width: '100%', maxHeight: '90%' }}>
+        <View style={[mo.sheet, { maxHeight: '100%' }]}>
+          <ScrollView showsVerticalScrollIndicator={false} keyboardShouldPersistTaps="handled">
             <View style={mo.header}>
               <Text style={mo.title}>Nova Mensagem</Text>
               <TouchableOpacity onPress={onClose}>
@@ -948,6 +961,7 @@ function NovaMensagemModal({ visible, onClose, onSaved }: {
             </TouchableOpacity>
           </ScrollView>
         </View>
+        </KeyboardAvoidingView>
       </View>
     </Modal>
   );
@@ -985,6 +999,7 @@ function NovaAreaModal({ visible, onClose, onSaved }: {
   return (
     <Modal visible={visible} animationType="slide" transparent>
       <View style={mo.overlay}>
+        <KeyboardAvoidingView behavior={Platform.OS === 'ios' ? 'padding' : undefined} style={{ width: '100%' }}>
         <View style={mo.sheet}>
           <View style={mo.header}>
             <Text style={mo.title}>Nova Área de Escala</Text>
@@ -1017,6 +1032,7 @@ function NovaAreaModal({ visible, onClose, onSaved }: {
             {saving ? <ActivityIndicator color="#fff" /> : <Text style={mo.saveBtnText}>Criar Área</Text>}
           </TouchableOpacity>
         </View>
+        </KeyboardAvoidingView>
       </View>
     </Modal>
   );
