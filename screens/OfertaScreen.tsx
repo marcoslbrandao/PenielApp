@@ -1,9 +1,9 @@
-import { View, Text, StyleSheet, ScrollView, TouchableOpacity, Linking, Alert, TextInput, Platform } from 'react-native';
+import { View, Text, StyleSheet, ScrollView, TouchableOpacity, Alert, TextInput } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { useState, useMemo } from 'react';
 import { useTranslation } from 'react-i18next';
 import { useTheme } from '../lib/theme';
-import { PlatformPayButton, usePlatformPay, PlatformPay } from '@stripe/stripe-react-native';
+import { usePaymentSheet } from '@stripe/stripe-react-native';
 import { supabase } from '../lib/supabase';
 
 // Paleta local — header, card do valor e card do versículo já são roxo
@@ -32,8 +32,6 @@ function paletaOferta(isDark: boolean) {
 type PaletaOferta = ReturnType<typeof paletaOferta>;
 
 // ─── Config ───────────────────────────────────────────────────────────────────
-const SUMUP_URL = 'https://pay.sumup.com/b2c/Q54Q9ILX';
-
 const valores = [10, 25, 50, 100, 200];
 
 export default function OfertaScreen({ navigation }: { navigation?: any }) {
@@ -52,14 +50,13 @@ export default function OfertaScreen({ navigation }: { navigation?: any }) {
   const [tipoSelecionado, setTipoSelecionado] = useState('dizimo');
   const [recorrencia, setRecorrencia] = useState('unica');
 
-  // ─── Apple Pay / Google Pay via Stripe ────────────────────────────────────
-  // Mostramos o botão sempre (para quem está no iOS/Android), independente
-  // de canMakePayments/isPlatformPaySupported — esse check exige cartão já
-  // configurado na Wallet do dispositivo, o que faz o botão sumir em
-  // dispositivos "limpos" (incluindo o do revisor da Apple). Se o usuário
-  // tocar sem ter Apple/Google Pay configurado, o erro é tratado no catch
-  // de handlePlatformPay com um Alert amigável.
-  const { confirmPlatformPayPayment } = usePlatformPay();
+  // ─── Pagamento via Stripe (PaymentSheet) ──────────────────────────────────
+  // Um único botão que cobre cartão + Apple Pay + Google Pay, tudo dentro da
+  // mesma folha nativa do Stripe — não depende de haver cartão configurado
+  // na Wallet do dispositivo (quem não tem Apple/Google Pay simplesmente
+  // digita o cartão na mesma tela). Substitui o antigo par SumUp + Apple/
+  // Google Pay por um fluxo único, só Stripe.
+  const { initPaymentSheet, presentPaymentSheet } = usePaymentSheet();
   const [processandoPagamento, setProcessandoPagamento] = useState(false);
 
   const valorFinal = outroAtivo ? Number(valorCustom.replace(',', '.')) || 0 : valorSelecionado;
@@ -74,27 +71,9 @@ export default function OfertaScreen({ navigation }: { navigation?: any }) {
     setValorSelecionado(0);
   };
 
-  const handleContribuir = () => {
-    if (valorFinal <= 0) {
-      Alert.alert(t('common.atencao'), t('oferta.informeValorValido'));
-      return;
-    }
-    Alert.alert(
-      t('oferta.modalTitulo'),
-      t('oferta.modalTexto', {
-        valor: valorFinal,
-        tipo: tipos.find(tp => tp.id === tipoSelecionado)?.nome,
-        freq: recorrencia === 'mensal' ? t('oferta.mensal') : t('oferta.unica'),
-      }),
-      [
-        { text: t('common.cancelar'), style: 'cancel' },
-        { text: t('oferta.irParaPagamento'), onPress: () => Linking.openURL(SUMUP_URL) },
-      ]
-    );
-  };
-
-  // Busca o client_secret na Edge Function e confirma o pagamento via Apple/Google Pay.
-  const handlePlatformPay = async () => {
+  // Busca o client_secret na Edge Function, monta a PaymentSheet (cartão +
+  // Apple Pay + Google Pay juntos) e apresenta pro usuário.
+  const handleContribuir = async () => {
     if (valorFinal <= 0) {
       Alert.alert(t('common.atencao'), t('oferta.informeValorValido'));
       return;
@@ -110,29 +89,28 @@ export default function OfertaScreen({ navigation }: { navigation?: any }) {
         throw new Error(fnError?.message || 'Não foi possível iniciar o pagamento.');
       }
 
-      const { error: confirmError } = await confirmPlatformPayPayment(data.clientSecret, {
+      const { error: initError } = await initPaymentSheet({
+        merchantDisplayName: 'Peniel Church',
+        paymentIntentClientSecret: data.clientSecret,
         applePay: {
-          cartItems: [
-            {
-              label: 'Peniel Church',
-              amount: valorFinal.toFixed(2),
-              paymentType: PlatformPay.PaymentType.Immediate,
-            },
-          ],
           merchantCountryCode: 'GB',
-          currencyCode: 'GBP',
         },
         googlePay: {
-          testEnv: false,
-          merchantName: 'Peniel Church',
           merchantCountryCode: 'GB',
           currencyCode: 'GBP',
+          testEnv: false,
         },
       });
 
-      if (confirmError) {
-        if (confirmError.code !== 'Canceled') {
-          Alert.alert(t('common.atencao'), confirmError.message);
+      if (initError) {
+        throw new Error(initError.message);
+      }
+
+      const { error: presentError } = await presentPaymentSheet();
+
+      if (presentError) {
+        if (presentError.code !== 'Canceled') {
+          Alert.alert(t('common.atencao'), presentError.message);
         }
         return;
       }
@@ -274,23 +252,13 @@ export default function OfertaScreen({ navigation }: { navigation?: any }) {
           </View>
         </View>
 
-        {/* ── Apple Pay / Google Pay ───────────────────────────────────────────
-             Aparece sempre para contribuição única (recorrência mensal
-             continua via SumUp), independente de haver cartão configurado
-             na Wallet — ver nota acima sobre isPlatformPaySupported. */}
-        {recorrencia === 'unica' && (
-          <PlatformPayButton
-            onPress={handlePlatformPay}
-            type={PlatformPay.ButtonType.Donate}
-            appearance={PlatformPay.ButtonStyle.Black}
-            borderRadius={14}
-            disabled={processandoPagamento}
-            style={styles.platformPayBtn}
-          />
-        )}
-
-        {/* ── Botão contribuir (SumUp) ──────────────────────────────────────── */}
-        <TouchableOpacity style={styles.btnContribuir} onPress={handleContribuir} activeOpacity={0.85}>
+        {/* ── Botão contribuir (Stripe — cartão + Apple Pay + Google Pay) ─────── */}
+        <TouchableOpacity
+          style={[styles.btnContribuir, processandoPagamento && { opacity: 0.6 }]}
+          onPress={handleContribuir}
+          activeOpacity={0.85}
+          disabled={processandoPagamento}
+        >
           <Ionicons name="card-outline" size={20} color="#fff" />
           <Text style={styles.btnContribuirTexto}>{t('oferta.contribuirComSeguranca')}</Text>
         </TouchableOpacity>
@@ -366,8 +334,6 @@ function buildStyles(C: PaletaOferta) { return StyleSheet.create({
   resumoLinha: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', padding: 14, borderBottomWidth: 0.5, borderBottomColor: C.cardBorder },
   resumoLabel: { fontSize: 13, color: C.textMuted },
   resumoValor: { fontSize: 13, fontWeight: '500', color: C.textPrimary },
-  // Apple/Google Pay
-  platformPayBtn: { height: 50, marginHorizontal: 14, marginBottom: 12 },
   // Botão
   btnContribuir: { backgroundColor: '#534AB7', borderRadius: 14, marginHorizontal: 14, padding: 16, alignItems: 'center', flexDirection: 'row', justifyContent: 'center', gap: 10 },
   btnContribuirTexto: { fontSize: 16, fontWeight: '700', color: '#fff' },

@@ -808,7 +808,7 @@ export default function ProfileScreen() {
       title: t('perfil.secaoSobre'),
       items: [
         { icon: 'information-circle-outline', label: t('perfil.sobre'), onPress: handleAbout },
-        { icon: 'document-text-outline', label: t('perfil.termosDeUso'), onPress: () => Linking.openURL('https://penielchurch.com/termos') },
+        { icon: 'document-text-outline', label: t('perfil.politicaDePrivacidade'), onPress: () => Linking.openURL('https://marcoslbrandao.github.io/PenielChurchApp/privacy-policy.html') },
         ...(isLoggedIn ? [{
           icon: 'log-out-outline' as keyof typeof Ionicons.glyphMap,
           label: t('perfil.sair'), color: C.danger, onPress: handleLogout,
