@@ -330,13 +330,30 @@ export default function HomeScreen({ navigation }: { navigation?: any }) {
     // minutos em vários celulares ao mesmo tempo (ex: todo mundo abrindo o
     // app durante o culto), a cota diária gratuita (10.000 unidades) estoura
     // muito rápido — foi o que provavelmente já estava acontecendo antes.
+    // Espelha o isLive fora do state do React, pra decidir a cadência do
+    // fallback abaixo sem cair em closure desatualizada (o efeito só roda
+    // uma vez, então "isLive" capturado no useEffect nunca mudaria).
+    let estaAoVivo = false;
+
     const checkLiveSemCota = async (): Promise<boolean> => {
       try {
-        const res = await fetch(`https://www.youtube.com/channel/${CHANNEL_ID}/live`, { redirect: 'follow' });
+        const res = await fetch(`https://www.youtube.com/channel/${CHANNEL_ID}/live`, {
+          redirect: 'follow',
+          headers: {
+            // Sem isso, o YouTube às vezes responde com a página de aviso de
+            // cookies (comum pra usuários na UE/Reino Unido) em vez de
+            // redirecionar direto pro vídeo — então o app lê "não está ao
+            // vivo" mesmo com a transmissão rolando. Esse cookie de consentimento
+            // já pré-aceito evita essa página intermediária.
+            Cookie: 'CONSENT=YES+cb.20210328-17-p0.en+FX+119; SOCS=CAI',
+            'Accept-Language': 'en-US,en;q=0.9',
+          },
+        });
         const finalUrl = res.url ?? '';
         const match = finalUrl.match(/[?&]v=([a-zA-Z0-9_-]{6,})/);
-        if (!match) { setIsLive(false); return true; }
+        if (!match) { estaAoVivo = false; setIsLive(false); return true; }
         const videoId = match[1];
+        estaAoVivo = true;
         setIsLive(true);
         try {
           const oembedRes = await fetch(`https://www.youtube.com/oembed?url=https://www.youtube.com/watch?v=${videoId}&format=json`);
@@ -361,6 +378,7 @@ export default function HomeScreen({ navigation }: { navigation?: any }) {
         const res = await fetch(url);
         const data = await res.json();
         if (data.items && data.items.length > 0) {
+          estaAoVivo = true;
           setIsLive(true);
           setLiveTitle(data.items[0].snippet.title);
         }
@@ -376,11 +394,16 @@ export default function HomeScreen({ navigation }: { navigation?: any }) {
       if (!ok) {
         // A checagem gratuita falhou de vez (erro de rede/parse) — usa a API.
         await checkLiveComApi();
-      } else if (ciclo % 10 === 0) {
-        // A cada ~15min, confirma com a API mesmo se a checagem gratuita
-        // disse "não está ao vivo" — protege contra falso-negativo sem
-        // gastar cota o tempo todo.
-        await checkLiveComApi();
+      } else {
+        // Confirma com a API de tempos em tempos, como rede de segurança.
+        // Enquanto o app acha que NÃO está ao vivo, confirma mais rápido
+        // (a cada ~4,5min) — é quando um falso-negativo realmente importa,
+        // porque senão o botão fica "Off" por até 15min mesmo com a live no ar.
+        // Já ao vivo, confirma menos (a cada ~15min) só pra manter o título em dia.
+        const intervaloCiclos = estaAoVivo ? 10 : 3;
+        if (ciclo % intervaloCiclos === 0) {
+          await checkLiveComApi();
+        }
       }
     };
 
