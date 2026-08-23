@@ -30,28 +30,50 @@
   }
   h1 { font-size: 19px; margin: 0 0 4px; }
   .sub { color: #B7B2E8; font-size: 13px; margin: 0 0 20px; }
-  .total-label { color: #B7B2E8; font-size: 12px; text-transform: uppercase; letter-spacing: 1px; margin: 0; }
-  .total { font-size: 46px; font-weight: 800; color: #F5C842; margin: 4px 0 22px; line-height: 1; transition: transform 0.12s ease; }
-  .total.bump { transform: scale(1.12); }
-  .grid { display: flex; flex-wrap: wrap; gap: 10px; justify-content: center; margin-bottom: 14px; }
+  .valor-label { color: #B7B2E8; font-size: 12px; text-transform: uppercase; letter-spacing: 1px; margin: 0; }
+  .valor { font-size: 46px; font-weight: 800; color: #F5C842; margin: 4px 0 22px; line-height: 1; }
+  .grid { display: flex; flex-wrap: wrap; gap: 8px; justify-content: center; margin-bottom: 10px; }
   .chip {
-    flex: 1 1 68px;
-    background: rgba(245,200,66,0.10);
-    border: 2px solid #F5C842;
-    color: #F5C842;
-    font-weight: 700;
-    font-size: 17px;
-    padding: 15px 0;
-    border-radius: 14px;
+    flex: 1 1 30%;
+    background: rgba(255,255,255,0.08);
+    border: 1px solid rgba(255,255,255,0.18);
+    color: rgba(255,255,255,0.75);
+    font-weight: 600;
+    font-size: 15px;
+    padding: 13px 0;
+    border-radius: 10px;
     font-family: inherit;
     cursor: pointer;
     -webkit-tap-highlight-color: transparent;
   }
-  .chip:active { background: #F5C842; color: #1A1740; }
+  .chip.ativo { background: #534AB7; border-color: #534AB7; color: #fff; font-weight: 700; }
+  .outro-wrap {
+    display: none;
+    align-items: center;
+    background: rgba(255,255,255,0.08);
+    border: 1px solid #534AB7;
+    border-radius: 10px;
+    padding: 0 14px;
+    height: 46px;
+    margin: 4px 0 18px;
+  }
+  .outro-wrap.visivel { display: flex; }
+  .outro-prefixo { font-size: 16px; font-weight: 700; color: #F5C842; margin-right: 8px; }
+  .outro-input {
+    flex: 1;
+    border: none;
+    background: transparent;
+    outline: none;
+    font-size: 16px;
+    font-weight: 600;
+    color: #fff;
+    font-family: inherit;
+  }
+  .outro-input::placeholder { color: rgba(255,255,255,0.35); }
   .contribuir {
     display: block;
-    background: #F5C842;
-    color: #1A1740;
+    background: #534AB7;
+    color: #fff;
     font-weight: 800;
     font-size: 16px;
     padding: 16px;
@@ -63,92 +85,103 @@
     cursor: pointer;
     margin-top: 8px;
   }
-  .contribuir:disabled { opacity: 0.35; cursor: not-allowed; }
-  .reset {
-    display: inline-block;
-    margin-top: 16px;
-    background: none;
-    border: none;
-    color: #9089C7;
-    font-size: 13px;
-    text-decoration: underline;
-    font-family: inherit;
-    cursor: pointer;
-    padding: 4px;
-  }
+  .contribuir:disabled { opacity: 0.4; cursor: not-allowed; }
+  .selos { display: flex; justify-content: center; gap: 16px; margin-top: 18px; flex-wrap: wrap; }
+  .selo { display: flex; align-items: center; gap: 5px; font-size: 11px; color: #8B83D4; }
 </style>
 </head>
 <body>
   <div class="card">
     <h1>Sua oferta</h1>
-    <p class="sub">Toque nos valores para somar</p>
-    <p class="total-label">Total</p>
-    <div class="total" id="total">£0</div>
+    <p class="sub">Escolha um valor ou digite outro</p>
+    <p class="valor-label">Valor da oferta</p>
+    <div class="valor" id="valorDisplay">£ --</div>
     <div class="grid" id="grid"></div>
-    <button class="contribuir" id="contribuirBtn" disabled>Contribuir £0</button>
-    <button class="reset" id="resetBtn">Recomeçar</button>
+    <div class="outro-wrap" id="outroWrap">
+      <span class="outro-prefixo">£</span>
+      <input class="outro-input" id="outroInput" type="text" inputmode="decimal" placeholder="0.00">
+    </div>
+    <button class="contribuir" id="contribuirBtn" disabled>Contribuir com segurança</button>
+    <div class="selos">
+      <span class="selo">🔒 Conexão segura</span>
+      <span class="selo">🛡️ Pagamento seguro</span>
+      <span class="selo">💳 Visa/Mastercard</span>
+    </div>
   </div>
 
 <script>
   var FN_URL = 'https://yudulaqsqhzbbarhxbnr.supabase.co/functions/v1/create-checkout-session';
   var MOEDA = 'gbp';
-  var passos = [5, 10, 20, 50, 100, 200];
-  var total = 0;
+  var valores = [10, 25, 50, 100, 200];
+  var valorSelecionado = 0;
+  var outroAtivo = false;
 
-  var params = new URLSearchParams(window.location.search);
-  var totalParam = parseInt(params.get('total'), 10);
-  if (!isNaN(totalParam) && totalParam > 0) {
-    total = totalParam;
-  }
-
-  var totalEl = document.getElementById('total');
-  var contribuirBtn = document.getElementById('contribuirBtn');
   var grid = document.getElementById('grid');
-  var resetBtn = document.getElementById('resetBtn');
+  var valorDisplay = document.getElementById('valorDisplay');
+  var outroWrap = document.getElementById('outroWrap');
+  var outroInput = document.getElementById('outroInput');
+  var contribuirBtn = document.getElementById('contribuirBtn');
+  var chips = [];
 
-  passos.forEach(function (valor) {
+  valores.forEach(function (v) {
     var chip = document.createElement('button');
     chip.className = 'chip';
     chip.type = 'button';
-    chip.textContent = '+£' + valor;
+    chip.textContent = '£' + v;
     chip.addEventListener('click', function () {
-      total += valor;
-      render(true);
+      outroAtivo = false;
+      valorSelecionado = v;
+      render();
     });
     grid.appendChild(chip);
+    chips.push({ el: chip, valor: v });
+  });
+
+  var chipOutro = document.createElement('button');
+  chipOutro.className = 'chip';
+  chipOutro.type = 'button';
+  chipOutro.textContent = 'Outro';
+  chipOutro.addEventListener('click', function () {
+    outroAtivo = true;
+    valorSelecionado = 0;
+    render();
+    outroInput.focus();
+  });
+  grid.appendChild(chipOutro);
+
+  outroInput.addEventListener('input', function () {
+    render();
   });
 
   contribuirBtn.addEventListener('click', function () {
-    if (total <= 0) return;
+    var valorFinal = valorFinalAtual();
+    if (valorFinal <= 0) return;
     contribuirBtn.disabled = true;
     contribuirBtn.textContent = 'A abrir pagamento…';
-    window.location.href = FN_URL + '?valor=' + total + '&moeda=' + MOEDA;
+    window.location.href = FN_URL + '?valor=' + valorFinal + '&moeda=' + MOEDA;
   });
 
-  resetBtn.addEventListener('click', function () {
-    total = 0;
-    render(false);
-  });
-
-  function render(bump) {
-    totalEl.textContent = '£' + total;
-    contribuirBtn.textContent = 'Contribuir £' + total;
-    contribuirBtn.disabled = total <= 0;
-    if (bump) {
-      totalEl.classList.remove('bump');
-      void totalEl.offsetWidth;
-      totalEl.classList.add('bump');
+  function valorFinalAtual() {
+    if (outroAtivo) {
+      return Number(outroInput.value.replace(',', '.')) || 0;
     }
-    var url = new URL(window.location.href);
-    if (total > 0) {
-      url.searchParams.set('total', total);
-    } else {
-      url.searchParams.delete('total');
-    }
-    window.history.replaceState({}, '', url);
+    return valorSelecionado;
   }
 
-  render(false);
+  function render() {
+    chips.forEach(function (c) {
+      c.el.classList.toggle('ativo', !outroAtivo && valorSelecionado === c.valor);
+    });
+    chipOutro.classList.toggle('ativo', outroAtivo);
+    outroWrap.classList.toggle('visivel', outroAtivo);
+
+    var valorFinal = valorFinalAtual();
+    valorDisplay.textContent = valorFinal > 0 ? '£ ' + valorFinal : '£ --';
+    contribuirBtn.disabled = valorFinal <= 0;
+    contribuirBtn.textContent = 'Contribuir com segurança';
+  }
+
+  render();
 </script>
 </body>
 </html>
