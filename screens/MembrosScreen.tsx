@@ -103,6 +103,265 @@ function parseMesAnoToISO(mmAAAA: string): string {
   return `${y}-${m}-01`;
 }
 
+// ─── Campos do formulário (fora do MembroFormModal de propósito) ──────────────
+// Bug do teclado fechando a cada letra (16ª rodada): esses componentes
+// estavam declarados DENTRO de MembroFormModal. Cada tecla digitada chama
+// `setForm`, que re-renderiza o modal inteiro — e como esses componentes
+// eram recriados (nova identidade de função) a cada render, o React
+// desmontava o TextInput antigo e montava um novo, perdendo o foco/fechando
+// o teclado. Mesma causa e mesmo fix já aplicados no MeuCadastroScreen (8ª
+// rodada) e nos modais do Admin (13ª rodada): mover pra fora, escopo do
+// módulo, com o que antes vinha "de graça" via closure agora como prop.
+function Field({ label, value, onChangeText, placeholder = '', keyboardType = 'default', maxLength }: {
+  label: string; value: string; onChangeText: (v: string) => void;
+  placeholder?: string; keyboardType?: any; maxLength?: number;
+}) {
+  return (
+    <View style={fm.fieldWrap}>
+      <Text style={fm.fieldLabel}>{label}</Text>
+      <TextInput
+        style={fm.fieldInput} value={value} onChangeText={onChangeText}
+        placeholder={placeholder} placeholderTextColor={C.textDim}
+        keyboardType={keyboardType} maxLength={maxLength}
+      />
+    </View>
+  );
+}
+
+function SelectPill({ label, options, value, onChange }: {
+  label: string; options: string[]; value: string; onChange: (v: string) => void;
+}) {
+  return (
+    <View style={fm.fieldWrap}>
+      <Text style={fm.fieldLabel}>{label}</Text>
+      <ScrollView horizontal showsHorizontalScrollIndicator={false} style={{ marginTop: 4 }}>
+        <View style={{ flexDirection: 'row', gap: 8 }}>
+          {options.map(opt => (
+            <TouchableOpacity key={opt} style={[fm.pill, value === opt && fm.pillActive]} onPress={() => onChange(opt)}>
+              <Text style={[fm.pillText, value === opt && fm.pillTextActive]}>{opt}</Text>
+            </TouchableOpacity>
+          ))}
+        </View>
+      </ScrollView>
+    </View>
+  );
+}
+
+function FamiliaPicker({ label, value, onChange, membros, excludeId }: {
+  label: string; value: string | null; onChange: (id: string | null) => void;
+  membros: Membro[]; excludeId?: string;
+}) {
+  const [expandido, setExpandido] = useState(false);
+  const [busca, setBusca] = useState('');
+  const selecionado = membros.find(m => m.id === value);
+  const opcoes = membros.filter(m =>
+    m.id !== excludeId && `${m.nome} ${m.sobrenome}`.toLowerCase().includes(busca.toLowerCase())
+  );
+
+  return (
+    <View style={fm.fieldWrap}>
+      <Text style={fm.fieldLabel}>{label}</Text>
+      {selecionado ? (
+        <View style={fm.familiaChip}>
+          <Text style={fm.familiaChipText}>{selecionado.nome} {selecionado.sobrenome}</Text>
+          <TouchableOpacity onPress={() => onChange(null)}>
+            <Ionicons name="close-circle" size={18} color={C.textMuted} />
+          </TouchableOpacity>
+        </View>
+      ) : (
+        <TouchableOpacity style={fm.familiaAddBtn} onPress={() => setExpandido(!expandido)}>
+          <Ionicons name="add" size={16} color={C.primary} />
+          <Text style={fm.familiaAddText}>Vincular {label.toLowerCase()}</Text>
+        </TouchableOpacity>
+      )}
+      {expandido && !selecionado && (
+        <View style={fm.familiaBusca}>
+          <TextInput
+            style={fm.fieldInput} placeholder="Buscar pelo nome..." placeholderTextColor={C.textDim}
+            value={busca} onChangeText={setBusca}
+          />
+          <View style={{ maxHeight: 160, marginTop: 6 }}>
+            {opcoes.slice(0, 20).map(m => (
+              <TouchableOpacity key={m.id} style={fm.familiaOpcao} onPress={() => { onChange(m.id); setExpandido(false); setBusca(''); }}>
+                <Text style={fm.familiaOpcaoText}>{m.nome} {m.sobrenome}</Text>
+              </TouchableOpacity>
+            ))}
+            {opcoes.length === 0 && <Text style={{ fontSize: 12, color: C.textDim, padding: 8 }}>Nenhum membro encontrado.</Text>}
+          </View>
+        </View>
+      )}
+    </View>
+  );
+}
+
+function ContaSection({ membro, profileId, onProfileIdChange }: {
+  membro: Membro | null; profileId: string | null; onProfileIdChange: (id: string | null) => void;
+}) {
+  const [busca, setBusca] = useState('');
+  const [resultados, setResultados] = useState<ProfileLite[]>([]);
+  const [perfilVinculado, setPerfilVinculado] = useState<ProfileLite | null>(null);
+  const [carregando, setCarregando] = useState(false);
+  const [grupos, setGrupos] = useState<string[]>([]);
+  const [areas, setAreas] = useState<{ id: string; nome: string }[]>([]);
+  const [areasLideradas, setAreasLideradas] = useState<string[]>([]);
+  const [salvandoPapel, setSalvandoPapel] = useState(false);
+
+  useEffect(() => {
+    if (!profileId) { setPerfilVinculado(null); setGrupos([]); setAreasLideradas([]); return; }
+    setCarregando(true);
+    (async () => {
+      const [{ data: perfil }, { data: gl }, { data: areasData }, { data: eal }] = await Promise.all([
+        supabase.from('profiles').select('id, full_name').eq('id', profileId).single(),
+        supabase.from('group_leaders').select('grupo').eq('profile_id', profileId),
+        supabase.from('escala_areas').select('id, nome').order('nome'),
+        supabase.from('escala_area_lideres').select('area_id').eq('profile_id', profileId),
+      ]);
+      setPerfilVinculado((perfil as ProfileLite) ?? null);
+      setGrupos((gl ?? []).map((g: any) => g.grupo));
+      setAreas(areasData ?? []);
+      setAreasLideradas((eal ?? []).map((a: any) => a.area_id));
+      setCarregando(false);
+    })();
+  }, [profileId]);
+
+  useEffect(() => {
+    if (busca.trim().length < 2) { setResultados([]); return; }
+    const t = setTimeout(() => {
+      supabase.from('profiles').select('id, full_name').ilike('full_name', `%${busca.trim()}%`).limit(8)
+        .then(({ data }) => setResultados((data as ProfileLite[]) ?? []));
+    }, 300);
+    return () => clearTimeout(t);
+  }, [busca]);
+
+  const vincular = async (perfil: ProfileLite) => {
+    if (!membro) return;
+    const { error } = await supabase.from('members').update({ profile_id: perfil.id }).eq('id', membro.id);
+    if (error) { Alert.alert('Erro', error.message); return; }
+    onProfileIdChange(perfil.id);
+    setBusca(''); setResultados([]);
+  };
+
+  const desvincular = () => {
+    if (!membro) return;
+    Alert.alert('Desvincular conta', 'Remover o vínculo com essa conta de login? A pessoa deixará de aparecer como líder de grupos/áreas se estiver designada.', [
+      { text: 'Cancelar', style: 'cancel' },
+      {
+        text: 'Desvincular', style: 'destructive', onPress: async () => {
+          const { error } = await supabase.from('members').update({ profile_id: null }).eq('id', membro.id);
+          if (error) { Alert.alert('Erro', error.message); return; }
+          onProfileIdChange(null);
+        },
+      },
+    ]);
+  };
+
+  const alternarGrupo = async (grupo: string) => {
+    if (!profileId) return;
+    setSalvandoPapel(true);
+    if (grupos.includes(grupo)) {
+      const { error } = await supabase.from('group_leaders').delete().eq('profile_id', profileId).eq('grupo', grupo);
+      if (error) { Alert.alert('Erro', error.message); setSalvandoPapel(false); return; }
+      setGrupos(prev => prev.filter(g => g !== grupo));
+    } else {
+      const { error } = await supabase.from('group_leaders').insert({ profile_id: profileId, grupo });
+      if (error) { Alert.alert('Erro', error.message); setSalvandoPapel(false); return; }
+      setGrupos(prev => [...prev, grupo]);
+    }
+    setSalvandoPapel(false);
+  };
+
+  const alternarArea = async (areaId: string) => {
+    if (!profileId) return;
+    setSalvandoPapel(true);
+    if (areasLideradas.includes(areaId)) {
+      const { error } = await supabase.from('escala_area_lideres').delete().eq('profile_id', profileId).eq('area_id', areaId);
+      if (error) { Alert.alert('Erro', error.message); setSalvandoPapel(false); return; }
+      setAreasLideradas(prev => prev.filter(a => a !== areaId));
+    } else {
+      const { error } = await supabase.from('escala_area_lideres').insert({ profile_id: profileId, area_id: areaId });
+      if (error) { Alert.alert('Erro', error.message); setSalvandoPapel(false); return; }
+      setAreasLideradas(prev => [...prev, areaId]);
+    }
+    setSalvandoPapel(false);
+  };
+
+  if (!membro) {
+    return (
+      <View style={fm.sectionContent}>
+        <Text style={{ fontSize: 13, color: C.textMuted, lineHeight: 20 }}>
+          Salve o membro primeiro para poder vincular uma conta de login.
+        </Text>
+      </View>
+    );
+  }
+
+  return (
+    <View style={fm.sectionContent}>
+      <Text style={{ fontSize: 12, color: C.textMuted, marginBottom: 12, lineHeight: 18 }}>
+        Vincule este membro a uma conta de login do app para poder designá-lo líder de um grupo ou de uma área de escala.
+      </Text>
+
+      <View style={fm.fieldWrap}>
+        <Text style={fm.fieldLabel}>Conta do App</Text>
+        {perfilVinculado ? (
+          <View style={fm.familiaChip}>
+            <Text style={fm.familiaChipText}>{perfilVinculado.full_name ?? 'Sem nome'}</Text>
+            <TouchableOpacity onPress={desvincular}>
+              <Ionicons name="close-circle" size={18} color={C.textMuted} />
+            </TouchableOpacity>
+          </View>
+        ) : carregando ? (
+          <ActivityIndicator size="small" color={C.primary} />
+        ) : (
+          <View style={fm.familiaBusca}>
+            <TextInput
+              style={fm.fieldInput} placeholder="Buscar conta pelo nome..." placeholderTextColor={C.textDim}
+              value={busca} onChangeText={setBusca}
+            />
+            {resultados.map(r => (
+              <TouchableOpacity key={r.id} style={fm.familiaOpcao} onPress={() => vincular(r)}>
+                <Text style={fm.familiaOpcaoText}>{r.full_name ?? 'Sem nome'}</Text>
+              </TouchableOpacity>
+            ))}
+            {busca.trim().length >= 2 && resultados.length === 0 && (
+              <Text style={{ fontSize: 12, color: C.textDim, padding: 8 }}>Nenhuma conta encontrada.</Text>
+            )}
+          </View>
+        )}
+      </View>
+
+      {!!profileId && !carregando && (
+        <>
+          <View style={fm.fieldWrap}>
+            <Text style={fm.fieldLabel}>Líder de Grupo</Text>
+            <View style={{ flexDirection: 'row', gap: 8, marginTop: 4, flexWrap: 'wrap' }}>
+              {(['mulheres', 'homens', 'jovens'] as const).map(g => (
+                <TouchableOpacity key={g} disabled={salvandoPapel} style={[fm.pill, grupos.includes(g) && fm.pillActive]} onPress={() => alternarGrupo(g)}>
+                  <Text style={[fm.pillText, grupos.includes(g) && fm.pillTextActive]}>
+                    {g === 'mulheres' ? 'Mulheres' : g === 'homens' ? 'Homens' : 'Jovens'}
+                  </Text>
+                </TouchableOpacity>
+              ))}
+            </View>
+          </View>
+
+          <View style={fm.fieldWrap}>
+            <Text style={fm.fieldLabel}>Líder de Área de Escala</Text>
+            <View style={{ flexDirection: 'row', gap: 8, marginTop: 4, flexWrap: 'wrap' }}>
+              {areas.map(a => (
+                <TouchableOpacity key={a.id} disabled={salvandoPapel} style={[fm.pill, areasLideradas.includes(a.id) && fm.pillActive]} onPress={() => alternarArea(a.id)}>
+                  <Text style={[fm.pillText, areasLideradas.includes(a.id) && fm.pillTextActive]}>{a.nome}</Text>
+                </TouchableOpacity>
+              ))}
+              {areas.length === 0 && <Text style={{ fontSize: 12, color: C.textDim }}>Nenhuma área cadastrada.</Text>}
+            </View>
+          </View>
+        </>
+      )}
+    </View>
+  );
+}
+
 // ─── Form Modal ───────────────────────────────────────────────────────────────
 function MembroFormModal({ visible, membro, membros, isAdmin, onClose, onSaved }: {
   visible: boolean; membro: Membro | null; membros: Membro[]; isAdmin: boolean;
@@ -158,291 +417,59 @@ function MembroFormModal({ visible, membro, membros, isAdmin, onClose, onSaved }
     if (!form.telefone.trim()) { Alert.alert('Atenção', 'Telefone é obrigatório.'); return; }
     setSaving(true);
 
-    const payload = {
-      ...form,
-      data_nascimento: parseDateISO(form.data_nascimento) || null,
-      data_batismo: parseDateISO(form.data_batismo) || null,
-      membro_desde: parseMesAnoToISO(form.membro_desde) || null,
-    };
+    // Tudo dentro de um try/catch/finally de propósito (16ª rodada — bug
+    // "Salvar não funciona"): antes, se `await supabase...` lançasse uma
+    // exceção (rede caiu, erro de JS) em vez de devolver `{ error }`, nada
+    // pegava isso — o botão ficava girando pra sempre (`saving` nunca
+    // voltava a `false`) e nenhuma mensagem aparecia, exatamente como "não
+    // funciona". Agora qualquer falha sempre solta o spinner e mostra o
+    // motivo, mesmo que a causa real seja outra (rede, RLS, etc).
+    try {
+      const payload = {
+        ...form,
+        data_nascimento: parseDateISO(form.data_nascimento) || null,
+        data_batismo: parseDateISO(form.data_batismo) || null,
+        membro_desde: parseMesAnoToISO(form.membro_desde) || null,
+      };
 
-    let error;
-    let novoId: string | undefined = membro?.id;
-    if (membro) {
-      ({ error } = await supabase.from('members').update(payload).eq('id', membro.id));
-    } else {
-      const resultado = await supabase.from('members').insert(payload).select('id').single();
-      error = resultado.error;
-      novoId = resultado.data?.id;
-    }
-
-    // Sincroniza o vínculo de cônjuge nos dois sentidos: se eu aponto pra
-    // alguém como cônjuge, essa pessoa também deve apontar de volta pra mim.
-    if (!error && novoId) {
-      const conjugeAnterior = membro?.conjuge_id ?? null;
-      if (conjugeAnterior && conjugeAnterior !== form.conjuge_id) {
-        await supabase.from('members').update({ conjuge_id: null }).eq('id', conjugeAnterior);
+      let error;
+      let novoId: string | undefined = membro?.id;
+      if (membro) {
+        ({ error } = await supabase.from('members').update(payload).eq('id', membro.id));
+      } else {
+        const resultado = await supabase.from('members').insert(payload).select('id').single();
+        error = resultado.error;
+        novoId = resultado.data?.id;
       }
-      if (form.conjuge_id) {
-        await supabase.from('members').update({ conjuge_id: novoId }).eq('id', form.conjuge_id);
-      }
-    }
 
-    setSaving(false);
-    if (error) {
-      Alert.alert('Erro ao salvar', error.message);
-    } else {
-      onSaved();
-      onClose();
+      // Sincroniza o vínculo de cônjuge nos dois sentidos: se eu aponto pra
+      // alguém como cônjuge, essa pessoa também deve apontar de volta pra mim.
+      if (!error && novoId) {
+        const conjugeAnterior = membro?.conjuge_id ?? null;
+        if (conjugeAnterior && conjugeAnterior !== form.conjuge_id) {
+          await supabase.from('members').update({ conjuge_id: null }).eq('id', conjugeAnterior);
+        }
+        if (form.conjuge_id) {
+          await supabase.from('members').update({ conjuge_id: novoId }).eq('id', form.conjuge_id);
+        }
+      }
+
+      if (error) {
+        Alert.alert('Erro ao salvar', error.message);
+      } else {
+        onSaved();
+        onClose();
+      }
+    } catch (e: any) {
+      Alert.alert('Erro ao salvar', e?.message ?? 'Algo deu errado. Tente novamente.');
+    } finally {
+      setSaving(false);
     }
   };
 
   const SECTIONS = isAdmin
     ? ['Pessoal', 'Contato', 'Endereço', 'Igreja', 'Família', 'Conta']
     : ['Pessoal', 'Contato', 'Endereço', 'Igreja', 'Família'];
-
-  const Field = ({ label, value, onChangeText, placeholder = '', keyboardType = 'default', maxLength }: {
-    label: string; value: string; onChangeText: (v: string) => void;
-    placeholder?: string; keyboardType?: any; maxLength?: number;
-  }) => (
-    <View style={fm.fieldWrap}>
-      <Text style={fm.fieldLabel}>{label}</Text>
-      <TextInput
-        style={fm.fieldInput} value={value} onChangeText={onChangeText}
-        placeholder={placeholder} placeholderTextColor={C.textDim}
-        keyboardType={keyboardType} maxLength={maxLength}
-      />
-    </View>
-  );
-
-  const SelectPill = ({ label, options, value, onChange }: {
-    label: string; options: string[]; value: string; onChange: (v: string) => void;
-  }) => (
-    <View style={fm.fieldWrap}>
-      <Text style={fm.fieldLabel}>{label}</Text>
-      <ScrollView horizontal showsHorizontalScrollIndicator={false} style={{ marginTop: 4 }}>
-        <View style={{ flexDirection: 'row', gap: 8 }}>
-          {options.map(opt => (
-            <TouchableOpacity key={opt} style={[fm.pill, value === opt && fm.pillActive]} onPress={() => onChange(opt)}>
-              <Text style={[fm.pillText, value === opt && fm.pillTextActive]}>{opt}</Text>
-            </TouchableOpacity>
-          ))}
-        </View>
-      </ScrollView>
-    </View>
-  );
-
-  const FamiliaPicker = ({ label, value, onChange }: {
-    label: string; value: string | null; onChange: (id: string | null) => void;
-  }) => {
-    const [expandido, setExpandido] = useState(false);
-    const [busca, setBusca] = useState('');
-    const selecionado = membros.find(m => m.id === value);
-    const opcoes = membros.filter(m =>
-      m.id !== membro?.id && `${m.nome} ${m.sobrenome}`.toLowerCase().includes(busca.toLowerCase())
-    );
-
-    return (
-      <View style={fm.fieldWrap}>
-        <Text style={fm.fieldLabel}>{label}</Text>
-        {selecionado ? (
-          <View style={fm.familiaChip}>
-            <Text style={fm.familiaChipText}>{selecionado.nome} {selecionado.sobrenome}</Text>
-            <TouchableOpacity onPress={() => onChange(null)}>
-              <Ionicons name="close-circle" size={18} color={C.textMuted} />
-            </TouchableOpacity>
-          </View>
-        ) : (
-          <TouchableOpacity style={fm.familiaAddBtn} onPress={() => setExpandido(!expandido)}>
-            <Ionicons name="add" size={16} color={C.primary} />
-            <Text style={fm.familiaAddText}>Vincular {label.toLowerCase()}</Text>
-          </TouchableOpacity>
-        )}
-        {expandido && !selecionado && (
-          <View style={fm.familiaBusca}>
-            <TextInput
-              style={fm.fieldInput} placeholder="Buscar pelo nome..." placeholderTextColor={C.textDim}
-              value={busca} onChangeText={setBusca}
-            />
-            <View style={{ maxHeight: 160, marginTop: 6 }}>
-              {opcoes.slice(0, 20).map(m => (
-                <TouchableOpacity key={m.id} style={fm.familiaOpcao} onPress={() => { onChange(m.id); setExpandido(false); setBusca(''); }}>
-                  <Text style={fm.familiaOpcaoText}>{m.nome} {m.sobrenome}</Text>
-                </TouchableOpacity>
-              ))}
-              {opcoes.length === 0 && <Text style={{ fontSize: 12, color: C.textDim, padding: 8 }}>Nenhum membro encontrado.</Text>}
-            </View>
-          </View>
-        )}
-      </View>
-    );
-  };
-
-  const ContaSection = () => {
-    const [busca, setBusca] = useState('');
-    const [resultados, setResultados] = useState<ProfileLite[]>([]);
-    const [perfilVinculado, setPerfilVinculado] = useState<ProfileLite | null>(null);
-    const [carregando, setCarregando] = useState(false);
-    const [grupos, setGrupos] = useState<string[]>([]);
-    const [areas, setAreas] = useState<{ id: string; nome: string }[]>([]);
-    const [areasLideradas, setAreasLideradas] = useState<string[]>([]);
-    const [salvandoPapel, setSalvandoPapel] = useState(false);
-    const profileId = form.profile_id;
-
-    useEffect(() => {
-      if (!profileId) { setPerfilVinculado(null); setGrupos([]); setAreasLideradas([]); return; }
-      setCarregando(true);
-      (async () => {
-        const [{ data: perfil }, { data: gl }, { data: areasData }, { data: eal }] = await Promise.all([
-          supabase.from('profiles').select('id, full_name').eq('id', profileId).single(),
-          supabase.from('group_leaders').select('grupo').eq('profile_id', profileId),
-          supabase.from('escala_areas').select('id, nome').order('nome'),
-          supabase.from('escala_area_lideres').select('area_id').eq('profile_id', profileId),
-        ]);
-        setPerfilVinculado((perfil as ProfileLite) ?? null);
-        setGrupos((gl ?? []).map((g: any) => g.grupo));
-        setAreas(areasData ?? []);
-        setAreasLideradas((eal ?? []).map((a: any) => a.area_id));
-        setCarregando(false);
-      })();
-    }, [profileId]);
-
-    useEffect(() => {
-      if (busca.trim().length < 2) { setResultados([]); return; }
-      const t = setTimeout(() => {
-        supabase.from('profiles').select('id, full_name').ilike('full_name', `%${busca.trim()}%`).limit(8)
-          .then(({ data }) => setResultados((data as ProfileLite[]) ?? []));
-      }, 300);
-      return () => clearTimeout(t);
-    }, [busca]);
-
-    const vincular = async (perfil: ProfileLite) => {
-      if (!membro) return;
-      const { error } = await supabase.from('members').update({ profile_id: perfil.id }).eq('id', membro.id);
-      if (error) { Alert.alert('Erro', error.message); return; }
-      set('profile_id')(perfil.id);
-      setBusca(''); setResultados([]);
-    };
-
-    const desvincular = () => {
-      if (!membro) return;
-      Alert.alert('Desvincular conta', 'Remover o vínculo com essa conta de login? A pessoa deixará de aparecer como líder de grupos/áreas se estiver designada.', [
-        { text: 'Cancelar', style: 'cancel' },
-        {
-          text: 'Desvincular', style: 'destructive', onPress: async () => {
-            const { error } = await supabase.from('members').update({ profile_id: null }).eq('id', membro.id);
-            if (error) { Alert.alert('Erro', error.message); return; }
-            set('profile_id')(null);
-          },
-        },
-      ]);
-    };
-
-    const alternarGrupo = async (grupo: string) => {
-      if (!profileId) return;
-      setSalvandoPapel(true);
-      if (grupos.includes(grupo)) {
-        const { error } = await supabase.from('group_leaders').delete().eq('profile_id', profileId).eq('grupo', grupo);
-        if (error) { Alert.alert('Erro', error.message); setSalvandoPapel(false); return; }
-        setGrupos(prev => prev.filter(g => g !== grupo));
-      } else {
-        const { error } = await supabase.from('group_leaders').insert({ profile_id: profileId, grupo });
-        if (error) { Alert.alert('Erro', error.message); setSalvandoPapel(false); return; }
-        setGrupos(prev => [...prev, grupo]);
-      }
-      setSalvandoPapel(false);
-    };
-
-    const alternarArea = async (areaId: string) => {
-      if (!profileId) return;
-      setSalvandoPapel(true);
-      if (areasLideradas.includes(areaId)) {
-        const { error } = await supabase.from('escala_area_lideres').delete().eq('profile_id', profileId).eq('area_id', areaId);
-        if (error) { Alert.alert('Erro', error.message); setSalvandoPapel(false); return; }
-        setAreasLideradas(prev => prev.filter(a => a !== areaId));
-      } else {
-        const { error } = await supabase.from('escala_area_lideres').insert({ profile_id: profileId, area_id: areaId });
-        if (error) { Alert.alert('Erro', error.message); setSalvandoPapel(false); return; }
-        setAreasLideradas(prev => [...prev, areaId]);
-      }
-      setSalvandoPapel(false);
-    };
-
-    if (!membro) {
-      return (
-        <View style={fm.sectionContent}>
-          <Text style={{ fontSize: 13, color: C.textMuted, lineHeight: 20 }}>
-            Salve o membro primeiro para poder vincular uma conta de login.
-          </Text>
-        </View>
-      );
-    }
-
-    return (
-      <View style={fm.sectionContent}>
-        <Text style={{ fontSize: 12, color: C.textMuted, marginBottom: 12, lineHeight: 18 }}>
-          Vincule este membro a uma conta de login do app para poder designá-lo líder de um grupo ou de uma área de escala.
-        </Text>
-
-        <View style={fm.fieldWrap}>
-          <Text style={fm.fieldLabel}>Conta do App</Text>
-          {perfilVinculado ? (
-            <View style={fm.familiaChip}>
-              <Text style={fm.familiaChipText}>{perfilVinculado.full_name ?? 'Sem nome'}</Text>
-              <TouchableOpacity onPress={desvincular}>
-                <Ionicons name="close-circle" size={18} color={C.textMuted} />
-              </TouchableOpacity>
-            </View>
-          ) : carregando ? (
-            <ActivityIndicator size="small" color={C.primary} />
-          ) : (
-            <View style={fm.familiaBusca}>
-              <TextInput
-                style={fm.fieldInput} placeholder="Buscar conta pelo nome..." placeholderTextColor={C.textDim}
-                value={busca} onChangeText={setBusca}
-              />
-              {resultados.map(r => (
-                <TouchableOpacity key={r.id} style={fm.familiaOpcao} onPress={() => vincular(r)}>
-                  <Text style={fm.familiaOpcaoText}>{r.full_name ?? 'Sem nome'}</Text>
-                </TouchableOpacity>
-              ))}
-              {busca.trim().length >= 2 && resultados.length === 0 && (
-                <Text style={{ fontSize: 12, color: C.textDim, padding: 8 }}>Nenhuma conta encontrada.</Text>
-              )}
-            </View>
-          )}
-        </View>
-
-        {!!profileId && !carregando && (
-          <>
-            <View style={fm.fieldWrap}>
-              <Text style={fm.fieldLabel}>Líder de Grupo</Text>
-              <View style={{ flexDirection: 'row', gap: 8, marginTop: 4, flexWrap: 'wrap' }}>
-                {(['mulheres', 'homens', 'jovens'] as const).map(g => (
-                  <TouchableOpacity key={g} disabled={salvandoPapel} style={[fm.pill, grupos.includes(g) && fm.pillActive]} onPress={() => alternarGrupo(g)}>
-                    <Text style={[fm.pillText, grupos.includes(g) && fm.pillTextActive]}>
-                      {g === 'mulheres' ? 'Mulheres' : g === 'homens' ? 'Homens' : 'Jovens'}
-                    </Text>
-                  </TouchableOpacity>
-                ))}
-              </View>
-            </View>
-
-            <View style={fm.fieldWrap}>
-              <Text style={fm.fieldLabel}>Líder de Área de Escala</Text>
-              <View style={{ flexDirection: 'row', gap: 8, marginTop: 4, flexWrap: 'wrap' }}>
-                {areas.map(a => (
-                  <TouchableOpacity key={a.id} disabled={salvandoPapel} style={[fm.pill, areasLideradas.includes(a.id) && fm.pillActive]} onPress={() => alternarArea(a.id)}>
-                    <Text style={[fm.pillText, areasLideradas.includes(a.id) && fm.pillTextActive]}>{a.nome}</Text>
-                  </TouchableOpacity>
-                ))}
-                {areas.length === 0 && <Text style={{ fontSize: 12, color: C.textDim }}>Nenhuma área cadastrada.</Text>}
-              </View>
-            </View>
-          </>
-        )}
-      </View>
-    );
-  };
 
   return (
     <Modal visible={visible} animationType="slide" transparent>
@@ -456,13 +483,16 @@ function MembroFormModal({ visible, membro, membros, isAdmin, onClose, onSaved }
               </TouchableOpacity>
             </View>
 
-            <View style={fm.sectionTabs}>
+            {/* Rolagem horizontal em vez de `flex:1` espremendo as 6 abas na
+                largura da tela — era isso que fazia "Endereço" quebrar
+                linha (e qualquer rótulo maior no futuro faria o mesmo). */}
+            <ScrollView horizontal showsHorizontalScrollIndicator={false} style={fm.sectionTabsScroll} contentContainerStyle={fm.sectionTabs}>
               {SECTIONS.map((sec, idx) => (
                 <TouchableOpacity key={sec} style={[fm.sectionTab, section === idx && fm.sectionTabActive]} onPress={() => setSection(idx)}>
-                  <Text style={[fm.sectionTabText, section === idx && fm.sectionTabTextActive]}>{sec}</Text>
+                  <Text allowFontScaling={false} numberOfLines={1} style={[fm.sectionTabText, section === idx && fm.sectionTabTextActive]}>{sec}</Text>
                 </TouchableOpacity>
               ))}
-            </View>
+            </ScrollView>
 
             {/* Sem `flex: 1` aqui de propósito: o `fm.sheet` só tem `maxHeight`
                 (não `height`/`flex`), e nesse caso o Yoga não tem uma altura
@@ -513,12 +543,12 @@ function MembroFormModal({ visible, membro, membros, isAdmin, onClose, onSaved }
                   <Text style={{ fontSize: 12, color: C.textMuted, marginBottom: 12, lineHeight: 18 }}>
                     Vincule este membro a outros já cadastrados. O vínculo de cônjuge é automático nos dois sentidos.
                   </Text>
-                  <FamiliaPicker label="Cônjuge" value={form.conjuge_id} onChange={set('conjuge_id')} />
-                  <FamiliaPicker label="Pai" value={form.pai_id} onChange={set('pai_id')} />
-                  <FamiliaPicker label="Mãe" value={form.mae_id} onChange={set('mae_id')} />
+                  <FamiliaPicker label="Cônjuge" value={form.conjuge_id} onChange={set('conjuge_id')} membros={membros} excludeId={membro?.id} />
+                  <FamiliaPicker label="Pai" value={form.pai_id} onChange={set('pai_id')} membros={membros} excludeId={membro?.id} />
+                  <FamiliaPicker label="Mãe" value={form.mae_id} onChange={set('mae_id')} membros={membros} excludeId={membro?.id} />
                 </View>
               )}
-              {section === 5 && isAdmin && <ContaSection />}
+              {section === 5 && isAdmin && <ContaSection membro={membro} profileId={form.profile_id} onProfileIdChange={set('profile_id')} />}
               {section === 3 && (
                 <View style={fm.sectionContent}>
                   <View style={fm.toggleRow}>
@@ -633,8 +663,9 @@ const fm = StyleSheet.create({
   sheet: { backgroundColor: C.surface, borderTopLeftRadius: 24, borderTopRightRadius: 24, maxHeight: '95%', paddingBottom: 24 },
   header: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', padding: 20, paddingBottom: 12 },
   title: { fontSize: 18, fontWeight: '800', color: C.text },
-  sectionTabs: { flexDirection: 'row', paddingHorizontal: 16, gap: 6, marginBottom: 4 },
-  sectionTab: { flex: 1, paddingVertical: 8, borderRadius: 8, backgroundColor: C.surfaceAlt, alignItems: 'center' },
+  sectionTabsScroll: { marginBottom: 4 },
+  sectionTabs: { flexDirection: 'row', paddingHorizontal: 16, gap: 6 },
+  sectionTab: { paddingHorizontal: 14, paddingVertical: 8, borderRadius: 8, backgroundColor: C.surfaceAlt, alignItems: 'center' },
   sectionTabActive: { backgroundColor: C.primary },
   sectionTabText: { fontSize: 12, fontWeight: '600', color: C.textMuted },
   sectionTabTextActive: { color: '#fff' },
@@ -937,11 +968,11 @@ export default function MembrosScreen() {
       <ScrollView horizontal showsHorizontalScrollIndicator={false} style={s.filterRowScroll} contentContainerStyle={s.filterRow}>
         {(['todos', 'membro', 'lider', 'visitante'] as const).map(f => (
           <TouchableOpacity key={f} style={[s.filterPill, filterStatus === f && s.filterPillActive]} onPress={() => setFilterStatus(f)}>
-            <Text style={[s.filterPillText, filterStatus === f && s.filterPillTextActive]}>{f === 'todos' ? 'Todos' : statusLabel(f)}</Text>
+            <Text allowFontScaling={false} numberOfLines={1} style={[s.filterPillText, filterStatus === f && s.filterPillTextActive]}>{f === 'todos' ? 'Todos' : statusLabel(f)}</Text>
           </TouchableOpacity>
         ))}
         <TouchableOpacity style={[s.filterPill, filterBirthday && { backgroundColor: C.accent + '18', borderColor: C.accent }]} onPress={() => setFilterBirthday(f => !f)}>
-          <Text style={[s.filterPillText, filterBirthday && { color: C.accent, fontWeight: '700' }]}>🎂 Mês</Text>
+          <Text allowFontScaling={false} numberOfLines={1} style={[s.filterPillText, filterBirthday && { color: C.accent, fontWeight: '700' }]}>🎂 Mês</Text>
         </TouchableOpacity>
       </ScrollView>
 
@@ -1038,18 +1069,24 @@ const s = StyleSheet.create({
   // horizontal às vezes calculava a própria altura errado (menor que uma
   // linha de texto), cortando o topo/base das pílulas pela metade.
   //
-  // Bug (16ª rodada): o `height: 52` daqui somado ao conteúdo da pílula
-  // (paddingVertical 7×2 + lineHeight 16 + borderWidth 1×2 = 32) mais o
-  // paddingVertical do filterRow (10×2 = 20) dava EXATAMENTE 52 — zero
-  // folga. Numa tela real, qualquer arredondamento de sub-pixel empurra o
-  // texto pra fora da área visível, e como ScrollView recorta o que passa
-  // do próprio quadro, o texto sumia por completo (não cortado pela
-  // metade — invisível). Aumentei a altura pra sobrar espaço de verdade.
-  filterRowScroll: { height: 60, backgroundColor: C.surface, borderBottomWidth: 1, borderBottomColor: C.border },
-  filterRow: { flexDirection: 'row', alignItems: 'center', gap: 8, paddingHorizontal: 16, paddingVertical: 10 },
-  filterPill: { paddingHorizontal: 12, paddingVertical: 7, borderRadius: 16, backgroundColor: C.surfaceAlt, borderWidth: 1, borderColor: C.border, justifyContent: 'center', alignItems: 'center' },
+  // Aumentar de 52 pra 60 (tentativa anterior) não resolveu nada — o texto
+  // continuou 100% invisível mesmo com mais folga, então não era só corte
+  // de sub-pixel. Aumentado mais uma vez (68) e trocado `height` fixo por
+  // `minHeight`, que nunca força um corte mesmo que o conteúdo real acabe
+  // um pouco maior do que o previsto — só ajuda, não deveria piorar nada.
+  filterRowScroll: { minHeight: 68, backgroundColor: C.surface, borderBottomWidth: 1, borderBottomColor: C.border },
+  filterRow: { flexDirection: 'row', alignItems: 'center', gap: 8, paddingHorizontal: 16, paddingVertical: 12 },
+  filterPill: { minHeight: 34, paddingHorizontal: 14, paddingVertical: 8, borderRadius: 16, backgroundColor: C.surfaceAlt, borderWidth: 1, borderColor: C.border, justifyContent: 'center', alignItems: 'center' },
   filterPillActive: { backgroundColor: C.primary + '15', borderColor: C.primary },
-  filterPillText: { fontSize: 12, lineHeight: 16, color: C.textMuted, fontWeight: '500' },
+  // Aumentar a folga (16ª rodada) não resolveu — o texto continuou 100%
+  // invisível, não só cortado, então não era só espaço vertical. Removido
+  // o `lineHeight` fixo (deixa o SO calcular pela métrica real da fonte,
+  // em vez de forçar um valor que pode não bater), cor trocada pra um tom
+  // escuro fixo (não depender de `C.textMuted` aqui, só por precaução) e
+  // `allowFontScaling={false}` no `<Text>` pra não depender do tamanho de
+  // fonte do sistema (Textos Grandes/Dynamic Type podiam estar estourando
+  // a caixa da pílula e ficando cortado por inteiro).
+  filterPillText: { fontSize: 13, color: '#374151', fontWeight: '600' },
   filterPillTextActive: { color: C.primary, fontWeight: '700' },
   list: { padding: 16, gap: 8, paddingBottom: 32 },
   empty: { alignItems: 'center', paddingTop: 60, gap: 12 },
