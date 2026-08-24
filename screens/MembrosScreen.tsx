@@ -991,7 +991,22 @@ export default function MembrosScreen() {
         membro={detailMembro}
         membros={membros}
         onClose={() => setDetailMembro(null)}
-        onEdit={() => { setEditingMembro(detailMembro); setDetailMembro(null); setFormVisible(true); }}
+        onEdit={() => {
+          // Não abrir o modal de edição no mesmo instante em que o de
+          // detalhes fecha: dois <Modal> nativos se sobrepondo na mesma
+          // renderização deixa o modal novo visível mas sem responder a
+          // toque no iOS (é exatamente o bug "abre errado e os botões das
+          // abas não funcionam" — a UIKit ainda está desmontando o modal
+          // anterior quando o novo tenta se apresentar). Fechar primeiro,
+          // esperar a animação de saída terminar, só então abrir o de
+          // edição, resolve nos dois sistemas.
+          const membroParaEditar = detailMembro;
+          setDetailMembro(null);
+          setTimeout(() => {
+            setEditingMembro(membroParaEditar);
+            setFormVisible(true);
+          }, 350);
+        }}
         onDelete={() => detailMembro && handleDelete(detailMembro.id)}
       />
     </SafeAreaView>
