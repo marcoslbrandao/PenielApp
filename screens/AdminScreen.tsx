@@ -83,7 +83,7 @@ const NOME_GRUPO: Record<string, string> = {
 // `devocionais` já trata isso, não precisa de nada extra aqui além de
 // mandar o valor certo de `grupo` no insert).
 const GRUPO_DEVOCIONAL_OPCOES: { valor: string | null; label: string }[] = [
-  { valor: null, label: '🏠 Geral (Home)' },
+  { valor: null, label: '🏠 Devocional Peniel (Home)' },
   { valor: 'mulheres', label: 'Mulheres' },
   { valor: 'homens', label: 'Homens' },
   { valor: 'jovens', label: 'Peniel Alive' },
@@ -1851,7 +1851,7 @@ export default function AdminScreen() {
                         </View>
                         <View style={[s.statusBadge, { backgroundColor: (d.grupo ? C.accentDim : C.success) + '18' }]}>
                           <Text style={[s.statusBadgeText, { color: d.grupo ? C.accentDim : C.success }]}>
-                            {d.grupo ? (NOME_GRUPO[d.grupo] ?? d.grupo) : '🏠 Geral'}
+                            {d.grupo ? (NOME_GRUPO[d.grupo] ?? d.grupo) : '🏠 Devocional Peniel'}
                           </Text>
                         </View>
                       </View>
