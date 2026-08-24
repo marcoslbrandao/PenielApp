@@ -464,7 +464,14 @@ function MembroFormModal({ visible, membro, membros, isAdmin, onClose, onSaved }
               ))}
             </View>
 
-            <ScrollView showsVerticalScrollIndicator={false} style={{ flex: 1 }}>
+            {/* Sem `flex: 1` aqui de propósito: o `fm.sheet` só tem `maxHeight`
+                (não `height`/`flex`), e nesse caso o Yoga não tem uma altura
+                resolvida pra distribuir pro filho `flex:1` crescer — ele acaba
+                colapsando pra 0 (o conteúdo das abas sumia por causa disso).
+                Sem `flex:1`, a ScrollView cresce pelo conteúdo normalmente e
+                fica limitada pelo `maxHeight` do `sheet`, exatamente como já
+                funciona nos outros modais do Admin (`AdminScreen.tsx`). */}
+            <ScrollView showsVerticalScrollIndicator={false} keyboardShouldPersistTaps="handled">
               {section === 0 && (
                 <View style={fm.sectionContent}>
                   <View style={{ flexDirection: 'row', gap: 12 }}>
@@ -1030,9 +1037,17 @@ const s = StyleSheet.create({
   // Altura fixa + alignItems 'center' de propósito: sem isso, esse ScrollView
   // horizontal às vezes calculava a própria altura errado (menor que uma
   // linha de texto), cortando o topo/base das pílulas pela metade.
-  filterRowScroll: { height: 52, backgroundColor: C.surface, borderBottomWidth: 1, borderBottomColor: C.border },
+  //
+  // Bug (16ª rodada): o `height: 52` daqui somado ao conteúdo da pílula
+  // (paddingVertical 7×2 + lineHeight 16 + borderWidth 1×2 = 32) mais o
+  // paddingVertical do filterRow (10×2 = 20) dava EXATAMENTE 52 — zero
+  // folga. Numa tela real, qualquer arredondamento de sub-pixel empurra o
+  // texto pra fora da área visível, e como ScrollView recorta o que passa
+  // do próprio quadro, o texto sumia por completo (não cortado pela
+  // metade — invisível). Aumentei a altura pra sobrar espaço de verdade.
+  filterRowScroll: { height: 60, backgroundColor: C.surface, borderBottomWidth: 1, borderBottomColor: C.border },
   filterRow: { flexDirection: 'row', alignItems: 'center', gap: 8, paddingHorizontal: 16, paddingVertical: 10 },
-  filterPill: { paddingHorizontal: 12, paddingVertical: 7, borderRadius: 16, backgroundColor: C.surfaceAlt, borderWidth: 1, borderColor: C.border, justifyContent: 'center' },
+  filterPill: { paddingHorizontal: 12, paddingVertical: 7, borderRadius: 16, backgroundColor: C.surfaceAlt, borderWidth: 1, borderColor: C.border, justifyContent: 'center', alignItems: 'center' },
   filterPillActive: { backgroundColor: C.primary + '15', borderColor: C.primary },
   filterPillText: { fontSize: 12, lineHeight: 16, color: C.textMuted, fontWeight: '500' },
   filterPillTextActive: { color: C.primary, fontWeight: '700' },
