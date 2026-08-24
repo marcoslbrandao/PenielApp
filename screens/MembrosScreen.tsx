@@ -8,6 +8,7 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
 import { supabase } from '../lib/supabase';
 import { useAuth } from '../lib/useAuth';
+import { PAISES, Pais, bandeira, formatarNumeroLocal, montarTelefone, splitTelefone, paisPorNome, paisPorIso2, paisPadraoDdi } from '../lib/paises';
 
 const C = {
   bg: '#F7F4EE', surface: '#FFFFFF', surfaceAlt: '#F0EDE8',
@@ -362,6 +363,107 @@ function ContaSection({ membro, profileId, onProfileIdChange }: {
   );
 }
 
+// Campo de telefone com seletor de DDI (24ª rodada — antes o telefone só
+// tinha máscara de Brasil, não dava pra digitar um número de outro país
+// tipo Reino Unido). O DDI selecionado e o número local vêm os dois juntos
+// do MESMO valor salvo (`+55 (11) 98765-4321`, por ex.) — `splitTelefone`
+// separa e `montarTelefone` junta de volta, então não precisa de um campo
+// novo no banco. `paisPadrao` é só usado quando o campo ainda está vazio
+// (número novo), pra já vir com o DDI que combina com o País do endereço.
+function TelefoneField({ label, value, onChange, paisPadrao }: {
+  label: string; value: string; onChange: (v: string) => void; paisPadrao: string;
+}) {
+  const [expandido, setExpandido] = useState(false);
+  const [busca, setBusca] = useState('');
+  const parsed = value ? splitTelefone(value) : { iso2: paisPadrao, numeroLocal: '' };
+  const iso2 = parsed.iso2;
+  const numeroLocal = parsed.numeroLocal;
+  const atual = paisPorIso2(iso2) ?? PAISES[0];
+  const opcoes = PAISES.filter(p =>
+    p.nome.toLowerCase().includes(busca.toLowerCase()) || p.ddi.includes(busca.replace('+', ''))
+  );
+
+  const atualizarNumero = (texto: string) => onChange(montarTelefone(iso2, formatarNumeroLocal(iso2, texto)));
+  const trocarPais = (pais: Pais) => {
+    onChange(montarTelefone(pais.iso2, formatarNumeroLocal(pais.iso2, numeroLocal)));
+    setExpandido(false);
+    setBusca('');
+  };
+
+  return (
+    <View style={fm.fieldWrap}>
+      <Text style={fm.fieldLabel}>{label}</Text>
+      <View style={{ flexDirection: 'row', gap: 8 }}>
+        <TouchableOpacity style={fm.ddiBtn} onPress={() => setExpandido(e => !e)}>
+          <Text style={fm.ddiBtnText} numberOfLines={1}>{bandeira(atual.iso2)} +{atual.ddi}</Text>
+          <Ionicons name={expandido ? 'chevron-up' : 'chevron-down'} size={14} color={C.textMuted} />
+        </TouchableOpacity>
+        <TextInput
+          style={[fm.fieldInput, { flex: 1 }]} value={numeroLocal} onChangeText={atualizarNumero}
+          placeholder={iso2 === 'GB' ? '7700 900000' : iso2 === 'BR' ? '(11) 99999-0000' : 'Número'}
+          placeholderTextColor={C.textDim} keyboardType="phone-pad"
+        />
+      </View>
+      {expandido && (
+        <View style={fm.familiaBusca}>
+          <TextInput
+            style={fm.fieldInput} placeholder="Buscar país ou DDI..." placeholderTextColor={C.textDim}
+            value={busca} onChangeText={setBusca}
+          />
+          <ScrollView style={{ maxHeight: 200, marginTop: 6 }} keyboardShouldPersistTaps="handled">
+            {opcoes.slice(0, 40).map(p => (
+              <TouchableOpacity key={p.iso2} style={fm.familiaOpcao} onPress={() => trocarPais(p)}>
+                <Text style={fm.familiaOpcaoText}>{bandeira(p.iso2)}  {p.nome}  (+{p.ddi})</Text>
+              </TouchableOpacity>
+            ))}
+            {opcoes.length === 0 && <Text style={{ fontSize: 12, color: C.textDim, padding: 8 }}>Nenhum país encontrado.</Text>}
+          </ScrollView>
+        </View>
+      )}
+    </View>
+  );
+}
+
+// Campo de País do endereço, agora um seletor em vez de texto livre (mesma
+// lista de países do DDI acima) — era ele quem travava o CEP/Estado sempre
+// no formato de Brasil, mesmo pra quem mora no Reino Unido.
+function PaisEnderecoField({ label, value, onChange }: {
+  label: string; value: string; onChange: (nome: string) => void;
+}) {
+  const [expandido, setExpandido] = useState(false);
+  const [busca, setBusca] = useState('');
+  const atual = paisPorNome(value);
+  const opcoes = PAISES.filter(p => p.nome.toLowerCase().includes(busca.toLowerCase()));
+
+  return (
+    <View style={fm.fieldWrap}>
+      <Text style={fm.fieldLabel}>{label}</Text>
+      <TouchableOpacity style={fm.ddiBtnFull} onPress={() => setExpandido(e => !e)}>
+        <Text style={fm.ddiBtnText} numberOfLines={1}>
+          {atual ? `${bandeira(atual.iso2)} ${atual.nome}` : (value || 'Selecionar país')}
+        </Text>
+        <Ionicons name={expandido ? 'chevron-up' : 'chevron-down'} size={14} color={C.textMuted} />
+      </TouchableOpacity>
+      {expandido && (
+        <View style={fm.familiaBusca}>
+          <TextInput
+            style={fm.fieldInput} placeholder="Buscar país..." placeholderTextColor={C.textDim}
+            value={busca} onChangeText={setBusca}
+          />
+          <ScrollView style={{ maxHeight: 200, marginTop: 6 }} keyboardShouldPersistTaps="handled">
+            {opcoes.slice(0, 40).map(p => (
+              <TouchableOpacity key={p.iso2} style={fm.familiaOpcao} onPress={() => { onChange(p.nome); setExpandido(false); setBusca(''); }}>
+                <Text style={fm.familiaOpcaoText}>{bandeira(p.iso2)} {p.nome}</Text>
+              </TouchableOpacity>
+            ))}
+            {opcoes.length === 0 && <Text style={{ fontSize: 12, color: C.textDim, padding: 8 }}>Nenhum país encontrado.</Text>}
+          </ScrollView>
+        </View>
+      )}
+    </View>
+  );
+}
+
 // ─── Form Modal ───────────────────────────────────────────────────────────────
 function MembroFormModal({ visible, membro, membros, isAdmin, onClose, onSaved }: {
   visible: boolean; membro: Membro | null; membros: Membro[]; isAdmin: boolean;
@@ -396,13 +498,24 @@ function MembroFormModal({ visible, membro, membros, isAdmin, onClose, onSaved }
     set(field)(f);
   };
 
-  const formatPhone = (text: string) => {
-    const digits = text.replace(/\D/g, '').slice(0, 11);
-    let f = digits;
-    if (digits.length > 0) f = '(' + digits.slice(0, 2);
-    if (digits.length > 2) f += ') ' + digits.slice(2, 7);
-    if (digits.length > 7) f += '-' + digits.slice(7);
-    set('telefone')(f);
+  // O telefone em si não precisa mais de um formatador aqui — o TelefoneField
+  // (componente de módulo, ver acima) cuida da máscara dele sozinho, porque
+  // ela depende do país escolhido no seletor de DDI, não só do que a pessoa
+  // digita. O CEP/Postcode abaixo segue o mesmo princípio, mas usando o País
+  // do próprio endereço (`form.pais`), não o do telefone.
+  const cepBrasil = form.pais === 'Brasil';
+  const cepReinoUnido = form.pais === 'Reino Unido';
+  const formatCep = (texto: string) => {
+    if (cepBrasil) {
+      const digits = texto.replace(/\D/g, '').slice(0, 8);
+      let f = digits;
+      if (digits.length > 5) f = digits.slice(0, 5) + '-' + digits.slice(5);
+      set('cep')(f);
+    } else if (cepReinoUnido) {
+      set('cep')(texto.toUpperCase().slice(0, 10));
+    } else {
+      set('cep')(texto.slice(0, 14));
+    }
   };
 
   const formatMesAno = (text: string) => {
@@ -520,22 +633,40 @@ function MembroFormModal({ visible, membro, membros, isAdmin, onClose, onSaved }
               )}
               {section === 1 && (
                 <View style={fm.sectionContent}>
-                  <Field label="Telefone / WhatsApp *" value={form.telefone} onChangeText={formatPhone} placeholder="(11) 99999-0000" keyboardType="phone-pad" maxLength={15} />
+                  <TelefoneField label="Telefone / WhatsApp *" value={form.telefone} onChange={set('telefone')} paisPadrao={paisPadraoDdi(form.pais)} />
                   <Field label="E-mail" value={form.email} onChangeText={set('email')} placeholder="email@exemplo.com" keyboardType="email-address" />
                 </View>
               )}
               {section === 2 && (
                 <View style={fm.sectionContent}>
+                  {/* País primeiro de propósito — é ele que decide o formato
+                      de Estado e CEP/Postcode logo abaixo. Fica em linha
+                      cheia (não dividindo espaço com outro campo) porque a
+                      lista de busca que abre embaixo precisa da largura
+                      inteira pra ficar legível. */}
+                  <PaisEnderecoField label="País" value={form.pais} onChange={set('pais')} />
                   <Field label="Endereço (rua e número)" value={form.endereco} onChangeText={set('endereco')} placeholder="Ex: 45 Abbey Square" />
                   <Field label="Complemento" value={form.complemento} onChangeText={set('complemento')} placeholder="Ex: Apto 3B, próximo ao mercado" />
                   <View style={{ flexDirection: 'row', gap: 12 }}>
                     <View style={{ flex: 2 }}><Field label="Cidade" value={form.cidade} onChangeText={set('cidade')} placeholder="Cidade" /></View>
-                    <View style={{ flex: 1 }}><Field label="Estado" value={form.estado} onChangeText={v => set('estado')(v.toUpperCase().slice(0, 2))} placeholder="SP" maxLength={2} /></View>
+                    <View style={{ flex: 1 }}>
+                      <Field
+                        label={cepBrasil ? 'Estado' : 'Estado / Região'}
+                        value={form.estado}
+                        onChangeText={v => set('estado')(cepBrasil ? v.toUpperCase().slice(0, 2) : v.slice(0, 40))}
+                        placeholder={cepBrasil ? 'SP' : 'Ex: Berkshire'}
+                        maxLength={cepBrasil ? 2 : 40}
+                      />
+                    </View>
                   </View>
-                  <View style={{ flexDirection: 'row', gap: 12 }}>
-                    <View style={{ flex: 1 }}><Field label="CEP" value={form.cep} onChangeText={set('cep')} placeholder="00000-000" keyboardType="numeric" maxLength={9} /></View>
-                    <View style={{ flex: 1.5 }}><Field label="País" value={form.pais} onChangeText={set('pais')} placeholder="Ex: Reino Unido" /></View>
-                  </View>
+                  <Field
+                    label={cepBrasil ? 'CEP' : cepReinoUnido ? 'Postcode' : 'Código Postal'}
+                    value={form.cep}
+                    onChangeText={formatCep}
+                    placeholder={cepBrasil ? '00000-000' : cepReinoUnido ? 'RG1 3BE' : 'Código postal'}
+                    keyboardType={cepBrasil ? 'numeric' : 'default'}
+                    maxLength={cepBrasil ? 9 : 14}
+                  />
                 </View>
               )}
               {section === 4 && (
@@ -695,6 +826,9 @@ const fm = StyleSheet.create({
   familiaBusca: { marginTop: 8 },
   familiaOpcao: { paddingVertical: 10, paddingHorizontal: 10, borderBottomWidth: 1, borderBottomColor: C.border },
   familiaOpcaoText: { fontSize: 13, color: C.text },
+  ddiBtn: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', gap: 4, backgroundColor: C.surfaceAlt, borderWidth: 1, borderColor: C.border, borderRadius: 10, paddingHorizontal: 10, height: 46, minWidth: 100 },
+  ddiBtnFull: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', gap: 4, backgroundColor: C.surfaceAlt, borderWidth: 1, borderColor: C.border, borderRadius: 10, paddingHorizontal: 14, height: 46 },
+  ddiBtnText: { fontSize: 14, color: C.text, fontWeight: '600', flexShrink: 1 },
 });
 
 // ─── Detail Modal ─────────────────────────────────────────────────────────────
