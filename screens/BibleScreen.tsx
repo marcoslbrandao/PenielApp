@@ -7,6 +7,7 @@ import AsyncStorage from '@react-native-async-storage/async-storage';
 import { supabase } from '../lib/supabase';
 import { useAuth } from '../lib/useAuth';
 import { getVersiculoDoDia, parseReferencia, getTextoVersiculo, getReferenciaVersiculo, getVersaoVersiculo } from '../lib/versiculoDoDia';
+import { linhaCompartilharApp } from '../lib/appLinks';
 import { livrosAT, livrosNT, Livro } from '../lib/bibliaLivros';
 import { useTheme } from '../lib/theme';
 
@@ -93,6 +94,29 @@ function limparTextoVerso(texto: string): string {
     .trim();
 }
 
+// Formata uma lista de números de versículo selecionados como referência
+// legível, juntando sequências consecutivas em faixa: [3,4,5,9] → "3-5,9".
+function formatarReferenciaVersos(nums: number[]): string {
+  if (nums.length === 0) return '';
+  const sorted = [...nums].sort((a, b) => a - b);
+  const partes: string[] = [];
+  let inicio = sorted[0];
+  let fim = sorted[0];
+  for (let i = 1; i <= sorted.length; i++) {
+    const atual = sorted[i];
+    if (atual === fim + 1) {
+      fim = atual;
+      continue;
+    }
+    partes.push(inicio === fim ? `${inicio}` : `${inicio}-${fim}`);
+    if (atual !== undefined) {
+      inicio = atual;
+      fim = atual;
+    }
+  }
+  return partes.join(',');
+}
+
 // ─── Leitor Modal ─────────────────────────────────────────────────────────────
 function LeitorModal({ livro, versao, capInicial, onClose }: {
   livro: Livro | null; versao: typeof versoes[0]; capInicial?: number; onClose: () => void;
@@ -104,6 +128,15 @@ function LeitorModal({ livro, versao, capInicial, onClose }: {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
   const [doCache, setDoCache] = useState(false);
+  // Seleção de versículos pra compartilhar só um trecho, não o capítulo
+  // inteiro — toca no(s) versículo(s) desejado(s) pra marcar/desmarcar.
+  // Vazio = comportamento antigo (compartilha o capítulo todo).
+  const [versiculosSelecionados, setVersiculosSelecionados] = useState<number[]>([]);
+  const toggleVersiculo = (num: number) => {
+    setVersiculosSelecionados(prev =>
+      prev.includes(num) ? prev.filter(n => n !== num) : [...prev, num].sort((a, b) => a - b)
+    );
+  };
   const langKey = getLangKey(versao.apiId);
   const nomeExibido = livro ? nomeLivro(livro, langKey) : '';
 
@@ -143,6 +176,7 @@ function LeitorModal({ livro, versao, capInicial, onClose }: {
     setError('');
     setVersos([]);
     setDoCache(false);
+    setVersiculosSelecionados([]);
     // Distingue "sem internet" (fetch nunca chega a responder) de "o serviço
     // externo (bolls.life) está fora do ar" (respondeu, mas com erro/HTTP
     // não-ok/corpo inválido) — os dois casos caindo no mesmo catch mostravam
@@ -233,12 +267,34 @@ function LeitorModal({ livro, versao, capInicial, onClose }: {
             <Text style={lr.headerSub}>{t('biblia.capitulo')} {capitulo} · {versao.sigla}</Text>
           </View>
           <TouchableOpacity onPress={() => {
-            const texto = versos.map(v => `${v.verse}. ${v.text.trim()}`).join('\n');
-            Share.share({ message: `${nomeExibido} ${capitulo}\n\n${texto}\n\n— ${versao.sigla}` });
+            // Com versículo(s) selecionado(s), compartilha só o trecho;
+            // sem seleção, mantém o comportamento antigo (capítulo inteiro).
+            if (versiculosSelecionados.length > 0) {
+              const selecionados = versos.filter(v => versiculosSelecionados.includes(v.verse));
+              const texto = selecionados.map(v => `${v.verse}. ${v.text.trim()}`).join('\n');
+              const refVersos = formatarReferenciaVersos(versiculosSelecionados);
+              Share.share({ message: `${nomeExibido} ${capitulo}:${refVersos}\n\n${texto}\n\n— ${versao.sigla}\n\n${linhaCompartilharApp()}` });
+            } else {
+              const texto = versos.map(v => `${v.verse}. ${v.text.trim()}`).join('\n');
+              Share.share({ message: `${nomeExibido} ${capitulo}\n\n${texto}\n\n— ${versao.sigla}\n\n${linhaCompartilharApp()}` });
+            }
           }} style={lr.closeBtn}>
-            <Ionicons name="share-outline" size={20} color="rgba(255,255,255,0.7)" />
+            <Ionicons name="share-outline" size={20} color={versiculosSelecionados.length > 0 ? '#F5C842' : 'rgba(255,255,255,0.7)'} />
           </TouchableOpacity>
         </View>
+
+        {/* Barra de seleção — só aparece com pelo menos 1 versículo tocado */}
+        {versiculosSelecionados.length > 0 && (
+          <View style={lr.selecaoBar}>
+            <Text style={lr.selecaoTexto}>
+              {t('biblia.versiculosSelecionados', { count: versiculosSelecionados.length })}
+            </Text>
+            <TouchableOpacity onPress={() => setVersiculosSelecionados([])} style={lr.selecaoLimpar}>
+              <Ionicons name="close-circle" size={14} color="#1A1740" />
+              <Text style={lr.selecaoLimparTexto}>{t('biblia.limparSelecao')}</Text>
+            </TouchableOpacity>
+          </View>
+        )}
 
         {/* Navegação de capítulos */}
         <View style={lr.capNav}>
@@ -284,12 +340,20 @@ function LeitorModal({ livro, versao, capInicial, onClose }: {
               <Text style={lr.cacheAvisoTexto}>{t('biblia.mostrandoSalvoLocalmente')}</Text>
             </View>
           )}
-          {!loading && !error && versos.map(v => (
-            <View key={v.verse} style={lr.versoRow}>
-              <Text style={lr.versoNum}>{v.verse}</Text>
-              <Text style={lr.versoText}>{v.text.trim()}</Text>
-            </View>
-          ))}
+          {!loading && !error && versos.map(v => {
+            const selecionado = versiculosSelecionados.includes(v.verse);
+            return (
+              <TouchableOpacity
+                key={v.verse}
+                style={[lr.versoRow, selecionado && lr.versoRowSelecionado]}
+                activeOpacity={0.7}
+                onPress={() => toggleVersiculo(v.verse)}
+              >
+                <Text style={[lr.versoNum, selecionado && lr.versoNumSelecionado]}>{v.verse}</Text>
+                <Text style={lr.versoText}>{v.text.trim()}</Text>
+              </TouchableOpacity>
+            );
+          })}
           <View style={{ height: 40 }} />
         </ScrollView>
       </View>
@@ -320,9 +384,19 @@ const lr = StyleSheet.create({
   cacheAviso: { flexDirection: 'row', alignItems: 'center', gap: 6, backgroundColor: 'rgba(245,200,66,0.12)', borderRadius: 10, paddingVertical: 8, paddingHorizontal: 12, marginBottom: 14 },
   cacheAvisoTexto: { fontSize: 11.5, color: '#F5C842', flex: 1, lineHeight: 16 },
   retryBtnText: { color: '#F5C842', fontWeight: '600' },
-  versoRow: { flexDirection: 'row', marginBottom: 12, gap: 10 },
+  versoRow: { flexDirection: 'row', marginBottom: 4, gap: 10, borderRadius: 8, padding: 4, marginHorizontal: -4 },
+  versoRowSelecionado: { backgroundColor: 'rgba(245,200,66,0.16)' },
   versoNum: { fontSize: 11, color: '#F5C842', fontWeight: '700', width: 22, paddingTop: 2 },
-  versoText: { flex: 1, fontSize: 17, color: 'rgba(255,255,255,0.9)', lineHeight: 28 },
+  versoNumSelecionado: { color: '#1A1740', backgroundColor: '#F5C842', borderRadius: 8, overflow: 'hidden', textAlign: 'center' },
+  versoText: { flex: 1, fontSize: 17, color: 'rgba(255,255,255,0.9)', lineHeight: 28, marginBottom: 8 },
+  selecaoBar: {
+    flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between',
+    backgroundColor: '#241F5E', paddingHorizontal: 16, paddingVertical: 8,
+    borderBottomWidth: 0.5, borderBottomColor: 'rgba(255,255,255,0.1)',
+  },
+  selecaoTexto: { fontSize: 12, fontWeight: '700', color: '#F5C842' },
+  selecaoLimpar: { flexDirection: 'row', alignItems: 'center', gap: 5, backgroundColor: '#F5C842', paddingHorizontal: 10, paddingVertical: 5, borderRadius: 14 },
+  selecaoLimparTexto: { fontSize: 11, fontWeight: '700', color: '#1A1740' },
 });
 
 // ─── Main Screen ──────────────────────────────────────────────────────────────
@@ -430,7 +504,7 @@ export default function BibleScreen() {
 
   const partilharVersiculo = async () => {
     await Share.share({
-      message: `${versiculoTexto}\n\n— ${versiculoRef} (${versiculoVersaoIdioma})\n\n📖 Peniel Church App`,
+      message: `${versiculoTexto}\n\n— ${versiculoRef} (${versiculoVersaoIdioma})\n\n${linhaCompartilharApp()}`,
     });
   };
 

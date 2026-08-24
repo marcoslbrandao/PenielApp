@@ -236,7 +236,8 @@
   "devocionais": {
     "titulo": "Devotionals",
     "nenhumDevocional": "No devotionals published yet.",
-    "geral": "General"
+    "geral": "General",
+    "verTodos": "See all Devotionals"
   },
   "contato": {
     "titulo": "Get in touch",
@@ -403,7 +404,9 @@
     "entreParaSalvarVersiculos": "Sign in to your account in the Members tab to save verses to your favorites.",
     "erroAoSalvar": "Error saving",
     "salvoTitulo": "Saved! 🔖",
-    "salvoMsg": "Verse saved to your favorites.\n\nSee them all in your Profile."
+    "salvoMsg": "Verse saved to your favorites.\n\nSee them all in your Profile.",
+    "versiculosSelecionados": "{{count}} selected",
+    "limparSelecao": "Clear selection"
   },
   "oferta": {
     "contribuaComAObra": "support the ministry",

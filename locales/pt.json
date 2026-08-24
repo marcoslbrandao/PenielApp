@@ -236,7 +236,8 @@
   "devocionais": {
     "titulo": "Devocionais",
     "nenhumDevocional": "Nenhum devocional publicado ainda.",
-    "geral": "Geral"
+    "geral": "Geral",
+    "verTodos": "Ver todos os Devocionais"
   },
   "contato": {
     "titulo": "Fale com a gente",
@@ -403,7 +404,9 @@
     "entreParaSalvarVersiculos": "Entre na sua conta na aba Membros para salvar versículos nos favoritos.",
     "erroAoSalvar": "Erro ao salvar",
     "salvoTitulo": "Salvo! 🔖",
-    "salvoMsg": "Versículo salvo nos seus favoritos.\n\nVeja todos no seu Perfil."
+    "salvoMsg": "Versículo salvo nos seus favoritos.\n\nVeja todos no seu Perfil.",
+    "versiculosSelecionados": "{{count}} selecionado(s)",
+    "limparSelecao": "Limpar seleção"
   },
   "oferta": {
     "contribuaComAObra": "contribua com a obra",

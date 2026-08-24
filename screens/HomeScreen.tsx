@@ -8,6 +8,7 @@ import { useAuth } from '../lib/useAuth';
 import { useNotifications } from '../lib/useNotifications';
 import { useBirthdays } from '../lib/useBirthdays';
 import { getUltimaVisita, marcarComoVistoAgora, getIdsDispensados, dispensarAviso } from '../lib/notificacoesLidas';
+import { linhaCompartilharApp } from '../lib/appLinks';
 import BirthdayBanner from '../components/BirthdayBanner';
 import MensagemDetalheModal, { Mensagem } from '../components/MensagemDetalheModal';
 import { livrosAT, livrosNT, Livro } from '../lib/bibliaLivros';
@@ -495,7 +496,7 @@ export default function HomeScreen({ navigation }: { navigation?: any }) {
   useEffect(() => {
     (async () => {
       const [dismissed, ultimaVisita, { data }] = await Promise.all([
-        getIdsDispensados(),
+        getIdsDispensados(user?.id),
         getUltimaVisita(),
         supabase.from('avisos').select('*').order('created_at', { ascending: false }).limit(10),
       ]);
@@ -507,7 +508,7 @@ export default function HomeScreen({ navigation }: { navigation?: any }) {
         : lista.length;
       setNotifNaoLidas(naoLidas);
     })();
-  }, []);
+  }, [user?.id]);
 
   const abrirNotificacoes = () => {
     setNotifModalVisible(true);
@@ -522,9 +523,12 @@ export default function HomeScreen({ navigation }: { navigation?: any }) {
       });
   };
 
+  // dispensarAviso salva no Supabase (por conta, permanente entre
+  // reinstalações) quando a pessoa está logada, além de local — ver
+  // lib/notificacoesLidas.ts.
   const removerNotificacao = async (id: string) => {
     setNotifAvisos(prev => prev.filter(a => a.id !== id));
-    const novos = await dispensarAviso(id);
+    const novos = await dispensarAviso(id, user?.id);
     setNotifDismissedIds(novos);
   };
 
@@ -620,7 +624,7 @@ export default function HomeScreen({ navigation }: { navigation?: any }) {
           <View style={styles.versiculoBtns}>
             <TouchableOpacity style={styles.versiculoBtn} onPress={() => {
               const { Share } = require('react-native');
-              Share.share({ message: `"${versiculoTexto}"\n\n— ${versiculoRef} - ${versiculoVersaoIdioma}\n\n📖 Peniel Church App` });
+              Share.share({ message: `"${versiculoTexto}"\n\n— ${versiculoRef} - ${versiculoVersaoIdioma}\n\n${linhaCompartilharApp()}` });
             }}>
               <Ionicons name="share-outline" size={14} color="rgba(255,255,255,0.7)" />
               <Text style={styles.versiculoBtnTexto}>{t('common.compartilhar')}</Text>
@@ -802,7 +806,7 @@ export default function HomeScreen({ navigation }: { navigation?: any }) {
               <Ionicons name="calendar-outline" size={13} color={C.textMuted} />
               <Text style={styles.eventoMetaTexto}>28 a 31 de Agosto 2026</Text>
             </View>
-            <Text style={styles.especialDesc}>Inscrições abertas! Toque para se inscrever.</Text>
+            <Text style={styles.especialDesc}>Inscrições encerradas,{'\n'}se prepare para 2027.</Text>
           </View>
           <Ionicons name="chevron-forward" size={18} color={C.textMuted} style={{ marginRight: 12 }} />
         </TouchableOpacity>

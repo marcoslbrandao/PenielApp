@@ -236,7 +236,8 @@
   "devocionais": {
     "titulo": "Dévotions",
     "nenhumDevocional": "Aucune dévotion publiée pour le moment.",
-    "geral": "Général"
+    "geral": "Général",
+    "verTodos": "Voir toutes les dévotions"
   },
   "contato": {
     "titulo": "Contactez-nous",
@@ -403,7 +404,9 @@
     "entreParaSalvarVersiculos": "Connectez-vous à votre compte dans l'onglet Membres pour enregistrer des versets dans vos favoris.",
     "erroAoSalvar": "Erreur lors de l'enregistrement",
     "salvoTitulo": "Enregistré ! 🔖",
-    "salvoMsg": "Verset enregistré dans vos favoris.\n\nRetrouvez-les tous dans votre Profil."
+    "salvoMsg": "Verset enregistré dans vos favoris.\n\nRetrouvez-les tous dans votre Profil.",
+    "versiculosSelecionados": "{{count}} sélectionné(s)",
+    "limparSelecao": "Effacer la sélection"
   },
   "oferta": {
     "contribuaComAObra": "soutenez l'œuvre",

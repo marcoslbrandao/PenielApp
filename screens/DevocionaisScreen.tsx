@@ -5,10 +5,15 @@ import { useTranslation } from 'react-i18next';
 import { supabase } from '../lib/supabase';
 import { useCampoTraduzido } from '../lib/useTraducao';
 
-// Tela "Devocionais" — lista TODOS os devocionais que o usuário tem acesso:
-// os gerais (aparecem também em destaque na Home) e os de grupo (a RLS de
-// `devocionais` já filtra automaticamente — só vem o que essa conta pode
-// ver, não precisa de nenhum filtro extra aqui).
+// Tela "Devocionais" — mostra só UM destino por vez, não tudo junto:
+// - aberta pela Home (sem parâmetro) → só os devocionais Geral (grupo NULL).
+// - aberta de dentro de um grupo (com `route.params.grupo`) → só os
+//   devocionais daquele grupo específico.
+// A RLS de `devocionais` já garante que só vem o que a conta tem acesso
+// (15ª rodada: Geral ficou público pra todo mundo, logado ou não; grupo
+// continua exigindo login + acesso ao grupo) — o filtro de `grupo` aqui é
+// só pra não misturar os destinos na mesma lista (antes vinha tudo junto:
+// Geral + todos os grupos da pessoa, o que o Marcos não queria).
 type Devocional = {
   id: string;
   titulo: string;
@@ -27,12 +32,11 @@ const GRUPO_LABEL_KEY: Record<string, string> = {
 };
 
 function DevocionalItem({ dev, aberto, onToggle }: { dev: Devocional; aberto: boolean; onToggle: () => void }) {
-  const { t, i18n } = useTranslation();
+  const { i18n } = useTranslation();
   const titulo = useCampoTraduzido(dev.titulo, 'devocionais', dev.id, 'titulo');
   const versiculo = useCampoTraduzido(dev.versiculo, 'devocionais', dev.id, 'versiculo');
   const referencia = useCampoTraduzido(dev.referencia, 'devocionais', dev.id, 'referencia');
   const texto = useCampoTraduzido(dev.texto, 'devocionais', dev.id, 'texto');
-  const grupoLabel = dev.grupo ? t(GRUPO_LABEL_KEY[dev.grupo] ?? dev.grupo) : t('devocionais.geral');
   const locale = i18n.language === 'pt' ? 'pt-BR' : i18n.language;
   const dataLabel = new Date(dev.data).toLocaleDateString(locale, { day: '2-digit', month: 'short', year: 'numeric' });
 
@@ -43,10 +47,9 @@ function DevocionalItem({ dev, aberto, onToggle }: { dev: Devocional; aberto: bo
           <Ionicons name="book" size={16} color="#F5C842" />
         </View>
         <View style={{ flex: 1 }}>
-          <View style={styles.metaRow}>
-            <Text style={styles.badge}>{grupoLabel}</Text>
-            <Text style={styles.data}>{dataLabel}</Text>
-          </View>
+          {/* Destino não aparece mais aqui — a tela inteira já é sempre de
+              um destino só (Geral ou o grupo escolhido), ver header. */}
+          <Text style={styles.data}>{dataLabel}</Text>
           <Text style={styles.titulo}>{titulo}</Text>
         </View>
         <Ionicons name={aberto ? 'chevron-up' : 'chevron-down'} size={18} color="rgba(255,255,255,0.4)" />
@@ -62,27 +65,38 @@ function DevocionalItem({ dev, aberto, onToggle }: { dev: Devocional; aberto: bo
   );
 }
 
-export default function DevocionaisScreen({ navigation }: { navigation?: any }) {
+export default function DevocionaisScreen({ navigation, route }: { navigation?: any; route?: any }) {
   const { t } = useTranslation();
+  // Sem `route.params.grupo` → Geral (grupo IS NULL, o que aparece na Home).
+  // Com `route.params.grupo` (ex.: 'homens') → só os devocionais daquele
+  // grupo, aberto a partir da tela do grupo (GruposScreen).
+  const grupoFiltro: string | null = route?.params?.grupo ?? null;
   const [devocionais, setDevocionais] = useState<Devocional[]>([]);
   const [loading, setLoading] = useState(true);
   const [abertoId, setAbertoId] = useState<string | null>(null);
 
   useEffect(() => {
-    supabase
+    setLoading(true);
+    let query = supabase
       .from('devocionais')
       .select('id, titulo, versiculo, referencia, texto, data, grupo')
-      .order('data', { ascending: false })
-      .then(({ data }) => {
-        setDevocionais((data as Devocional[]) ?? []);
-        setLoading(false);
-      });
-  }, []);
+      .order('data', { ascending: false });
+    query = grupoFiltro ? query.eq('grupo', grupoFiltro) : query.is('grupo', null);
+    query.then(({ data }) => {
+      setDevocionais((data as Devocional[]) ?? []);
+      setLoading(false);
+    });
+  }, [grupoFiltro]);
+
+  const subtitulo = grupoFiltro ? t(GRUPO_LABEL_KEY[grupoFiltro] ?? grupoFiltro) : t('devocionais.geral');
 
   return (
     <View style={styles.container}>
       <View style={styles.header}>
-        <Text style={styles.headerTitulo}>{t('devocionais.titulo')}</Text>
+        <View>
+          <Text style={styles.headerTitulo}>{t('devocionais.titulo')}</Text>
+          <Text style={styles.headerSubtitulo}>{subtitulo}</Text>
+        </View>
         {navigation && (
           <TouchableOpacity style={styles.closeBtn} onPress={() => navigation.goBack()}>
             <Ionicons name="close" size={22} color="#fff" />
@@ -124,6 +138,7 @@ const styles = StyleSheet.create({
     flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between',
   },
   headerTitulo: { fontSize: 18, fontWeight: '700', color: '#fff' },
+  headerSubtitulo: { fontSize: 12, color: '#F5C842', marginTop: 2, fontWeight: '600' },
   closeBtn: { width: 34, height: 34, borderRadius: 17, backgroundColor: 'rgba(255,255,255,0.1)', alignItems: 'center', justifyContent: 'center' },
   loadingWrap: { flex: 1, alignItems: 'center', justifyContent: 'center' },
   scrollContent: { padding: 18, paddingBottom: 40 },

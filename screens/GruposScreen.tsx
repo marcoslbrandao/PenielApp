@@ -5,7 +5,7 @@ import {
   Modal, TextInput, KeyboardAvoidingView, Platform,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
-import { useRoute } from '@react-navigation/native';
+import { useRoute, useNavigation } from '@react-navigation/native';
 import { Ionicons } from '@expo/vector-icons';
 import { useTranslation } from 'react-i18next';
 import { supabase } from '../lib/supabase';
@@ -511,6 +511,7 @@ export default function GruposScreen() {
   // Permite abrir já numa aba específica (ex: card "Peniel Alive" da Home
   // manda direto pra 'jovens') via navigation.navigate('Grupos', { grupoInicial: 'jovens' }).
   const route = useRoute<any>();
+  const navigation = useNavigation<any>();
   const grupoInicial = route.params?.grupoInicial as Tab | undefined;
   const [activeTab, setActiveTab] = useState<Tab>(grupoInicial ?? 'homens');
   const [expandedDev, setExpandedDev] = useState<string | null>(null);
@@ -570,7 +571,9 @@ export default function GruposScreen() {
     const hoje = new Date().toISOString().slice(0, 10);
     const [{ data: eventosData }, { data: devData }, { data: shortsData }, { data: arquivosData }] = await Promise.all([
       supabase.from('grupo_eventos').select('*').eq('grupo', tab).gte('data', hoje).order('data', { ascending: true }),
-      supabase.from('devocionais').select('*').eq('grupo', tab).order('data', { ascending: false }).limit(5),
+      // Só o mais recente — vira o "banner" no topo da seção, igual à Home.
+      // A lista completa fica na tela Devocionais (botão "Ver todos").
+      supabase.from('devocionais').select('*').eq('grupo', tab).order('data', { ascending: false }).limit(1),
       supabase.from('shorts_videos').select('*').eq('grupo', tab).order('created_at', { ascending: false }).limit(12),
       supabase.from('grupo_arquivos').select('*').eq('grupo', tab).order('created_at', { ascending: false }).limit(20),
     ]);
@@ -732,22 +735,33 @@ export default function GruposScreen() {
               ))
             )}
 
-            {/* Devocionais */}
+            {/* Devocionais — só o mais recente aqui (banner), como na Home;
+                a lista completa desse grupo fica na tela Devocionais. */}
             <Text style={s.sectionLabel}>{t('grupos.devocionalGrupo')}</Text>
             {!loading && devocionais.length === 0 && (
               <View style={s.emptyWrap}>
                 <Text style={s.emptyText}>{t('grupos.nenhumDevocionalAinda')}</Text>
               </View>
             )}
-            {devocionais.map(dev => (
-              <GrupoDevocionalCard
-                key={dev.id}
-                dev={dev}
-                cor={grupo.cor}
-                isOpen={expandedDev === dev.id}
-                onToggle={() => setExpandedDev(expandedDev === dev.id ? null : dev.id)}
-              />
-            ))}
+            {devocionais.length > 0 && (
+              <>
+                <GrupoDevocionalCard
+                  key={devocionais[0].id}
+                  dev={devocionais[0]}
+                  cor={grupo.cor}
+                  isOpen={expandedDev === devocionais[0].id}
+                  onToggle={() => setExpandedDev(expandedDev === devocionais[0].id ? null : devocionais[0].id)}
+                />
+                <TouchableOpacity
+                  style={[s.verTodosDevocionais, { backgroundColor: grupo.cor + '14', borderColor: grupo.cor + '40' }]}
+                  activeOpacity={0.7}
+                  onPress={() => navigation.navigate('Devocionais', { grupo: activeTab })}
+                >
+                  <Text style={[s.verTodosDevocionaisTexto, { color: grupo.cor }]}>{t('devocionais.verTodos')}</Text>
+                  <Ionicons name="arrow-forward" size={14} color={grupo.cor} />
+                </TouchableOpacity>
+              </>
+            )}
 
             {/* Shorts */}
             <Text style={s.sectionLabel}>{t('grupos.shortsGrupo')}</Text>
@@ -917,6 +931,12 @@ function buildS(C: Paleta) { return StyleSheet.create({
   versiculoText: { fontSize: 13, color: C.text, fontStyle: 'italic', lineHeight: 20 },
   versiculoRef: { fontSize: 11, fontWeight: '700', marginTop: 4 },
   reflexaoText: { fontSize: 13, color: C.textMuted, lineHeight: 20 },
+  verTodosDevocionais: {
+    flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 6,
+    alignSelf: 'center', marginTop: -2, marginBottom: 20,
+    paddingHorizontal: 16, paddingVertical: 8, borderRadius: 20, borderWidth: 1,
+  },
+  verTodosDevocionaisTexto: { fontSize: 13, fontWeight: '700' },
   // Shorts
   shortsGrid: { flexDirection: 'row', flexWrap: 'wrap', justifyContent: 'space-between' },
   shortCard: { width: '48%', aspectRatio: 9 / 14, borderRadius: 14, overflow: 'hidden', backgroundColor: C.surface, marginBottom: 14, position: 'relative', borderWidth: 1, borderColor: C.border },
