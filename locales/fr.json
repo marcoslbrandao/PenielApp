@@ -62,7 +62,8 @@
     "avisosSectionTitle": "Annonces",
     "nenhumAvisoEncontrado": "Aucune annonce trouvée.",
     "nadaEncontradoPara": "Aucun résultat pour « {{query}} ».",
-    "verTodosDevocionais": "Voir toutes les dévotions"
+    "verTodosDevocionais": "Voir toutes les dévotions",
+    "verTraducaoAoVivo": "Traduction en direct disponible"
   },
   "auth": {
     "entrarNaConta": "Connectez-vous à votre compte",
@@ -238,6 +239,13 @@
     "nenhumDevocional": "Aucune dévotion publiée pour le moment.",
     "geral": "Dévotion Peniel",
     "verTodos": "Voir toutes les dévotions"
+  },
+  "traducao": {
+    "titulo": "Traduction en direct",
+    "semSessao": "Aucun culte avec traduction en direct active pour le moment.",
+    "ativa": "Traduction en direct disponible maintenant — Portugais → Anglais",
+    "ouvir": "Écouter la traduction",
+    "parar": "Arrêter"
   },
   "contato": {
     "titulo": "Contactez-nous",

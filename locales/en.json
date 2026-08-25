@@ -62,7 +62,8 @@
     "avisosSectionTitle": "Announcements",
     "nenhumAvisoEncontrado": "No announcements found.",
     "nadaEncontradoPara": "Nothing found for \"{{query}}\".",
-    "verTodosDevocionais": "See all devotionals"
+    "verTodosDevocionais": "See all devotionals",
+    "verTraducaoAoVivo": "Live translation available"
   },
   "auth": {
     "entrarNaConta": "Sign in to your account",
@@ -238,6 +239,13 @@
     "nenhumDevocional": "No devotionals published yet.",
     "geral": "Peniel Devotional",
     "verTodos": "See all Devotionals"
+  },
+  "traducao": {
+    "titulo": "Live translation",
+    "semSessao": "No service with live translation active right now.",
+    "ativa": "Live translation available now — Portuguese → English",
+    "ouvir": "Listen to translation",
+    "parar": "Stop"
   },
   "contato": {
     "titulo": "Get in touch",

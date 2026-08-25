@@ -437,6 +437,24 @@ export default function HomeScreen({ navigation }: { navigation?: any }) {
 
   const [searchVisible, setSearchVisible] = useState(false);
 
+  // ── Tradução ao vivo do culto (Azure Speech, ver traducao_ao_vivo) ────────
+  // Só mostra o botão de entrada quando há uma sessão ativa — o serviço no
+  // Mac mini marca `ativa = true`/`false` no início/fim do culto com tradução.
+  const [traducaoAtiva, setTraducaoAtiva] = useState(false);
+  useEffect(() => {
+    let ativo = true;
+    supabase.from('traducao_ao_vivo').select('ativa').eq('id', 1).maybeSingle().then(({ data }) => {
+      if (ativo) setTraducaoAtiva(!!data?.ativa);
+    });
+    const canal = supabase
+      .channel('traducao-status-home')
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'traducao_ao_vivo' }, (payload) => {
+        setTraducaoAtiva(!!(payload.new as { ativa?: boolean } | null)?.ativa);
+      })
+      .subscribe();
+    return () => { ativo = false; supabase.removeChannel(canal); };
+  }, []);
+
   // ── Devocional em destaque (publicado pelo Admin) ─────────────────────────
   const [devocional, setDevocional] = useState<{ id: string; titulo: string; versiculo: string; referencia: string; texto: string } | null>(null);
   const [devocionalAberto, setDevocionalAberto] = useState(false);
@@ -694,6 +712,22 @@ export default function HomeScreen({ navigation }: { navigation?: any }) {
           <Ionicons name="arrow-forward" size={14} color="#F5C842" />
         </TouchableOpacity>
 
+        {/* ── Tradução ao vivo (só aparece com sessão ativa) ─────────────────── */}
+        {/* Texto fixo em inglês de propósito (não usa t()): quem procura esse botão é
+            justamente quem não fala português, então precisa ler em inglês mesmo
+            que o app esteja em pt-BR. */}
+        {traducaoAtiva && (
+          <TouchableOpacity
+            style={styles.verTraducaoAoVivo}
+            activeOpacity={0.85}
+            onPress={() => navigation?.navigate('TraducaoAoVivo')}
+          >
+            <Ionicons name="headset" size={16} color="#fff" />
+            <Text style={styles.verTraducaoAoVivoTexto}>Live translation available</Text>
+            <Ionicons name="arrow-forward" size={14} color="#fff" />
+          </TouchableOpacity>
+        )}
+
         {/* ── Ao vivo ──────────────────────────────────────────────────────── */}
         <View style={styles.secaoHeader}>
           <Text style={styles.secaoTitulo}>{t('home.aoVivoAgora')}</Text>
@@ -897,6 +931,13 @@ function buildStyles(C: PaletaHome) { return StyleSheet.create({
     backgroundColor: 'rgba(245,200,66,0.14)', borderWidth: 1, borderColor: 'rgba(245,200,66,0.4)',
   },
   verTodosDevocionaisTexto: { fontSize: 14, fontWeight: '700', color: '#F5C842' },
+  verTraducaoAoVivo: {
+    flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 6,
+    marginBottom: 16, alignSelf: 'center',
+    paddingHorizontal: 16, paddingVertical: 10, borderRadius: 20,
+    backgroundColor: '#E84B1A',
+  },
+  verTraducaoAoVivoTexto: { fontSize: 14, fontWeight: '700', color: '#fff' },
   // Live
   secaoHeader: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginBottom: 10 },
   secaoTitulo: { fontSize: 14, fontWeight: '500', color: C.textPrimary, marginBottom: 10 },

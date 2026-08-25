@@ -62,7 +62,8 @@
     "avisosSectionTitle": "Avisos",
     "nenhumAvisoEncontrado": "Nenhum aviso encontrado.",
     "nadaEncontradoPara": "Nada encontrado para \"{{query}}\".",
-    "verTodosDevocionais": "Ver todos os devocionais"
+    "verTodosDevocionais": "Ver todos os devocionais",
+    "verTraducaoAoVivo": "Tradução ao vivo disponível"
   },
   "auth": {
     "entrarNaConta": "Entre na sua conta",
@@ -238,6 +239,13 @@
     "nenhumDevocional": "Nenhum devocional publicado ainda.",
     "geral": "Devocional Peniel",
     "verTodos": "Ver todos os Devocionais"
+  },
+  "traducao": {
+    "titulo": "Tradução ao vivo",
+    "semSessao": "Nenhum culto com tradução ativa no momento.",
+    "ativa": "Tradução ao vivo disponível agora — Português → Inglês",
+    "ouvir": "Ouvir tradução",
+    "parar": "Parar"
   },
   "contato": {
     "titulo": "Fale com a gente",

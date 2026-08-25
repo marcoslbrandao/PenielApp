@@ -17,6 +17,7 @@ import OfertaScreen from './screens/OfertaScreen';
 import NovaSenhaScreen from './screens/NovaSenhaScreen';
 import MeuCadastroScreen from './screens/MeuCadastroScreen';
 import DevocionaisScreen from './screens/DevocionaisScreen';
+import TraducaoAoVivoScreen from './screens/TraducaoAoVivoScreen';
 import { supabase } from './lib/supabase';
 import { carregarIdiomaSalvo } from './lib/i18n';
 import { ThemeProvider, useTheme } from './lib/theme';
@@ -165,6 +166,11 @@ export default function App() {
               <Stack.Screen
                 name="Devocionais"
                 component={DevocionaisScreen}
+                options={{ presentation: 'modal' }}
+              />
+              <Stack.Screen
+                name="TraducaoAoVivo"
+                component={TraducaoAoVivoScreen}
                 options={{ presentation: 'modal' }}
               />
               <Stack.Screen
