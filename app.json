@@ -68,7 +68,13 @@
           "enableGooglePay": true
         }
       ],
-      "expo-audio",
+      [
+        "expo-audio",
+        {
+          "microphonePermission": false,
+          "recordAudioAndroid": false
+        }
+      ],
       "expo-asset"
     ],
     "extra": {

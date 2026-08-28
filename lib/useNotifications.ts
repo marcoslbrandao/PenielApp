@@ -1,22 +1,28 @@
 import { useEffect, useRef } from 'react';
 import * as Notifications from 'expo-notifications';
+import type { EventSubscription } from 'expo-modules-core';
 import * as Device from 'expo-device';
 import Constants from 'expo-constants';
 import { Platform } from 'react-native';
 import { supabase } from './supabase';
 
-// Configura como as notificações aparecem quando o app está aberto
+// Configura como as notificações aparecem quando o app está aberto.
+// No SDK 54 o `shouldShowAlert` foi depreciado e substituído por dois campos
+// obrigatórios: `shouldShowBanner` (o balão que desce no topo) e
+// `shouldShowList` (a entrada na central de notificações). Sem eles a
+// notificação chegava mas não aparecia com o app em primeiro plano.
 Notifications.setNotificationHandler({
   handleNotification: async () => ({
-    shouldShowAlert: true,
+    shouldShowBanner: true,
+    shouldShowList: true,
     shouldPlaySound: true,
     shouldSetBadge: false,
   }),
 });
 
 export function useNotifications(userId: string | undefined) {
-  const notificationListener = useRef<any>();
-  const responseListener = useRef<any>();
+  const notificationListener = useRef<EventSubscription | null>(null);
+  const responseListener = useRef<EventSubscription | null>(null);
 
   useEffect(() => {
     if (!userId) return;
@@ -34,8 +40,14 @@ export function useNotifications(userId: string | undefined) {
     });
 
     return () => {
-      Notifications.removeNotificationSubscription(notificationListener.current);
-      Notifications.removeNotificationSubscription(responseListener.current);
+      // `Notifications.removeNotificationSubscription()` foi REMOVIDA do
+      // expo-notifications no SDK 54. Chamá-la lançava TypeError toda vez que
+      // o efeito era limpo (logout, troca de conta, unmount). A API atual é
+      // chamar `.remove()` na própria subscription devolvida pelo listener.
+      notificationListener.current?.remove();
+      responseListener.current?.remove();
+      notificationListener.current = null;
+      responseListener.current = null;
     };
   }, [userId]);
 }
