@@ -9,3 +9,7 @@ dist/
 # — credencial sensível, nunca deve ir pro repositório.
 google-play-service-account.json
 *service-account*.json
+
+# Arquivos temporarios criados pela camada de montagem quando um arquivo
+# aberto e substituido. Nao fazem parte do projeto.
+.fuse_hidden*
