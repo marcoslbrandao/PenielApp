@@ -657,7 +657,11 @@
     "apagarComentarioMsg": "Remover este comentário?",
     "logAdicionou": "{{autor}} adicionou à escala",
     "logRemoveu": "{{autor}} tirou da escala",
-    "alguem": "Alguém"
+    "alguem": "Alguém",
+    "apagarMusica": "Apagar música",
+    "apagarMusicaMsg": "Apagar esta música do repertório? Não dá para desfazer.",
+    "apagarMusicaEmUso": "Esta música está em {{n}} culto(s) ou ensaio(s). Apagar vai removê-la desses setlists também. Não dá para desfazer.",
+    "apagarMusicaTalvezEmUso": "Não consegui verificar se esta música está em algum culto ou ensaio. Se estiver, apagar vai removê-la desses setlists também. Não dá para desfazer."
   },
   "jovens": {
     "eventos": "eventos",

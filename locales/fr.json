@@ -657,7 +657,11 @@
     "apagarComentarioMsg": "Retirer ce commentaire ?",
     "logAdicionou": "{{autor}} a ajouté au planning",
     "logRemoveu": "{{autor}} a retiré du planning",
-    "alguem": "Quelqu’un"
+    "alguem": "Quelqu’un",
+    "apagarMusica": "Supprimer le morceau",
+    "apagarMusicaMsg": "Supprimer ce morceau du répertoire ? C’est irréversible.",
+    "apagarMusicaEmUso": "Ce morceau est dans {{n}} culte(s) ou répétition(s). Le supprimer le retirera aussi de ces setlists. C’est irréversible.",
+    "apagarMusicaTalvezEmUso": "Je n’ai pas pu vérifier si ce morceau est dans un culte ou une répétition. Si c’est le cas, le supprimer le retirera aussi de ces setlists. C’est irréversible."
   },
   "jovens": {
     "eventos": "événements",

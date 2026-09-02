@@ -657,7 +657,11 @@
     "apagarComentarioMsg": "¿Quitar este comentario?",
     "logAdicionou": "{{autor}} agregó a la escala",
     "logRemoveu": "{{autor}} quitó de la escala",
-    "alguem": "Alguien"
+    "alguem": "Alguien",
+    "apagarMusica": "Borrar canción",
+    "apagarMusicaMsg": "¿Borrar esta canción del repertorio? No se puede deshacer.",
+    "apagarMusicaEmUso": "Esta canción está en {{n}} culto(s) o ensayo(s). Borrarla la quitará de esos setlists también. No se puede deshacer.",
+    "apagarMusicaTalvezEmUso": "No pude verificar si esta canción está en algún culto o ensayo. Si lo está, borrarla la quitará de esos setlists también. No se puede deshacer."
   },
   "jovens": {
     "eventos": "eventos",

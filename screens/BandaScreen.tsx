@@ -515,6 +515,7 @@ function MusicaModal({ visible, song, onClose, onSaved }: {
   const [midia, setMidia] = useState<{ duracao: number | null; capa: string | null; deezerId: string | null }>(
     { duracao: null, capa: null, deezerId: null },
   );
+  const [apagando, setApagando] = useState(false);
   const [busca, setBusca] = useState('');
   const [hits, setHits] = useState<DeezerHit[]>([]);
   const [buscando, setBuscando] = useState(false);
@@ -602,6 +603,46 @@ function MusicaModal({ visible, song, onClose, onSaved }: {
     if (error) { Alert.alert(t('common.erro'), error.message); return; }
     setErrors({});
     onSaved(); onClose();
+  };
+
+  // Apagar a música. Antes de perguntar, conta em quantos cultos e ensaios ela
+  // está: a chave estrangeira de `culto_songs`/`ensaio_songs` é ON DELETE
+  // CASCADE, então apagar a música a remove desses setlists junto — e isso
+  // precisa estar na cara de quem confirma, não escondido.
+  const apagarMusica = async () => {
+    if (!song || apagando) return;
+    setApagando(true);
+    const [cultos, ensaios] = await Promise.all([
+      supabase.from('culto_songs').select('id', { count: 'exact', head: true }).eq('song_id', song.id),
+      supabase.from('ensaio_songs').select('id', { count: 'exact', head: true }).eq('song_id', song.id),
+    ]);
+    setApagando(false);
+
+    // Se a contagem falhou, não dá pra afirmar que a música não está em setlist
+    // nenhum. Nesse caso o aviso tem que ser o cauteloso — o contrário seria
+    // dar uma garantia que o app não tem como dar.
+    const falhou = !!cultos.error || !!ensaios.error;
+    const usos = (cultos.count ?? 0) + (ensaios.count ?? 0);
+
+    const confirmar = () => {
+      Alert.alert(
+        song.title,
+        falhou ? t('banda.apagarMusicaTalvezEmUso')
+               : usos > 0 ? t('banda.apagarMusicaEmUso', { n: usos })
+                          : t('banda.apagarMusicaMsg'),
+        [
+          { text: t('common.cancelar'), style: 'cancel' },
+          { text: t('common.remover'), style: 'destructive', onPress: async () => {
+            setApagando(true);
+            const { error } = await supabase.from('songs').delete().eq('id', song.id);
+            setApagando(false);
+            if (error) { Alert.alert(t('common.erro'), error.message); return; }
+            onSaved(); onClose();
+          }},
+        ],
+      );
+    };
+    confirmar();
   };
 
   // Prévia honesta: mostra exatamente o que cada botão vai abrir com o que
@@ -776,6 +817,21 @@ function MusicaModal({ visible, song, onClose, onSaved }: {
                 <Ionicons name={inRepertoire ? 'checkbox' : 'square-outline'} size={20} color={inRepertoire ? C.primary : C.textDim} />
                 <Text style={nm.toggleText}>{t('banda.manterNoRepertorio')}</Text>
               </TouchableOpacity>
+
+              {/* Apagar só faz sentido numa música que já existe */}
+              {isEdit && (
+                <TouchableOpacity
+                  style={nm.apagarBtn}
+                  onPress={apagarMusica}
+                  disabled={apagando}
+                  activeOpacity={0.7}
+                >
+                  {apagando
+                    ? <ActivityIndicator color={C.danger} size="small" />
+                    : <Ionicons name="trash-outline" size={16} color={C.danger} />}
+                  <Text style={nm.apagarBtnText}>{t('banda.apagarMusica')}</Text>
+                </TouchableOpacity>
+              )}
             </ScrollView>
             <TouchableOpacity style={[nm.saveBtn, saving && { opacity: 0.7 }]} onPress={handleSave} disabled={saving} activeOpacity={0.85}>
               {saving ? <ActivityIndicator color="#fff" /> : <><Ionicons name={isEdit ? 'checkmark-outline' : 'musical-note-outline'} size={18} color="#fff" /><Text style={nm.saveBtnText}>{isEdit ? t('banda.salvarAlteracoes') : t('banda.adicionarMusica')}</Text></>}
@@ -826,6 +882,8 @@ const nm = StyleSheet.create({
   groupHint: { fontSize: 11, color: C.textDim, lineHeight: 15, marginBottom: 12 },
   toggleRow: { flexDirection: 'row', alignItems: 'center', gap: 10, paddingVertical: 10, marginBottom: 4 },
   toggleText: { fontSize: 14, color: C.text },
+  apagarBtn: { flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 8, paddingVertical: 12, marginTop: 4, borderRadius: 10, borderWidth: 1, borderColor: C.danger + '55' },
+  apagarBtnText: { fontSize: 13, fontWeight: '700', color: C.danger },
 });
 
 // ─── Novo Culto Modal ─────────────────────────────────────────────────────────
@@ -3147,7 +3205,15 @@ function BandaMain() {
               )}
             />
           )}
-          <MusicaModal visible={musicaModal} song={editSong} onClose={fecharMusicaModal} onSaved={fetchSongs} />
+          {/* Recarrega culto e ensaio também: apagar uma música em uso a remove
+              dos setlists por cascade, e as listas ficariam mostrando o que já
+              não existe mais até o próximo refresh manual. */}
+          <MusicaModal
+            visible={musicaModal}
+            song={editSong}
+            onClose={fecharMusicaModal}
+            onSaved={() => { fetchSongs(); fetchCultos(); fetchEnsaios(); }}
+          />
         </View>
       )}
 

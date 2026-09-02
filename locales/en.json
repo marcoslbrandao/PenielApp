@@ -657,7 +657,11 @@
     "apagarComentarioMsg": "Remove this comment?",
     "logAdicionou": "{{autor}} added to the schedule",
     "logRemoveu": "{{autor}} removed from the schedule",
-    "alguem": "Someone"
+    "alguem": "Someone",
+    "apagarMusica": "Delete song",
+    "apagarMusicaMsg": "Delete this song from the repertoire? This cannot be undone.",
+    "apagarMusicaEmUso": "This song is in {{n}} service(s) or rehearsal(s). Deleting it removes it from those setlists too. This cannot be undone.",
+    "apagarMusicaTalvezEmUso": "I could not check whether this song is in any service or rehearsal. If it is, deleting it removes it from those setlists too. This cannot be undone."
   },
   "jovens": {
     "eventos": "events",
