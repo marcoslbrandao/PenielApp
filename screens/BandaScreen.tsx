@@ -23,8 +23,16 @@ type Song = {
   id: string; title: string; artist: string;
   song_key: string; bpm: number;
   spotify_id: string; youtube_id: string;
+  // Links reais da cifra e da letra, colados pela banda. Opcionais: quando
+  // vazios, o app abre a BUSCA do site em vez de um endereço adivinhado.
+  cifra_url?: string | null; letra_url?: string | null;
   in_repertoire: boolean;
 };
+
+// Alvo de um botão de link: além da URL, guarda se é o link direto salvo pela
+// banda (direct: true) ou apenas a busca do site (direct: false) — a interface
+// usa isso pra deixar o botão aceso ou apagado.
+type LinkTarget = { url: string; direct: boolean };
 
 type CultoSongEntry = {
   song_id: string; song_key: string; bpm: string; order_index: number;
@@ -46,24 +54,81 @@ type Ensaio = {
 type ChatMsg = { id: string; author: string; text: string; time: string; mine: boolean };
 type Tab = 'hoje' | 'repertorio' | 'cultos' | 'ensaios' | 'chat';
 
-// ─── Link helpers ─────────────────────────────────────────────────────────────
-function slug(text: string): string {
-  return text.toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '')
-    .replace(/[^a-z0-9\s-]/g, '').trim().replace(/\s+/g, '-');
+// ─── Link helpers ───────────────────────────────────────────────────
+// Regra: o link salvo pela banda SEMPRE ganha. Só quando não existe link salvo
+// é que o app cai no plano B — abrir a BUSCA do site já preenchida com
+// "título + artista".
+//
+// Antes, o app tentava adivinhar a URL do Cifra Club e do Letras a partir do
+// nome (cifraclub.com.br/hillsong/oceanos/) e isso dava 404 quase sempre: os
+// dois sites usam o nome oficial completo no endereço — a URL real de "Oceanos"
+// é /hillsong-united/oceanos-onde-meus-pes-podem-falhar/. Nenhum dos dois tem
+// API pública, então adivinhar era o único caminho... e o caminho errado.
+
+// Aceita o que a pessoa colou com ou sem https:// e devolve sempre uma URL
+// absoluta (ou '' se o campo estiver vazio).
+function normalizeUrl(input?: string | null): string {
+  const v = (input ?? '').trim();
+  if (!v) return '';
+  if (/^https?:\/\//i.test(v)) return v;
+  return `https://${v.replace(/^\/+/, '')}`;
 }
-function cifraUrl(s: Song) { return `https://www.cifraclub.com.br/${slug(s.artist)}/${slug(s.title)}/`; }
-function letraUrl(s: Song) { return `https://www.letras.mus.br/${slug(s.artist)}/${slug(s.title)}/`; }
-function spotifyUrl(id: string) { return `https://open.spotify.com/track/${id}`; }
-function youtubeUrl(id: string) { return `https://www.youtube.com/watch?v=${id}`; }
+
+// "Título Artista" pronto pra entrar numa querystring de busca.
+function searchTerms(s: Pick<Song, 'title' | 'artist'>): string {
+  return encodeURIComponent(`${(s.title || '').trim()} ${(s.artist || '').trim()}`.trim());
+}
+
+function cifraSearchUrl(s: Pick<Song, 'title' | 'artist'>) { return `https://www.cifraclub.com.br/?q=${searchTerms(s)}`; }
+function letraSearchUrl(s: Pick<Song, 'title' | 'artist'>) { return `https://www.letras.mus.br/?q=${searchTerms(s)}`; }
+function youtubeSearchUrl(s: Pick<Song, 'title' | 'artist'>) { return `https://www.youtube.com/results?search_query=${searchTerms(s)}`; }
+function spotifySearchUrl(s: Pick<Song, 'title' | 'artist'>) { return `https://open.spotify.com/search/${searchTerms(s)}`; }
+
+// Um resolvedor por serviço. Todos devolvem uma URL que ABRE — nunca uma
+// montada na mão que possa dar 404.
+function cifraTarget(s: Song): LinkTarget {
+  const saved = normalizeUrl(s.cifra_url);
+  return saved ? { url: saved, direct: true } : { url: cifraSearchUrl(s), direct: false };
+}
+function letraTarget(s: Song): LinkTarget {
+  const saved = normalizeUrl(s.letra_url);
+  return saved ? { url: saved, direct: true } : { url: letraSearchUrl(s), direct: false };
+}
+function youtubeTarget(s: Song): LinkTarget {
+  return s.youtube_id
+    ? { url: `https://www.youtube.com/watch?v=${s.youtube_id}`, direct: true }
+    : { url: youtubeSearchUrl(s), direct: false };
+}
+function spotifyTarget(s: Song): LinkTarget {
+  return s.spotify_id
+    ? { url: `https://open.spotify.com/track/${s.spotify_id}`, direct: true }
+    : { url: spotifySearchUrl(s), direct: false };
+}
 
 // Aceita colar o link completo do YouTube (várias variações) ou só o ID —
-// extrai o ID de vídeo pra guardar sempre o mesmo formato no banco.
+// extrai o ID de vídeo pra guardar sempre o mesmo formato no banco. Se o texto
+// não for reconhecível, devolve '' (melhor não salvar nada do que salvar lixo
+// que vira um link quebrado depois).
 function extractYoutubeId(input: string): string {
-  const v = input.trim();
+  const v = (input || '').trim();
   if (!v) return '';
-  const match = v.match(/(?:youtube\.com\/(?:watch\?v=|shorts\/|embed\/|live\/)|youtu\.be\/)([a-zA-Z0-9_-]{6,})/);
+  const match = v.match(/(?:youtube\.com\/(?:watch\?v=|shorts\/|embed\/|live\/)|youtu\.be\/)([a-zA-Z0-9_-]{11})/);
   if (match) return match[1];
-  return v.replace(/[?&].*$/, ''); // já parece ser só o ID; limpa querystring residual
+  const bare = v.replace(/[?&#].*$/, '');
+  return /^[a-zA-Z0-9_-]{11}$/.test(bare) ? bare : '';
+}
+
+// Mesma ideia pro Spotify. O botão "Compartilhar" do Spotify copia algo como
+// https://open.spotify.com/track/3vv9phNO5HfDkHvVtJYTNa?si=abc123 — antes esse
+// texto era salvo inteiro no campo de ID e o link virava
+// open.spotify.com/track/https://open.spotify.com/... (quebrado).
+function extractSpotifyId(input: string): string {
+  const v = (input || '').trim();
+  if (!v) return '';
+  const match = v.match(/(?:open\.spotify\.com\/(?:intl-[a-z]{2}\/)?track\/|spotify:track:)([a-zA-Z0-9]{22})/);
+  if (match) return match[1];
+  const bare = v.replace(/[?&#].*$/, '');
+  return /^[a-zA-Z0-9]{22}$/.test(bare) ? bare : '';
 }
 
 // ─── Date helpers ─────────────────────────────────────────────────────────────
@@ -179,15 +244,40 @@ const gate = StyleSheet.create({
   hint: { fontSize: 12, color: C.textDim, marginTop: 24, textAlign: 'center' },
 });
 
-// ─── Nova Música Modal ────────────────────────────────────────────────────────
-function NovaMusicaModal({ visible, onClose, onSaved }: {
-  visible: boolean; onClose: () => void; onSaved: () => void;
+// ─── Modal de Música (criar e editar) ──────────────────────────
+// O mesmo modal serve pra cadastrar uma música nova e pra corrigir uma já
+// existente — antes só dava pra inserir, então uma música salva com o link
+// errado ficava errada pra sempre.
+function MusicaModal({ visible, song, onClose, onSaved }: {
+  visible: boolean; song: Song | null; onClose: () => void; onSaved: () => void;
 }) {
   const { t } = useTranslation();
-  const empty = { title: '', artist: '', song_key: '', bpm: '', youtube_id: '', spotify_id: '' };
+  const empty = { title: '', artist: '', song_key: '', bpm: '', youtube_id: '', spotify_id: '', cifra_url: '', letra_url: '' };
   const [form, setForm] = useState(empty);
+  const [inRepertoire, setInRepertoire] = useState(true);
   const [errors, setErrors] = useState<Partial<typeof empty>>({});
   const [saving, setSaving] = useState(false);
+  const isEdit = !!song;
+
+  // Recarrega o formulário toda vez que o modal abre: com os dados da música
+  // em edição, ou em branco quando é uma música nova.
+  useEffect(() => {
+    if (!visible) return;
+    if (song) {
+      setForm({
+        title: song.title ?? '', artist: song.artist ?? '',
+        song_key: song.song_key ?? '', bpm: song.bpm != null ? String(song.bpm) : '',
+        youtube_id: song.youtube_id ?? '', spotify_id: song.spotify_id ?? '',
+        cifra_url: song.cifra_url ?? '', letra_url: song.letra_url ?? '',
+      });
+      setInRepertoire(!!song.in_repertoire);
+    } else {
+      setForm({ title: '', artist: '', song_key: '', bpm: '', youtube_id: '', spotify_id: '', cifra_url: '', letra_url: '' });
+      setInRepertoire(true);
+    }
+    setErrors({});
+  }, [visible, song]);
+
   const set = (field: keyof typeof empty) => (val: string) => setForm(prev => ({ ...prev, [field]: val }));
 
   const handleSave = async () => {
@@ -198,20 +288,41 @@ function NovaMusicaModal({ visible, onClose, onSaved }: {
     if (!form.bpm.trim() || isNaN(Number(form.bpm))) e.bpm = t('banda.numeroValido');
     if (Object.keys(e).length) { setErrors(e); return; }
     setSaving(true);
-    const { error } = await supabase.from('songs').insert({
+    const payload = {
       title: form.title.trim(), artist: form.artist.trim(),
       song_key: form.song_key.trim().toUpperCase(), bpm: Number(form.bpm),
-      spotify_id: form.spotify_id.trim(), youtube_id: extractYoutubeId(form.youtube_id),
-      in_repertoire: true,
-    });
+      spotify_id: extractSpotifyId(form.spotify_id),
+      youtube_id: extractYoutubeId(form.youtube_id),
+      cifra_url: normalizeUrl(form.cifra_url) || null,
+      letra_url: normalizeUrl(form.letra_url) || null,
+      in_repertoire: inRepertoire,
+    };
+    const { error } = song
+      ? await supabase.from('songs').update(payload).eq('id', song.id)
+      : await supabase.from('songs').insert(payload);
     setSaving(false);
     if (error) { Alert.alert(t('common.erro'), error.message); return; }
-    setForm(empty); setErrors({});
+    setErrors({});
     onSaved(); onClose();
   };
 
-  const previewArtist = form.artist.trim();
-  const previewTitle = form.title.trim();
+  // Prévia honesta: mostra exatamente o que cada botão vai abrir com o que
+  // está preenchido agora — link direto quando existe, busca do site quando não.
+  const previewSong: Song = {
+    id: '', title: form.title.trim(), artist: form.artist.trim(),
+    song_key: '', bpm: 0,
+    spotify_id: extractSpotifyId(form.spotify_id),
+    youtube_id: extractYoutubeId(form.youtube_id),
+    cifra_url: form.cifra_url, letra_url: form.letra_url, in_repertoire: true,
+  };
+  const previewRows = (form.title.trim() && form.artist.trim())
+    ? [
+        { label: 'Cifra Club', target: cifraTarget(previewSong) },
+        { label: 'Letras', target: letraTarget(previewSong) },
+        { label: 'YouTube', target: youtubeTarget(previewSong) },
+        { label: 'Spotify', target: spotifyTarget(previewSong) },
+      ]
+    : [];
 
   return (
     <Modal visible={visible} animationType="slide" transparent>
@@ -219,10 +330,10 @@ function NovaMusicaModal({ visible, onClose, onSaved }: {
         <KeyboardAvoidingView behavior={Platform.OS === 'ios' ? 'padding' : undefined} style={{ width: '100%' }}>
           <View style={nm.sheet}>
             <View style={nm.header}>
-              <Text style={nm.title}>{t('banda.novaMusica')}</Text>
+              <Text style={nm.title}>{isEdit ? t('banda.editarMusica') : t('banda.novaMusica')}</Text>
               <TouchableOpacity onPress={onClose}><Ionicons name="close" size={22} color={C.textMuted} /></TouchableOpacity>
             </View>
-            <ScrollView showsVerticalScrollIndicator={false}>
+            <ScrollView showsVerticalScrollIndicator={false} keyboardShouldPersistTaps="handled">
               {/* Título */}
               <View style={nm.fieldWrap}>
                 <Text style={nm.fieldLabel}>{t('banda.tituloObrigatorio')}</Text>
@@ -252,6 +363,20 @@ function NovaMusicaModal({ visible, onClose, onSaved }: {
                   </View>
                 </View>
               </View>
+
+              {/* ── Links ── */}
+              <Text style={nm.groupLabel}>{t('banda.linksDaMusica')}</Text>
+              <Text style={nm.groupHint}>{t('banda.linksDicaBusca')}</Text>
+              {/* Cifra */}
+              <View style={nm.fieldWrap}>
+                <Text style={nm.fieldLabel}>{t('banda.linkCifraOpcional')}</Text>
+                <TextInput style={nm.fieldInput} placeholder={t('banda.coleLinkCifra')} placeholderTextColor={C.textDim} value={form.cifra_url} onChangeText={set('cifra_url')} autoCorrect={false} autoCapitalize="none" keyboardType="url" />
+              </View>
+              {/* Letra */}
+              <View style={nm.fieldWrap}>
+                <Text style={nm.fieldLabel}>{t('banda.linkLetraOpcional')}</Text>
+                <TextInput style={nm.fieldInput} placeholder={t('banda.coleLinkLetra')} placeholderTextColor={C.textDim} value={form.letra_url} onChangeText={set('letra_url')} autoCorrect={false} autoCapitalize="none" keyboardType="url" />
+              </View>
               {/* YouTube */}
               <View style={nm.fieldWrap}>
                 <Text style={nm.fieldLabel}>{t('banda.idYoutubeOpcional')}</Text>
@@ -259,20 +384,35 @@ function NovaMusicaModal({ visible, onClose, onSaved }: {
               </View>
               {/* Spotify */}
               <View style={nm.fieldWrap}>
-                <Text style={nm.fieldLabel}>{t('banda.idSpotifyOpcional')}</Text>
-                <TextInput style={nm.fieldInput} placeholder="Ex: 3vv9phNO5HfDkHvVtJYTNa" placeholderTextColor={C.textDim} value={form.spotify_id} onChangeText={set('spotify_id')} autoCorrect={false} />
+                <Text style={nm.fieldLabel}>{t('banda.linkSpotifyOpcional')}</Text>
+                <TextInput style={nm.fieldInput} placeholder={t('banda.coleLinkSpotify')} placeholderTextColor={C.textDim} value={form.spotify_id} onChangeText={set('spotify_id')} autoCorrect={false} autoCapitalize="none" keyboardType="url" />
               </View>
-              {/* Preview links */}
-              {previewTitle && previewArtist && (
+
+              {/* Prévia do que cada botão vai abrir */}
+              {previewRows.length > 0 && (
                 <View style={nm.previewBox}>
-                  <Text style={nm.previewTitle}>{t('banda.linksAutomaticos')}</Text>
-                  <Text style={nm.previewLink}>📄 cifraclub.com.br/{slug(previewArtist)}/{slug(previewTitle)}/</Text>
-                  <Text style={nm.previewLink}>🎵 letras.mus.br/{slug(previewArtist)}/{slug(previewTitle)}/</Text>
+                  <Text style={nm.previewTitle}>{t('banda.oQueOsBotoesAbrem')}</Text>
+                  {previewRows.map(r => (
+                    <View key={r.label} style={nm.previewRow}>
+                      <Text style={nm.previewLink}>{r.label}</Text>
+                      <View style={[nm.previewTag, r.target.direct && nm.previewTagOk]}>
+                        <Text style={[nm.previewTagText, r.target.direct && nm.previewTagTextOk]}>
+                          {r.target.direct ? t('banda.linkSalvo') : t('banda.viaBusca')}
+                        </Text>
+                      </View>
+                    </View>
+                  ))}
                 </View>
               )}
+
+              {/* No repertório? */}
+              <TouchableOpacity style={nm.toggleRow} onPress={() => setInRepertoire(v => !v)} activeOpacity={0.7}>
+                <Ionicons name={inRepertoire ? 'checkbox' : 'square-outline'} size={20} color={inRepertoire ? C.primary : C.textDim} />
+                <Text style={nm.toggleText}>{t('banda.manterNoRepertorio')}</Text>
+              </TouchableOpacity>
             </ScrollView>
             <TouchableOpacity style={[nm.saveBtn, saving && { opacity: 0.7 }]} onPress={handleSave} disabled={saving} activeOpacity={0.85}>
-              {saving ? <ActivityIndicator color="#fff" /> : <><Ionicons name="musical-note-outline" size={18} color="#fff" /><Text style={nm.saveBtnText}>{t('banda.adicionarMusica')}</Text></>}
+              {saving ? <ActivityIndicator color="#fff" /> : <><Ionicons name={isEdit ? 'checkmark-outline' : 'musical-note-outline'} size={18} color="#fff" /><Text style={nm.saveBtnText}>{isEdit ? t('banda.salvarAlteracoes') : t('banda.adicionarMusica')}</Text></>}
             </TouchableOpacity>
           </View>
         </KeyboardAvoidingView>
@@ -294,7 +434,16 @@ const nm = StyleSheet.create({
   saveBtnText: { fontSize: 16, fontWeight: '700', color: '#fff' },
   previewBox: { backgroundColor: C.surfaceHigh, borderRadius: 10, padding: 12, marginBottom: 12, borderWidth: 1, borderColor: C.border },
   previewTitle: { fontSize: 11, color: C.textMuted, fontWeight: '700', textTransform: 'uppercase', letterSpacing: 0.5, marginBottom: 6 },
-  previewLink: { fontSize: 11, color: C.textDim, marginBottom: 3 },
+  previewLink: { fontSize: 12, color: C.textMuted, fontWeight: '600' },
+  previewRow: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', paddingVertical: 4 },
+  previewTag: { paddingHorizontal: 8, paddingVertical: 3, borderRadius: 6, backgroundColor: C.surface, borderWidth: 1, borderColor: C.border },
+  previewTagOk: { backgroundColor: C.primaryDim, borderColor: C.primary },
+  previewTagText: { fontSize: 10, fontWeight: '700', color: C.textDim, textTransform: 'uppercase', letterSpacing: 0.4 },
+  previewTagTextOk: { color: '#fff' },
+  groupLabel: { fontSize: 12, color: C.text, fontWeight: '800', letterSpacing: 0.6, textTransform: 'uppercase', marginTop: 8, marginBottom: 4 },
+  groupHint: { fontSize: 11, color: C.textDim, lineHeight: 15, marginBottom: 12 },
+  toggleRow: { flexDirection: 'row', alignItems: 'center', gap: 10, paddingVertical: 10, marginBottom: 4 },
+  toggleText: { fontSize: 14, color: C.text },
 });
 
 // ─── Novo Culto Modal ─────────────────────────────────────────────────────────
@@ -439,24 +588,29 @@ const md = StyleSheet.create({
   saveBtnText: { fontSize: 16, fontWeight: '700', color: '#fff' },
 });
 
-// ─── Botões de link (Cifra Club automático + YouTube + Spotify) ──────────────
-// Usado em Hoje, Cultos e Ensaios — sempre que uma música aparece num
-// setlist, dá pra abrir a cifra (link gerado automaticamente a partir do
-// título/artista), o vídeo do YouTube (se cadastrado) e o Spotify (se tiver).
-function LinkMiniButtons({ song, openLink }: { song: Song; openLink: (url: string, label: string) => void }) {
+// ─── Botões de link (cifra, letra, YouTube, Spotify) ────────────────────────
+// Quatro botões em toda música, em qualquer lista. Aceso = a banda salvou o
+// link direto daquela música. Apagado = ainda não tem link salvo, e o botão
+// abre a BUSCA do site já preenchida com título + artista — nunca um 404.
+function LinkMiniButtons({ song, openLink }: { song: Song; openLink: (target: LinkTarget, label: string) => void }) {
+  const cifra = cifraTarget(song);
+  const letra = letraTarget(song);
+  const yt = youtubeTarget(song);
+  const sp = spotifyTarget(song);
   return (
-    <View style={{ flexDirection: 'row', gap: 6 }}>
-      <TouchableOpacity style={s.linkBtn} onPress={() => openLink(cifraUrl(song), 'Cifra Club')}>
+    <View style={{ flexDirection: 'row', gap: 5 }}>
+      <TouchableOpacity style={[s.linkBtn, s.linkBtnMini, !cifra.direct && s.linkBtnDisabled]} onPress={() => openLink(cifra, 'Cifra Club')}>
         <Text style={s.linkBtnLabel}>CI</Text>
       </TouchableOpacity>
-      <TouchableOpacity style={[s.linkBtn, song.youtube_id ? s.linkBtnYt : s.linkBtnDisabled]} onPress={() => openLink(youtubeUrl(song.youtube_id), 'YouTube')}>
-        <Ionicons name="logo-youtube" size={15} color={song.youtube_id ? '#FF0000' : C.textDim} />
+      <TouchableOpacity style={[s.linkBtn, s.linkBtnMini, !letra.direct && s.linkBtnDisabled]} onPress={() => openLink(letra, 'Letras')}>
+        <Ionicons name="document-text-outline" size={14} color={C.textMuted} />
       </TouchableOpacity>
-      {!!song.spotify_id && (
-        <TouchableOpacity style={[s.linkBtn, s.spotifyBtn]} onPress={() => openLink(spotifyUrl(song.spotify_id), 'Spotify')}>
-          <Ionicons name="musical-note" size={15} color={C.accent} />
-        </TouchableOpacity>
-      )}
+      <TouchableOpacity style={[s.linkBtn, s.linkBtnMini, yt.direct ? s.linkBtnYt : s.linkBtnDisabled]} onPress={() => openLink(yt, 'YouTube')}>
+        <Ionicons name="logo-youtube" size={14} color={yt.direct ? '#FF0000' : C.textDim} />
+      </TouchableOpacity>
+      <TouchableOpacity style={[s.linkBtn, s.linkBtnMini, sp.direct ? s.spotifyBtn : s.spotifyBtnDisabled]} onPress={() => openLink(sp, 'Spotify')}>
+        <Ionicons name="musical-note" size={14} color={sp.direct ? C.accent : C.textDim} />
+      </TouchableOpacity>
     </View>
   );
 }
@@ -742,6 +896,8 @@ function BandaMain() {
   const [cultosModal, setCultosModal] = useState(false);
   const [ensaioModal, setEnsaioModal] = useState(false);
   const [musicaModal, setMusicaModal] = useState(false);
+  // Música sendo editada no modal — null significa "cadastrando uma nova".
+  const [editSong, setEditSong] = useState<Song | null>(null);
   const [escalaModal, setEscalaModal] = useState<{ tipo: 'culto' | 'ensaio'; eventoId: string } | null>(null);
   const scrollRef = useRef<ScrollView>(null);
   const today = todayISO();
@@ -749,7 +905,16 @@ function BandaMain() {
   // ── Fetch songs ──────────────────────────────────────────────────────────────
   const fetchSongs = useCallback(async () => {
     const { data } = await supabase.from('songs').select('*').order('title');
-    if (data) setSongs(data as Song[]);
+    // Sanitiza o que já está no banco antes de usar: músicas cadastradas antes
+    // desta correção podem ter a URL inteira salva no campo de ID (o extractor
+    // antigo aceitava qualquer texto), o que montava um link quebrado. Se o
+    // valor guardado não for um ID válido, ele vira '' e o botão passa a abrir
+    // a busca — que sempre funciona.
+    if (data) setSongs((data as Song[]).map(sg => ({
+      ...sg,
+      youtube_id: extractYoutubeId(sg.youtube_id ?? ''),
+      spotify_id: extractSpotifyId(sg.spotify_id ?? ''),
+    })));
     setLoadingSongs(false);
   }, []);
 
@@ -853,10 +1018,18 @@ function BandaMain() {
     ]);
   };
 
-  const openLink = (url: string, label: string) => {
-    if (!url) { Alert.alert(t('banda.semLink'), t('banda.semLinkMsg', { label })); return; }
-    Linking.openURL(url).catch(() => Alert.alert(t('common.erro'), t('banda.erroAbrirLink')));
+  // Abre o destino já resolvido (link salvo ou busca do site). O guard de URL
+  // vazia fica como rede de segurança: antes ele nunca disparava, porque
+  // spotifyUrl('') devolvia "https://open.spotify.com/track/" — não vazio — e o
+  // app abria uma página quebrada em vez de avisar que faltava o link.
+  const openLink = (target: LinkTarget, label: string) => {
+    if (!target?.url) { Alert.alert(t('banda.semLink'), t('banda.semLinkMsg', { label })); return; }
+    Linking.openURL(target.url).catch(() => Alert.alert(t('common.erro'), t('banda.erroAbrirLink')));
   };
+
+  const abrirNovaMusica = () => { setEditSong(null); setMusicaModal(true); };
+  const abrirEditarMusica = (song: Song) => { setEditSong(song); setMusicaModal(true); };
+  const fecharMusicaModal = () => { setMusicaModal(false); setEditSong(null); };
 
   const sendMessage = () => {
     if (!chatMsg.trim()) return;
@@ -980,7 +1153,7 @@ function BandaMain() {
                 </TouchableOpacity>
               ))}
             </View>
-            <TouchableOpacity style={s.addSongBtn} onPress={() => setMusicaModal(true)}>
+            <TouchableOpacity style={s.addSongBtn} onPress={abrirNovaMusica}>
               <Ionicons name="add" size={18} color="#fff" />
             </TouchableOpacity>
           </View>
@@ -998,33 +1171,25 @@ function BandaMain() {
                   <View style={[s.keyBadge, { backgroundColor: item.in_repertoire ? C.primaryDim : C.surfaceHigh }]}>
                     <Text style={[s.keyText, { color: item.in_repertoire ? C.primary : C.textMuted }]}>{item.song_key}</Text>
                   </View>
-                  <View style={{ flex: 1, marginLeft: 10 }}>
-                    <Text style={s.songTitle}>{item.title}</Text>
-                    <Text style={s.songArtist}>{item.artist}</Text>
+                  <TouchableOpacity style={{ flex: 1, marginLeft: 10 }} onPress={() => abrirEditarMusica(item)} activeOpacity={0.7}>
+                    <View style={s.songTitleRow}>
+                      <Text style={[s.songTitle, { flexShrink: 1 }]} numberOfLines={1}>{item.title}</Text>
+                      <Ionicons name="create-outline" size={13} color={C.textDim} />
+                    </View>
+                    <Text style={s.songArtist} numberOfLines={1}>{item.artist}</Text>
                     <View style={s.songMeta}>
                       <View style={s.songMetaChip}><Text style={s.songMetaText}>{t('banda.tomLabel')} {item.song_key}</Text></View>
                       <View style={s.songMetaChip}><Text style={s.songMetaText}>{item.bpm} BPM</Text></View>
                     </View>
-                  </View>
+                  </TouchableOpacity>
                   <View style={s.songLinks}>
-                    <TouchableOpacity style={s.linkBtn} onPress={() => openLink(cifraUrl(item), 'cifra')}>
-                      <Text style={s.linkBtnLabel}>CI</Text>
-                    </TouchableOpacity>
-                    <TouchableOpacity style={s.linkBtn} onPress={() => openLink(letraUrl(item), 'letra')}>
-                      <Ionicons name="document-text-outline" size={15} color={C.textMuted} />
-                    </TouchableOpacity>
-                    <TouchableOpacity style={[s.linkBtn, item.youtube_id ? s.linkBtnYt : s.linkBtnDisabled]} onPress={() => openLink(youtubeUrl(item.youtube_id), 'YouTube')}>
-                      <Ionicons name="logo-youtube" size={15} color={item.youtube_id ? '#FF0000' : C.textDim} />
-                    </TouchableOpacity>
-                    <TouchableOpacity style={[s.linkBtn, item.spotify_id ? s.spotifyBtn : s.spotifyBtnDisabled]} onPress={() => openLink(spotifyUrl(item.spotify_id), 'Spotify')}>
-                      <Ionicons name="musical-note" size={15} color={item.spotify_id ? C.accent : C.textDim} />
-                    </TouchableOpacity>
+                    <LinkMiniButtons song={item} openLink={openLink} />
                   </View>
                 </View>
               )}
             />
           )}
-          <NovaMusicaModal visible={musicaModal} onClose={() => setMusicaModal(false)} onSaved={fetchSongs} />
+          <MusicaModal visible={musicaModal} song={editSong} onClose={fecharMusicaModal} onSaved={fetchSongs} />
         </View>
       )}
 
@@ -1311,6 +1476,8 @@ const s = StyleSheet.create({
   songMetaText: { fontSize: 10, color: C.textMuted, fontWeight: '600' },
   songLinks: { flexDirection: 'row', gap: 6, marginLeft: 8 },
   linkBtn: { width: 30, height: 30, borderRadius: 8, backgroundColor: C.surfaceHigh, alignItems: 'center', justifyContent: 'center', borderWidth: 1, borderColor: C.border },
+  linkBtnMini: { width: 28, height: 28, borderRadius: 7 },
+  songTitleRow: { flexDirection: 'row', alignItems: 'center', gap: 6 },
   linkBtnLabel: { fontSize: 9, fontWeight: '800', color: C.textMuted },
   linkBtnYt: { backgroundColor: '#1a0000', borderColor: '#FF000040' },
   linkBtnDisabled: { opacity: 0.4 },
