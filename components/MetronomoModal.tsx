@@ -1,10 +1,12 @@
-import React, { useState, useRef, useEffect, useCallback } from 'react';
+import React, { useState, useRef, useEffect, useCallback, useMemo } from 'react';
 import {
   View, Text, StyleSheet, TouchableOpacity, Modal, Animated, Platform,
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { useTranslation } from 'react-i18next';
 import { createAudioPlayer, setAudioModeAsync, type AudioPlayer } from 'expo-audio';
+import { useTheme } from '../lib/theme';
+import { paletaBanda, type BandaColors } from '../lib/temaBanda';
 
 // ─── Metrônomo ───────────────────────────────────────────────────────────────
 // Abre já no BPM da música que o músico estava olhando, que é o ponto: hoje ele
@@ -17,12 +19,19 @@ import { createAudioPlayer, setAudioModeAsync, type AudioPlayer } from 'expo-aud
 // seguintes. É a mesma ideia de um relógio que corrige a hora em vez de contar
 // segundos.
 
-const C = {
-  bg: '#0D0D0F', surface: '#18181B', surfaceHigh: '#242429',
-  border: '#2A2A30', primary: '#7C4DFF', primaryDim: '#3D2578',
-  accent: '#1DB954', gold: '#F5C842',
-  text: '#F1F1F3', textMuted: '#8A8A96', textDim: '#4A4A55',
-};
+// O metrônomo usa a mesma paleta da aba Banda, que segue o tema do app.
+// Só existem dois temas, então os estilos de cada um são montados uma vez e
+// ficam guardados aqui — a paleta em si é barata e sai do `paletaBanda`.
+const estilos: { light?: ReturnType<typeof buildM>; dark?: ReturnType<typeof buildM> } = {};
+function useTemaMetronomo() {
+  const { isDark } = useTheme();
+  return useMemo(() => {
+    const chave = isDark ? 'dark' : 'light';
+    const C = paletaBanda(isDark);
+    if (!estilos[chave]) estilos[chave] = buildM(C);
+    return { C, m: estilos[chave]! };
+  }, [isDark]);
+}
 
 const BPM_MIN = 30;
 const BPM_MAX = 300;
@@ -34,6 +43,7 @@ export default function MetronomoModal({ visible, onClose, bpmInicial, titulo }:
   bpmInicial?: number | null;
   titulo?: string;
 }) {
+  const { C, m } = useTemaMetronomo();
   const { t } = useTranslation();
   const [bpm, setBpm] = useState(100);
   const [compasso, setCompasso] = useState<number>(4);
@@ -259,7 +269,7 @@ export default function MetronomoModal({ visible, onClose, bpmInicial, titulo }:
               onPress={() => (tocando ? parar() : comecar())}
               activeOpacity={0.85}
             >
-              <Ionicons name={tocando ? 'stop' : 'play'} size={26} color="#fff" />
+              <Ionicons name={tocando ? 'stop' : 'play'} size={26} color={tocando ? C.onStop : C.onPrimary} />
             </TouchableOpacity>
           </View>
           <Text style={m.dicaTap}>{t('banda.tapBpmDica')}</Text>
@@ -269,8 +279,8 @@ export default function MetronomoModal({ visible, onClose, bpmInicial, titulo }:
   );
 }
 
-const m = StyleSheet.create({
-  overlay: { flex: 1, justifyContent: 'flex-end', backgroundColor: 'rgba(0,0,0,0.75)' },
+const buildM = (C: BandaColors) => StyleSheet.create({
+  overlay: { flex: 1, justifyContent: 'flex-end', backgroundColor: C.overlay },
   sheet: { backgroundColor: C.surface, borderTopLeftRadius: 24, borderTopRightRadius: 24, padding: 20, paddingBottom: Platform.OS === 'ios' ? 40 : 28 },
   header: { flexDirection: 'row', alignItems: 'center', gap: 12, marginBottom: 22 },
   titulo: { fontSize: 18, fontWeight: '800', color: C.text },
@@ -282,18 +292,18 @@ const m = StyleSheet.create({
   bpmRow: { flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 26 },
   bpmBtn: { width: 46, height: 46, borderRadius: 23, backgroundColor: C.surfaceHigh, borderWidth: 1, borderColor: C.border, alignItems: 'center', justifyContent: 'center' },
   bpmCirculo: { width: 132, height: 132, borderRadius: 66, backgroundColor: C.primaryDim, borderWidth: 2, borderColor: C.primary, alignItems: 'center', justifyContent: 'center' },
-  bpmValor: { fontSize: 44, fontWeight: '800', color: C.text, letterSpacing: -1 },
-  bpmLabel: { fontSize: 11, color: C.textMuted, fontWeight: '700', letterSpacing: 1.5, marginTop: -2 },
+  bpmValor: { fontSize: 44, fontWeight: '800', color: C.onPrimaryDim, letterSpacing: -1 },
+  bpmLabel: { fontSize: 11, color: C.onPrimaryDim, fontWeight: '700', letterSpacing: 1.5, marginTop: -2 },
   dicaBotoes: { fontSize: 10.5, color: C.textDim, textAlign: 'center', marginTop: 12 },
   compassoRow: { flexDirection: 'row', justifyContent: 'center', gap: 8, marginTop: 20 },
   compassoPill: { paddingHorizontal: 16, paddingVertical: 8, borderRadius: 10, backgroundColor: C.surfaceHigh, borderWidth: 1, borderColor: C.border },
   compassoPillAtivo: { backgroundColor: C.primaryDim, borderColor: C.primary },
   compassoTexto: { fontSize: 13, fontWeight: '700', color: C.textMuted },
-  compassoTextoAtivo: { color: C.primary },
+  compassoTextoAtivo: { color: C.onPrimaryDim },
   controles: { flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 16, marginTop: 26 },
   tapBtn: { flexDirection: 'row', alignItems: 'center', gap: 8, paddingHorizontal: 18, height: 52, borderRadius: 14, backgroundColor: C.surfaceHigh, borderWidth: 1, borderColor: C.border },
   tapTexto: { fontSize: 14, fontWeight: '700', color: C.text },
   playBtn: { width: 66, height: 66, borderRadius: 33, backgroundColor: C.primary, alignItems: 'center', justifyContent: 'center' },
-  playBtnAtivo: { backgroundColor: '#8B1F1F' },
+  playBtnAtivo: { backgroundColor: C.stop },
   dicaTap: { fontSize: 10.5, color: C.textDim, textAlign: 'center', marginTop: 14 },
 });

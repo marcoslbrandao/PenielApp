@@ -1,4 +1,4 @@
-import React, { useState, useRef, useEffect, useCallback } from 'react';
+import React, { useState, useRef, useEffect, useCallback, useMemo } from 'react';
 import {
   View, Text, StyleSheet, ScrollView, TouchableOpacity,
   TextInput, FlatList, Linking, Alert, KeyboardAvoidingView, Image,
@@ -9,15 +9,43 @@ import { Ionicons } from '@expo/vector-icons';
 import { useTranslation } from 'react-i18next';
 import { supabase } from '../lib/supabase';
 import { useAuth } from '../lib/useAuth';
+import { useTheme } from '../lib/theme';
+import { paletaBanda, type BandaColors } from '../lib/temaBanda';
 import MetronomoModal from '../components/MetronomoModal';
 
-// ─── Palette ──────────────────────────────────────────────────────────────────
-const C = {
-  bg: '#0D0D0F', surface: '#18181B', surfaceHigh: '#242429',
-  border: '#2A2A30', primary: '#7C4DFF', primaryDim: '#3D2578',
-  accent: '#1DB954', accentDim: '#0D5C28', gold: '#F5C842',
-  text: '#F1F1F3', textMuted: '#8A8A96', textDim: '#4A4A55', danger: '#FF4D4D',
+// ─── Paleta ───────────────────────────────────────────────────────────────────
+// A paleta vive em `lib/temaBanda` porque o metrônomo também precisa dela.
+
+
+// Os sete blocos de estilo desta tela viram funções de `C` (buildGate, buildNm,
+// …, no rodapé do arquivo). Montar tudo a cada render seria caro, e só existem
+// dois temas — então o resultado fica guardado aqui e é o MESMO objeto em todos
+// os componentes, o que mantém as comparações de referência do React baratas.
+type TemaBanda = {
+  C: BandaColors;
+  gate: ReturnType<typeof buildGate>; nm: ReturnType<typeof buildNm>;
+  md: ReturnType<typeof buildMd>; ind: ReturnType<typeof buildInd>;
+  rel: ReturnType<typeof buildRel>; vs: ReturnType<typeof buildVs>;
+  s: ReturnType<typeof buildS>;
 };
+const temasBanda: { light?: TemaBanda; dark?: TemaBanda } = {};
+function temaBanda(isDark: boolean): TemaBanda {
+  const chave = isDark ? 'dark' : 'light';
+  let tema = temasBanda[chave];
+  if (!tema) {
+    const C = paletaBanda(isDark);
+    tema = {
+      C, gate: buildGate(C), nm: buildNm(C), md: buildMd(C),
+      ind: buildInd(C), rel: buildRel(C), vs: buildVs(C), s: buildS(C),
+    };
+    temasBanda[chave] = tema;
+  }
+  return tema;
+}
+function useBandaTema(): TemaBanda {
+  const { isDark } = useTheme();
+  return useMemo(() => temaBanda(isDark), [isDark]);
+}
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 type Song = {
@@ -428,6 +456,7 @@ function rotuloDoDia(dia: string, hoje: string, lang: string, t: (k: string) => 
 
 // ─── Gate ─────────────────────────────────────────────────────────────────────
 function InviteGate({ onUnlock }: { onUnlock: () => void }) {
+  const { C, gate } = useBandaTema();
   const { t } = useTranslation();
   const [code, setCode] = useState('');
   const [error, setError] = useState('');
@@ -457,7 +486,7 @@ function InviteGate({ onUnlock }: { onUnlock: () => void }) {
 
   return (
     <SafeAreaView style={gate.safe}>
-      <StatusBar barStyle="light-content" backgroundColor={C.bg} />
+      <StatusBar barStyle={C.statusBar} backgroundColor={C.bg} />
       <KeyboardAvoidingView behavior={Platform.OS === 'ios' ? 'padding' : undefined} style={gate.kav}>
         <View style={gate.inner}>
           <View style={gate.iconRing}><Ionicons name="musical-notes" size={36} color={C.primary} /></View>
@@ -470,8 +499,8 @@ function InviteGate({ onUnlock }: { onUnlock: () => void }) {
           </Animated.View>
           {!!error && <Text style={gate.errorText}>{error}</Text>}
           <TouchableOpacity style={[gate.btn, checking && { opacity: 0.7 }]} onPress={tryUnlock} activeOpacity={0.85} disabled={checking}>
-            {checking ? <ActivityIndicator color="#fff" /> : (
-              <><Text style={gate.btnText}>{t('banda.entrar')}</Text><Ionicons name="arrow-forward" size={18} color="#fff" /></>
+            {checking ? <ActivityIndicator color={C.onPrimary} /> : (
+              <><Text style={gate.btnText}>{t('banda.entrar')}</Text><Ionicons name="arrow-forward" size={18} color={C.onPrimary} /></>
             )}
           </TouchableOpacity>
           <Text style={gate.hint}>{t('banda.gateHint')}</Text>
@@ -480,7 +509,7 @@ function InviteGate({ onUnlock }: { onUnlock: () => void }) {
     </SafeAreaView>
   );
 }
-const gate = StyleSheet.create({
+const buildGate = (C: BandaColors) => StyleSheet.create({
   safe: { flex: 1, backgroundColor: C.bg }, kav: { flex: 1 },
   inner: { flex: 1, alignItems: 'center', justifyContent: 'center', paddingHorizontal: 32 },
   iconRing: { width: 80, height: 80, borderRadius: 40, backgroundColor: C.primaryDim, borderWidth: 1, borderColor: C.primary, alignItems: 'center', justifyContent: 'center', marginBottom: 20 },
@@ -491,7 +520,7 @@ const gate = StyleSheet.create({
   inputError: { borderColor: C.danger },
   errorText: { fontSize: 13, color: C.danger, marginBottom: 8 },
   btn: { flexDirection: 'row', alignItems: 'center', gap: 8, backgroundColor: C.primary, paddingVertical: 14, paddingHorizontal: 32, borderRadius: 12, marginTop: 12 },
-  btnText: { fontSize: 16, fontWeight: '700', color: '#fff' },
+  btnText: { fontSize: 16, fontWeight: '700', color: C.onPrimary },
   hint: { fontSize: 12, color: C.textDim, marginTop: 24, textAlign: 'center' },
 });
 
@@ -502,6 +531,7 @@ const gate = StyleSheet.create({
 function MusicaModal({ visible, song, onClose, onSaved }: {
   visible: boolean; song: Song | null; onClose: () => void; onSaved: () => void;
 }) {
+  const { C, nm } = useBandaTema();
   const { t } = useTranslation();
   const empty = { title: '', artist: '', song_key: '', bpm: '', youtube_id: '', spotify_id: '', cifra_url: '', letra_url: '', cifra_tom: '' };
   const [form, setForm] = useState(empty);
@@ -691,7 +721,7 @@ function MusicaModal({ visible, song, onClose, onSaved }: {
                     onSubmitEditing={rodarBusca}
                   />
                   <TouchableOpacity style={nm.buscaBtn} onPress={rodarBusca} disabled={buscando} activeOpacity={0.85}>
-                    {buscando ? <ActivityIndicator color="#fff" size="small" /> : <Ionicons name="search" size={17} color="#fff" />}
+                    {buscando ? <ActivityIndicator color={C.onPrimary} size="small" /> : <Ionicons name="search" size={17} color={C.onPrimary} />}
                   </TouchableOpacity>
                 </View>
                 {!!erroBusca && <Text style={nm.buscaErro}>{erroBusca}</Text>}
@@ -834,7 +864,7 @@ function MusicaModal({ visible, song, onClose, onSaved }: {
               )}
             </ScrollView>
             <TouchableOpacity style={[nm.saveBtn, saving && { opacity: 0.7 }]} onPress={handleSave} disabled={saving} activeOpacity={0.85}>
-              {saving ? <ActivityIndicator color="#fff" /> : <><Ionicons name={isEdit ? 'checkmark-outline' : 'musical-note-outline'} size={18} color="#fff" /><Text style={nm.saveBtnText}>{isEdit ? t('banda.salvarAlteracoes') : t('banda.adicionarMusica')}</Text></>}
+              {saving ? <ActivityIndicator color={C.onPrimary} /> : <><Ionicons name={isEdit ? 'checkmark-outline' : 'musical-note-outline'} size={18} color={C.onPrimary} /><Text style={nm.saveBtnText}>{isEdit ? t('banda.salvarAlteracoes') : t('banda.adicionarMusica')}</Text></>}
             </TouchableOpacity>
           </View>
         </KeyboardAvoidingView>
@@ -842,8 +872,8 @@ function MusicaModal({ visible, song, onClose, onSaved }: {
     </Modal>
   );
 }
-const nm = StyleSheet.create({
-  overlay: { flex: 1, justifyContent: 'flex-end', backgroundColor: 'rgba(0,0,0,0.75)' },
+const buildNm = (C: BandaColors) => StyleSheet.create({
+  overlay: { flex: 1, justifyContent: 'flex-end', backgroundColor: C.overlay },
   sheet: { backgroundColor: C.surface, borderTopLeftRadius: 24, borderTopRightRadius: 24, padding: 20, paddingBottom: 36, maxHeight: '90%' },
   header: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginBottom: 20 },
   title: { fontSize: 18, fontWeight: '800', color: C.text },
@@ -869,7 +899,7 @@ const nm = StyleSheet.create({
   midiaLabel: { fontSize: 10, color: C.textMuted, fontWeight: '700', letterSpacing: 0.6, textTransform: 'uppercase' },
   midiaValor: { fontSize: 13, color: C.text, marginTop: 2 },
   saveBtn: { flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 8, backgroundColor: C.primary, borderRadius: 12, paddingVertical: 14, marginTop: 8 },
-  saveBtnText: { fontSize: 16, fontWeight: '700', color: '#fff' },
+  saveBtnText: { fontSize: 16, fontWeight: '700', color: C.onPrimary },
   previewBox: { backgroundColor: C.surfaceHigh, borderRadius: 10, padding: 12, marginBottom: 12, borderWidth: 1, borderColor: C.border },
   previewTitle: { fontSize: 11, color: C.textMuted, fontWeight: '700', textTransform: 'uppercase', letterSpacing: 0.5, marginBottom: 6 },
   previewLink: { fontSize: 12, color: C.textMuted, fontWeight: '600' },
@@ -877,7 +907,7 @@ const nm = StyleSheet.create({
   previewTag: { paddingHorizontal: 8, paddingVertical: 3, borderRadius: 6, backgroundColor: C.surface, borderWidth: 1, borderColor: C.border },
   previewTagOk: { backgroundColor: C.primaryDim, borderColor: C.primary },
   previewTagText: { fontSize: 10, fontWeight: '700', color: C.textDim, textTransform: 'uppercase', letterSpacing: 0.4 },
-  previewTagTextOk: { color: '#fff' },
+  previewTagTextOk: { color: C.onPrimaryDim },
   groupLabel: { fontSize: 12, color: C.text, fontWeight: '800', letterSpacing: 0.6, textTransform: 'uppercase', marginTop: 8, marginBottom: 4 },
   groupHint: { fontSize: 11, color: C.textDim, lineHeight: 15, marginBottom: 12 },
   toggleRow: { flexDirection: 'row', alignItems: 'center', gap: 10, paddingVertical: 10, marginBottom: 4 },
@@ -890,6 +920,7 @@ const nm = StyleSheet.create({
 function NovoCultoModal({ visible, onClose, onSaved, songs, versoes }: {
   visible: boolean; onClose: () => void; onSaved: () => void; songs: Song[]; versoes: SongVersao[];
 }) {
+  const { C, md, s } = useBandaTema();
   const { t, i18n } = useTranslation();
   const [date, setDate] = useState('');
   const [entries, setEntries] = useState<CultoSongEntry[]>([]);
@@ -989,14 +1020,14 @@ function NovoCultoModal({ visible, onClose, onSaved, songs, versoes }: {
                   <View key={song.id}>
                     <TouchableOpacity style={[md.songRow, selected && md.songRowSelected]} onPress={() => toggleSong(song)} activeOpacity={0.7}>
                       <View style={[md.keyPill, { backgroundColor: selected ? C.primaryDim : C.surfaceHigh }]}>
-                        <Text style={[md.keyPillText, { color: selected ? C.primary : C.textMuted }]}>{song.song_key}</Text>
+                        <Text style={[md.keyPillText, { color: selected ? C.onPrimaryDim : C.textMuted }]}>{song.song_key}</Text>
                       </View>
                       <View style={{ flex: 1 }}>
                         <Text style={[md.songTitle, selected && { color: C.text }]}>{song.title}</Text>
                         <Text style={md.songArtist}>{song.artist} · {song.bpm} BPM</Text>
                       </View>
                       <View style={[md.checkbox, selected && md.checkboxSelected]}>
-                        {selected && <Ionicons name="checkmark" size={14} color="#fff" />}
+                        {selected && <Ionicons name="checkmark" size={14} color={C.onPrimary} />}
                       </View>
                     </TouchableOpacity>
                     {selected && entry && (
@@ -1041,7 +1072,7 @@ function NovoCultoModal({ visible, onClose, onSaved, songs, versoes }: {
               </View>
             </TouchableOpacity>
             <TouchableOpacity style={[md.saveBtn, saving && { opacity: 0.7 }]} onPress={handleSave} disabled={saving} activeOpacity={0.85}>
-              {saving ? <ActivityIndicator color="#fff" /> : <><Ionicons name="save-outline" size={18} color="#fff" /><Text style={md.saveBtnText}>{t('banda.salvarCulto')}</Text></>}
+              {saving ? <ActivityIndicator color={C.onPrimary} /> : <><Ionicons name="save-outline" size={18} color={C.onPrimary} /><Text style={md.saveBtnText}>{t('banda.salvarCulto')}</Text></>}
             </TouchableOpacity>
           </View>
         </KeyboardAvoidingView>
@@ -1049,9 +1080,9 @@ function NovoCultoModal({ visible, onClose, onSaved, songs, versoes }: {
     </Modal>
   );
 }
-const md = StyleSheet.create({
+const buildMd = (C: BandaColors) => StyleSheet.create({
   versaoRow: { flexDirection: 'row', flexWrap: 'wrap', gap: 6, marginTop: 10, marginLeft: 4 },
-  avisoIndisp: { flexDirection: 'row', alignItems: 'flex-start', gap: 8, backgroundColor: '#3A2E0A', borderWidth: 1, borderColor: C.gold, borderRadius: 10, padding: 10, marginBottom: 16 },
+  avisoIndisp: { flexDirection: 'row', alignItems: 'flex-start', gap: 8, backgroundColor: C.goldBg, borderWidth: 1, borderColor: C.gold, borderRadius: 10, padding: 10, marginBottom: 16 },
   avisoIndispText: { flex: 1, fontSize: 12, color: C.gold, lineHeight: 16 },
   salvarTimeRow: { flexDirection: 'row', gap: 8, alignItems: 'center', marginBottom: 16 },
   salvarTimeBtn: { width: 46, height: 46, borderRadius: 10, backgroundColor: C.primary, alignItems: 'center', justifyContent: 'center' },
@@ -1059,11 +1090,11 @@ const md = StyleSheet.create({
   publicarRow: { flexDirection: 'row', alignItems: 'center', gap: 12, backgroundColor: C.surfaceHigh, borderWidth: 1, borderColor: C.border, borderRadius: 12, padding: 12, marginTop: 12 },
   publicarTitulo: { fontSize: 14, fontWeight: '700', color: C.text },
   publicarDesc: { fontSize: 11, color: C.textMuted, marginTop: 2, lineHeight: 15 },
-  publicarSwitch: { width: 42, height: 24, borderRadius: 12, backgroundColor: C.border, padding: 3, justifyContent: 'center' },
-  publicarSwitchOn: { backgroundColor: C.accentDim },
-  publicarKnob: { width: 18, height: 18, borderRadius: 9, backgroundColor: C.textDim },
-  publicarKnobOn: { backgroundColor: C.accent, alignSelf: 'flex-end' },
-  overlay: { flex: 1, justifyContent: 'flex-end', backgroundColor: 'rgba(0,0,0,0.7)' },
+  publicarSwitch: { width: 42, height: 24, borderRadius: 12, backgroundColor: C.chipBorder, padding: 3, justifyContent: 'center' },
+  publicarSwitchOn: { backgroundColor: C.accent },
+  publicarKnob: { width: 18, height: 18, borderRadius: 9, backgroundColor: C.surface },
+  publicarKnobOn: { backgroundColor: C.surface, alignSelf: 'flex-end' },
+  overlay: { flex: 1, justifyContent: 'flex-end', backgroundColor: C.overlay },
   sheet: { backgroundColor: C.surface, borderTopLeftRadius: 24, borderTopRightRadius: 24, padding: 20, paddingBottom: 36, maxHeight: '92%' },
   header: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginBottom: 20 },
   title: { fontSize: 18, fontWeight: '800', color: C.text },
@@ -1082,11 +1113,11 @@ const md = StyleSheet.create({
   checkboxSelected: { backgroundColor: C.primary, borderColor: C.primary },
   overrideRow: { flexDirection: 'row', alignItems: 'center', gap: 10, backgroundColor: C.primaryDim, borderWidth: 1, borderTopWidth: 0, borderColor: C.primary, borderBottomLeftRadius: 10, borderBottomRightRadius: 10, paddingHorizontal: 12, paddingVertical: 8, marginBottom: 4 },
   overrideField: { alignItems: 'center', gap: 3 },
-  overrideLabel: { fontSize: 9, color: C.primary, fontWeight: '700', textTransform: 'uppercase', letterSpacing: 0.5 },
+  overrideLabel: { fontSize: 9, color: C.onPrimaryDim, fontWeight: '700', textTransform: 'uppercase', letterSpacing: 0.5 },
   overrideInput: { backgroundColor: C.surface, borderWidth: 1, borderColor: C.primary, borderRadius: 6, width: 52, height: 32, textAlign: 'center', fontSize: 14, fontWeight: '700', color: C.text },
-  overrideHint: { flex: 1, fontSize: 11, color: C.primary, opacity: 0.7, textAlign: 'right' },
+  overrideHint: { flex: 1, fontSize: 11, color: C.onPrimaryDim, opacity: 0.8, textAlign: 'right' },
   saveBtn: { flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 8, backgroundColor: C.primary, borderRadius: 12, paddingVertical: 14 },
-  saveBtnText: { fontSize: 16, fontWeight: '700', color: '#fff' },
+  saveBtnText: { fontSize: 16, fontWeight: '700', color: C.onPrimary },
 });
 
 // Devolve a música como ela deve ser TOCADA neste evento: os campos da versão
@@ -1117,6 +1148,7 @@ function comVersao(song: Song, versao?: SongVersao | null): Song {
 // link direto daquela música. Apagado = ainda não tem link salvo, e o botão
 // abre a BUSCA do site já preenchida com título + artista — nunca um 404.
 function LinkMiniButtons({ song, openLink }: { song: Song; openLink: (target: LinkTarget, label: string) => void }) {
+  const { C, s } = useBandaTema();
   const cifra = cifraTarget(song);
   const letra = letraTarget(song);
   const yt = youtubeTarget(song);
@@ -1145,6 +1177,7 @@ function LinkMiniButtons({ song, openLink }: { song: Song; openLink: (target: Li
 // duração; se faltar duração em algumas, a tela avisa em vez de mostrar um
 // número que parece exato e não é.
 function SetlistResumo({ songs, onPlaylist }: { songs: Song[]; onPlaylist: () => void }) {
+  const { s } = useBandaTema();
   const { t } = useTranslation();
   const { segundos, semDuracao } = totalDoSetlist(songs);
   const comVideo = songs.filter(sg => sg.youtube_id).length;
@@ -1178,6 +1211,7 @@ function PresencaBar({ presencas, meuId, escalados, onResponder }: {
   escalados: number;
   onResponder: (status: 'confirmado' | 'ausente' | null) => void;
 }) {
+  const { C, s } = useBandaTema();
   const { t } = useTranslation();
   const minha = presencas.find(pr => pr.profile_id === meuId)?.status ?? null;
   const confirmados = presencas.filter(pr => pr.status === 'confirmado').length;
@@ -1193,7 +1227,7 @@ function PresencaBar({ presencas, meuId, escalados, onResponder }: {
           activeOpacity={0.85}
         >
           <Ionicons name={minha === 'confirmado' ? 'checkmark-circle' : 'checkmark-circle-outline'}
-            size={16} color={minha === 'confirmado' ? '#fff' : C.accent} />
+            size={16} color={minha === 'confirmado' ? C.text : C.accent} />
           <Text style={[s.presencaBtnText, minha === 'confirmado' && s.presencaBtnTextOn]}>{t('banda.euVou')}</Text>
         </TouchableOpacity>
         <TouchableOpacity
@@ -1202,7 +1236,7 @@ function PresencaBar({ presencas, meuId, escalados, onResponder }: {
           activeOpacity={0.85}
         >
           <Ionicons name={minha === 'ausente' ? 'close-circle' : 'close-circle-outline'}
-            size={16} color={minha === 'ausente' ? '#fff' : C.danger} />
+            size={16} color={minha === 'ausente' ? C.text : C.danger} />
           <Text style={[s.presencaBtnText, minha === 'ausente' && s.presencaBtnTextOn]}>{t('banda.naoPosso')}</Text>
         </TouchableOpacity>
       </View>
@@ -1221,6 +1255,7 @@ function PresencaBar({ presencas, meuId, escalados, onResponder }: {
 function NovoEnsaioModal({ visible, onClose, onSaved, songs, versoes }: {
   visible: boolean; onClose: () => void; onSaved: () => void; songs: Song[]; versoes: SongVersao[];
 }) {
+  const { C, md, s } = useBandaTema();
   const { t, i18n } = useTranslation();
   const [date, setDate] = useState('');
   const [time, setTime] = useState('');
@@ -1336,14 +1371,14 @@ function NovoEnsaioModal({ visible, onClose, onSaved, songs, versoes }: {
                     <View key={song.id}>
                       <TouchableOpacity style={[md.songRow, selected && md.songRowSelected]} onPress={() => toggleSong(song)} activeOpacity={0.7}>
                         <View style={[md.keyPill, { backgroundColor: selected ? C.primaryDim : C.surfaceHigh }]}>
-                          <Text style={[md.keyPillText, { color: selected ? C.primary : C.textMuted }]}>{song.song_key}</Text>
+                          <Text style={[md.keyPillText, { color: selected ? C.onPrimaryDim : C.textMuted }]}>{song.song_key}</Text>
                         </View>
                         <View style={{ flex: 1 }}>
                           <Text style={[md.songTitle, selected && { color: C.text }]}>{song.title}</Text>
                           <Text style={md.songArtist}>{song.artist} · {song.bpm} BPM</Text>
                         </View>
                         <View style={[md.checkbox, selected && md.checkboxSelected]}>
-                          {selected && <Ionicons name="checkmark" size={14} color="#fff" />}
+                          {selected && <Ionicons name="checkmark" size={14} color={C.onPrimary} />}
                         </View>
                       </TouchableOpacity>
                       {selected && entry && (
@@ -1389,7 +1424,7 @@ function NovoEnsaioModal({ visible, onClose, onSaved, songs, versoes }: {
               </View>
             </TouchableOpacity>
             <TouchableOpacity style={[md.saveBtn, saving && { opacity: 0.7 }]} onPress={handleSave} disabled={saving} activeOpacity={0.85}>
-              {saving ? <ActivityIndicator color="#fff" /> : <><Ionicons name="save-outline" size={18} color="#fff" /><Text style={md.saveBtnText}>{t('banda.salvarEnsaio')}</Text></>}
+              {saving ? <ActivityIndicator color={C.onPrimary} /> : <><Ionicons name="save-outline" size={18} color={C.onPrimary} /><Text style={md.saveBtnText}>{t('banda.salvarEnsaio')}</Text></>}
             </TouchableOpacity>
           </View>
         </KeyboardAvoidingView>
@@ -1410,6 +1445,7 @@ function EscalaModal({ visible, onClose, onSaved, membros, tipo, eventoId, times
   times: BandaTime[]; escalaAtual: EscalaEntry[]; indisponiveis: string[];
   onTimesMudaram: () => void;
 }) {
+  const { C, md, s } = useBandaTema();
   const { t } = useTranslation();
   const [membroId, setMembroId] = useState('');
   const [instrumento, setInstrumento] = useState<typeof INSTRUMENTOS[number] | ''>('');
@@ -1558,8 +1594,8 @@ function EscalaModal({ visible, onClose, onSaved, membros, tipo, eventoId, times
                     disabled={!nomeNovoTime.trim() || salvandoTime}
                   >
                     {salvandoTime
-                      ? <ActivityIndicator color="#fff" size="small" />
-                      : <Ionicons name="bookmark-outline" size={17} color="#fff" />}
+                      ? <ActivityIndicator color={C.onPrimary} size="small" />
+                      : <Ionicons name="bookmark-outline" size={17} color={C.onPrimary} />}
                   </TouchableOpacity>
                 </View>
               )}
@@ -1574,11 +1610,11 @@ function EscalaModal({ visible, onClose, onSaved, membros, tipo, eventoId, times
                     return (
                       <TouchableOpacity key={m.id} style={[md.songRow, selected && md.songRowSelected]} onPress={() => setMembroId(m.id)} activeOpacity={0.7}>
                         <View style={[md.keyPill, { backgroundColor: selected ? C.primaryDim : C.surfaceHigh }]}>
-                          <Ionicons name="person" size={14} color={selected ? C.primary : C.textMuted} />
+                          <Ionicons name="person" size={14} color={selected ? C.onPrimaryDim : C.textMuted} />
                         </View>
                         <Text style={[md.songTitle, selected && { color: C.text }]}>{m.nome}</Text>
                         <View style={[md.checkbox, selected && md.checkboxSelected]}>
-                          {selected && <Ionicons name="checkmark" size={14} color="#fff" />}
+                          {selected && <Ionicons name="checkmark" size={14} color={C.onPrimary} />}
                         </View>
                       </TouchableOpacity>
                     );
@@ -1600,7 +1636,7 @@ function EscalaModal({ visible, onClose, onSaved, membros, tipo, eventoId, times
               <View style={{ height: 8 }} />
             </ScrollView>
             <TouchableOpacity style={[md.saveBtn, saving && { opacity: 0.7 }]} onPress={handleSave} disabled={saving} activeOpacity={0.85}>
-              {saving ? <ActivityIndicator color="#fff" /> : <><Ionicons name="person-add-outline" size={18} color="#fff" /><Text style={md.saveBtnText}>{t('banda.salvarEscala')}</Text></>}
+              {saving ? <ActivityIndicator color={C.onPrimary} /> : <><Ionicons name="person-add-outline" size={18} color={C.onPrimary} /><Text style={md.saveBtnText}>{t('banda.salvarEscala')}</Text></>}
             </TouchableOpacity>
           </View>
         </KeyboardAvoidingView>
@@ -1614,6 +1650,7 @@ function EscalaModal({ visible, onClose, onSaved, membros, tipo, eventoId, times
 function EscalaLista({ escala, membros, onRemover }: {
   escala: EscalaEntry[]; membros: BandaMembro[]; onRemover?: (id: string) => void;
 }) {
+  const { C, s } = useBandaTema();
   const { t } = useTranslation();
   if (escala.length === 0) {
     return <Text style={s.escalaVazia}>{t('banda.escalaVazia')}</Text>;
@@ -1650,6 +1687,7 @@ function IndisponibilidadeModal({ visible, onClose, indisponibilidades, membros,
   meuId?: string;
   onAlternar: (dia: string) => void;
 }) {
+  const { C, ind, nm } = useBandaTema();
   const { t, i18n } = useTranslation();
   const hoje = new Date();
   const [ano, setAno] = useState(hoje.getFullYear());
@@ -1761,7 +1799,7 @@ function IndisponibilidadeModal({ visible, onClose, indisponibilidades, membros,
     </Modal>
   );
 }
-const ind = StyleSheet.create({
+const buildInd = (C: BandaColors) => StyleSheet.create({
   explicacao: { fontSize: 12, color: C.textMuted, lineHeight: 17, marginBottom: 16 },
   mesRow: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginBottom: 12 },
   mesTexto: { fontSize: 15, fontWeight: '700', color: C.text },
@@ -1770,9 +1808,9 @@ const ind = StyleSheet.create({
   grade: { flexDirection: 'row', flexWrap: 'wrap' },
   celula: { width: `${100 / 7}%`, aspectRatio: 1, alignItems: 'center', justifyContent: 'center', borderRadius: 8 },
   celulaVazia: { width: `${100 / 7}%`, aspectRatio: 1 },
-  celulaMinha: { backgroundColor: '#4A1414', borderWidth: 1, borderColor: C.danger },
+  celulaMinha: { backgroundColor: C.dangerBg, borderWidth: 1, borderColor: C.danger },
   celulaNum: { fontSize: 13, color: C.text },
-  celulaNumMinha: { color: '#fff', fontWeight: '700' },
+  celulaNumMinha: { color: C.dangerOn, fontWeight: '700' },
   celulaHoje: { color: C.gold, fontWeight: '800' },
   pontos: { flexDirection: 'row', gap: 2, marginTop: 3, height: 4 },
   ponto: { width: 4, height: 4, borderRadius: 2, backgroundColor: C.textDim },
@@ -1792,6 +1830,7 @@ function RelatoriosModal({ visible, onClose, cultos, ensaios, songs, membros }: 
   visible: boolean; onClose: () => void;
   cultos: Culto[]; ensaios: Ensaio[]; songs: Song[]; membros: BandaMembro[];
 }) {
+  const { C, ind, nm, rel } = useBandaTema();
   const { t, i18n } = useTranslation();
   const [aba, setAba] = useState<'musicas' | 'grade'>('musicas');
   const [dias, setDias] = useState(90);
@@ -1986,17 +2025,17 @@ function RelatoriosModal({ visible, onClose, cultos, ensaios, songs, membros }: 
     </Modal>
   );
 }
-const rel = StyleSheet.create({
+const buildRel = (C: BandaColors) => StyleSheet.create({
   abas: { flexDirection: 'row', gap: 8, marginBottom: 14 },
   aba: { flex: 1, paddingVertical: 9, borderRadius: 10, backgroundColor: C.surfaceHigh, borderWidth: 1, borderColor: C.border, alignItems: 'center' },
   abaAtiva: { backgroundColor: C.primaryDim, borderColor: C.primary },
   abaTexto: { fontSize: 12, fontWeight: '700', color: C.textMuted },
-  abaTextoAtivo: { color: C.primary },
+  abaTextoAtivo: { color: C.onPrimaryDim },
   periodoRow: { flexDirection: 'row', gap: 6, marginBottom: 14 },
   periodo: { paddingHorizontal: 12, paddingVertical: 6, borderRadius: 8, backgroundColor: C.surfaceHigh, borderWidth: 1, borderColor: C.border },
   periodoAtivo: { backgroundColor: C.primaryDim, borderColor: C.primary },
   periodoTexto: { fontSize: 11, color: C.textMuted, fontWeight: '600' },
-  periodoTextoAtivo: { color: C.primary },
+  periodoTextoAtivo: { color: C.onPrimaryDim },
   linha: { flexDirection: 'row', alignItems: 'center', gap: 10, paddingVertical: 9, borderBottomWidth: 1, borderBottomColor: C.border },
   posicao: { width: 22, fontSize: 12, fontWeight: '800', color: C.textDim, textAlign: 'center' },
   musicaTitulo: { fontSize: 13, color: C.text, fontWeight: '600' },
@@ -2024,6 +2063,7 @@ function NotaMusicaModal({ alvo, onClose, onSalvo }: {
   onClose: () => void;
   onSalvo: () => void;
 }) {
+  const { C, nm } = useBandaTema();
   const { t } = useTranslation();
   const [texto, setTexto] = useState('');
   const [salvando, setSalvando] = useState(false);
@@ -2064,7 +2104,7 @@ function NotaMusicaModal({ alvo, onClose, onSalvo }: {
             />
             <Text style={nm.fieldHint}>{t('banda.notaDica')}</Text>
             <TouchableOpacity style={[nm.saveBtn, salvando && { opacity: 0.7 }]} onPress={salvar} disabled={salvando} activeOpacity={0.85}>
-              {salvando ? <ActivityIndicator color="#fff" /> : <><Ionicons name="checkmark-outline" size={18} color="#fff" /><Text style={nm.saveBtnText}>{t('banda.salvarAlteracoes')}</Text></>}
+              {salvando ? <ActivityIndicator color={C.onPrimary} /> : <><Ionicons name="checkmark-outline" size={18} color={C.onPrimary} /><Text style={nm.saveBtnText}>{t('banda.salvarAlteracoes')}</Text></>}
             </TouchableOpacity>
           </View>
         </KeyboardAvoidingView>
@@ -2082,6 +2122,7 @@ const ROADMAP_SUGESTOES = ['abertura', 'oracao', 'avisos', 'oferta', 'pregacao',
 function RoadmapItemModal({ visible, cultoId, onClose, onSalvo, proximoIndice }: {
   visible: boolean; cultoId: string; onClose: () => void; onSalvo: () => void; proximoIndice: number;
 }) {
+  const { C, nm, s } = useBandaTema();
   const { t } = useTranslation();
   const [titulo, setTitulo] = useState('');
   const [minutos, setMinutos] = useState('');
@@ -2138,7 +2179,7 @@ function RoadmapItemModal({ visible, cultoId, onClose, onSalvo, proximoIndice }:
               <TextInput style={[nm.fieldInput, { width: 110 }]} placeholder="Ex: 10" placeholderTextColor={C.textDim} value={minutos} onChangeText={v => setMinutos(v.replace(/\D/g, ''))} keyboardType="numeric" maxLength={3} />
             </View>
             <TouchableOpacity style={[nm.saveBtn, (salvando || !titulo.trim()) && { opacity: 0.6 }]} onPress={salvar} disabled={salvando || !titulo.trim()} activeOpacity={0.85}>
-              {salvando ? <ActivityIndicator color="#fff" /> : <><Ionicons name="add" size={18} color="#fff" /><Text style={nm.saveBtnText}>{t('banda.adicionarItem')}</Text></>}
+              {salvando ? <ActivityIndicator color={C.onPrimary} /> : <><Ionicons name="add" size={18} color={C.onPrimary} /><Text style={nm.saveBtnText}>{t('banda.adicionarItem')}</Text></>}
             </TouchableOpacity>
           </View>
         </KeyboardAvoidingView>
@@ -2155,6 +2196,7 @@ function ComentariosModal({ culto, onClose, meuId, meuNome, souAdmin, nomePronto
   culto: Culto | null; onClose: () => void;
   meuId?: string; meuNome: string; souAdmin: boolean; nomePronto: boolean;
 }) {
+  const { C, ind, nm, rel, s } = useBandaTema();
   const { t, i18n } = useTranslation();
   const [aba, setAba] = useState<'conversa' | 'historico'>('conversa');
   const [comentarios, setComentarios] = useState<Comentario[]>([]);
@@ -2304,7 +2346,7 @@ function ComentariosModal({ culto, onClose, meuId, meuNome, souAdmin, nomePronto
                     onPress={enviar}
                     disabled={!texto.trim() || enviando || !nomePronto}
                   >
-                    {enviando ? <ActivityIndicator color="#fff" size="small" /> : <Ionicons name="send" size={18} color="#fff" />}
+                    {enviando ? <ActivityIndicator color={C.onPrimary} size="small" /> : <Ionicons name="send" size={18} color={C.onPrimary} />}
                   </TouchableOpacity>
                 </View>
               </>
@@ -2347,6 +2389,7 @@ function ComentariosModal({ culto, onClose, meuId, meuNome, souAdmin, nomePronto
 function VersoesModal({ song, versoes, onClose, onMudou }: {
   song: Song | null; versoes: SongVersao[]; onClose: () => void; onMudou: () => void;
 }) {
+  const { C, ind, nm, vs } = useBandaTema();
   const { t } = useTranslation();
   const vazio = { nome: '', song_key: '', bpm: '', cifra_url: '', cifra_tom: '' };
   const [form, setForm] = useState(vazio);
@@ -2500,7 +2543,7 @@ function VersoesModal({ song, versoes, onClose, onMudou }: {
             </ScrollView>
 
             <TouchableOpacity style={[nm.saveBtn, (salvando || !form.nome.trim()) && { opacity: 0.6 }]} onPress={salvar} disabled={salvando || !form.nome.trim()} activeOpacity={0.85}>
-              {salvando ? <ActivityIndicator color="#fff" /> : <><Ionicons name="checkmark-outline" size={18} color="#fff" /><Text style={nm.saveBtnText}>{editando ? t('banda.salvarAlteracoes') : t('banda.adicionarVersao')}</Text></>}
+              {salvando ? <ActivityIndicator color={C.onPrimary} /> : <><Ionicons name="checkmark-outline" size={18} color={C.onPrimary} /><Text style={nm.saveBtnText}>{editando ? t('banda.salvarAlteracoes') : t('banda.adicionarVersao')}</Text></>}
             </TouchableOpacity>
           </View>
         </KeyboardAvoidingView>
@@ -2508,13 +2551,14 @@ function VersoesModal({ song, versoes, onClose, onMudou }: {
     </Modal>
   );
 }
-const vs = StyleSheet.create({
+const buildVs = (C: BandaColors) => StyleSheet.create({
   linha: { flexDirection: 'row', alignItems: 'center', gap: 10, paddingVertical: 11, borderBottomWidth: 1, borderBottomColor: C.border },
   nome: { fontSize: 14, color: C.text, fontWeight: '600' },
   detalhe: { fontSize: 11.5, color: C.textMuted, marginTop: 2 },
 });
 
 function BandaMain() {
+  const { C, s } = useBandaTema();
   const { t, i18n } = useTranslation();
   // Precisa da conta logada pra saber quais mensagens do chat são minhas e
   // pra assinar o que eu mando.
@@ -2999,7 +3043,7 @@ function BandaMain() {
 
   return (
     <SafeAreaView style={s.safe} edges={['top']}>
-      <StatusBar barStyle="light-content" backgroundColor={C.bg} />
+      <StatusBar barStyle={C.statusBar} backgroundColor={C.bg} />
 
       {/* Header */}
       <View style={s.header}>
@@ -3032,7 +3076,7 @@ function BandaMain() {
 
       {/* ══ HOJE ══════════════════════════════════════════════════════════════ */}
       {activeTab === 'hoje' && (
-        <ScrollView contentContainerStyle={s.tabContent} refreshControl={<RefreshControl refreshing={refreshing} onRefresh={handleRefresh} tintColor={C.primary} />}>
+        <ScrollView contentContainerStyle={s.tabContent} refreshControl={<RefreshControl refreshing={refreshing} onRefresh={handleRefresh} tintColor={C.primary} colors={[C.primary]} progressBackgroundColor={C.surface} />}>
           {loadingCultos ? (
             <View style={s.loadingWrap}><ActivityIndicator color={C.primary} /><Text style={s.loadingText}>{t('banda.carregando')}</Text></View>
           ) : cultoDoDia ? (
@@ -3136,7 +3180,7 @@ function BandaMain() {
               ))}
             </View>
             <TouchableOpacity style={s.addSongBtn} onPress={abrirNovaMusica}>
-              <Ionicons name="add" size={18} color="#fff" />
+              <Ionicons name="add" size={18} color={C.onPrimary} />
             </TouchableOpacity>
           </View>
           {loadingSongs ? (
@@ -3147,7 +3191,7 @@ function BandaMain() {
               keyExtractor={i => i.id}
               contentContainerStyle={{ paddingHorizontal: 16, paddingBottom: 24 }}
               ItemSeparatorComponent={() => <View style={{ height: 8 }} />}
-              refreshControl={<RefreshControl refreshing={refreshing} onRefresh={handleRefresh} tintColor={C.primary} />}
+              refreshControl={<RefreshControl refreshing={refreshing} onRefresh={handleRefresh} tintColor={C.primary} colors={[C.primary]} progressBackgroundColor={C.surface} />}
               renderItem={({ item }) => (
                 <View style={s.songCard}>
                   {item.capa_url ? (
@@ -3159,7 +3203,7 @@ function BandaMain() {
                     />
                   ) : (
                     <View style={[s.keyBadge, { backgroundColor: item.in_repertoire ? C.primaryDim : C.surfaceHigh }]}>
-                      <Text style={[s.keyText, { color: item.in_repertoire ? C.primary : C.textMuted }]}>{item.song_key}</Text>
+                      <Text style={[s.keyText, { color: item.in_repertoire ? C.onPrimaryDim : C.textMuted }]}>{item.song_key}</Text>
                     </View>
                   )}
                   <TouchableOpacity style={{ flex: 1, marginLeft: 10 }} onPress={() => abrirEditarMusica(item)} activeOpacity={0.7}>
@@ -3223,7 +3267,7 @@ function BandaMain() {
           <View style={s.cultosToolbar}>
             <Text style={s.cultosCount}>{cultosVisiveis.length} {cultosVisiveis.length !== 1 ? t('banda.tabCultos').toLowerCase() : t('banda.cultoSingular')}</Text>
             <TouchableOpacity style={s.newCultoBtn} onPress={() => setCultosModal(true)} activeOpacity={0.85}>
-              <Ionicons name="add" size={18} color="#fff" />
+              <Ionicons name="add" size={18} color={C.onPrimary} />
               <Text style={s.newCultoBtnText}>{t('banda.novoCulto')}</Text>
             </TouchableOpacity>
           </View>
@@ -3237,7 +3281,7 @@ function BandaMain() {
             </View>
           ) : (
             <ScrollView contentContainerStyle={{ padding: 16, paddingBottom: 32 }}
-              refreshControl={<RefreshControl refreshing={refreshing} onRefresh={handleRefresh} tintColor={C.primary} />}>
+              refreshControl={<RefreshControl refreshing={refreshing} onRefresh={handleRefresh} tintColor={C.primary} colors={[C.primary]} progressBackgroundColor={C.surface} />}>
               {cultosVisiveis.map(culto => {
                 const isOpen = expandedCulto === culto.id;
                 return (
@@ -3434,7 +3478,7 @@ function BandaMain() {
           <View style={s.cultosToolbar}>
             <Text style={s.cultosCount}>{ensaiosVisiveis.length} {ensaiosVisiveis.length !== 1 ? t('banda.tabEnsaios').toLowerCase() : t('banda.ensaioSingular')}</Text>
             <TouchableOpacity style={s.newCultoBtn} onPress={() => setEnsaioModal(true)} activeOpacity={0.85}>
-              <Ionicons name="add" size={18} color="#fff" />
+              <Ionicons name="add" size={18} color={C.onPrimary} />
               <Text style={s.newCultoBtnText}>{t('banda.novoEnsaio')}</Text>
             </TouchableOpacity>
           </View>
@@ -3448,7 +3492,7 @@ function BandaMain() {
             </View>
           ) : (
             <ScrollView contentContainerStyle={{ padding: 16, paddingBottom: 32 }}
-              refreshControl={<RefreshControl refreshing={refreshing} onRefresh={handleRefresh} tintColor={C.primary} />}>
+              refreshControl={<RefreshControl refreshing={refreshing} onRefresh={handleRefresh} tintColor={C.primary} colors={[C.primary]} progressBackgroundColor={C.surface} />}>
               {ensaiosVisiveis.map(ensaio => {
                 const isOpen = expandedEnsaio === ensaio.id;
                 const { dia, mes } = diaEMes(ensaio.date);
@@ -3639,7 +3683,7 @@ function BandaMain() {
           <View style={s.chatInput}>
             <TextInput style={s.chatField} placeholder={t('banda.mensagemPlaceholder')} placeholderTextColor={C.textDim} value={chatMsg} onChangeText={setChatMsg} returnKeyType="send" onSubmitEditing={sendMessage} maxLength={1000} />
             <TouchableOpacity style={[s.sendBtn, (!chatMsg.trim() || enviandoChat || !nomePronto) && { opacity: 0.45 }]} onPress={sendMessage} disabled={!chatMsg.trim() || enviandoChat || !nomePronto}>
-              {enviandoChat ? <ActivityIndicator color="#fff" size="small" /> : <Ionicons name="send" size={18} color="#fff" />}
+              {enviandoChat ? <ActivityIndicator color={C.onPrimary} size="small" /> : <Ionicons name="send" size={18} color={C.onPrimary} />}
             </TouchableOpacity>
           </View>
         </KeyboardAvoidingView>
@@ -3732,16 +3776,14 @@ function BandaMain() {
 }
 
 // ─── Styles ───────────────────────────────────────────────────────────────────
-const s = StyleSheet.create({
+const buildS = (C: BandaColors) => StyleSheet.create({
   safe: { flex: 1, backgroundColor: C.bg },
   header: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', paddingHorizontal: 20, paddingVertical: 14, borderBottomWidth: 1, borderBottomColor: C.border },
   headerTitle: { fontSize: 20, fontWeight: '800', color: C.text, letterSpacing: 0.3 },
   headerSub: { fontSize: 11, color: C.primary, fontWeight: '600', letterSpacing: 2, textTransform: 'uppercase', marginTop: 2 },
   headerRight: { flexDirection: 'row', alignItems: 'center', gap: 6 },
-  onlineDot: { width: 8, height: 8, borderRadius: 4, backgroundColor: C.accent },
-  onlineText: { fontSize: 12, color: C.textMuted },
   headerIconBtn: { width: 34, height: 34, borderRadius: 10, backgroundColor: C.surfaceHigh, borderWidth: 1, borderColor: C.border, alignItems: 'center', justifyContent: 'center' },
-  headerBadge: { position: 'absolute', top: -4, right: -4, minWidth: 16, height: 16, borderRadius: 8, backgroundColor: C.gold, alignItems: 'center', justifyContent: 'center', paddingHorizontal: 4 },
+  headerBadge: { position: 'absolute', top: -4, right: -4, minWidth: 16, height: 16, borderRadius: 8, backgroundColor: C.goldFill, borderWidth: 1, borderColor: C.gold, alignItems: 'center', justifyContent: 'center', paddingHorizontal: 4 },
   headerBadgeText: { fontSize: 9, fontWeight: '800', color: '#000' },
   tabBar: { flexDirection: 'row', borderBottomWidth: 1, borderBottomColor: C.border, backgroundColor: C.surface },
   tabItem: { flex: 1, alignItems: 'center', paddingVertical: 10, gap: 3 },
@@ -3762,34 +3804,33 @@ const s = StyleSheet.create({
   hojeSongCountLabel: { fontSize: 10, color: C.textMuted },
   hojeCard: { flexDirection: 'row', alignItems: 'center', gap: 10, backgroundColor: C.surface, borderRadius: 12, padding: 12, marginBottom: 8, borderWidth: 1, borderColor: C.border },
   hojeOrder: { width: 24, height: 24, borderRadius: 12, backgroundColor: C.primaryDim, alignItems: 'center', justifyContent: 'center' },
-  hojeOrderNum: { fontSize: 12, fontWeight: '800', color: C.primary },
+  hojeOrderNum: { fontSize: 12, fontWeight: '800', color: C.onPrimaryDim },
   hojeSongTitle: { fontSize: 14, fontWeight: '700', color: C.text },
   hojeSongArtist: { fontSize: 11, color: C.textMuted, marginTop: 1 },
   hojeTomBadge: { alignItems: 'center', backgroundColor: C.primaryDim, borderRadius: 8, paddingHorizontal: 8, paddingVertical: 5, minWidth: 40 },
-  hojeTomLabel: { fontSize: 8, color: C.primary, fontWeight: '700', letterSpacing: 0.5 },
-  hojeTomValue: { fontSize: 14, fontWeight: '800', color: C.primary },
-  hojeBpmBadge: { alignItems: 'center', backgroundColor: C.surfaceHigh, borderRadius: 8, paddingHorizontal: 8, paddingVertical: 5, minWidth: 44 },
+  hojeTomLabel: { fontSize: 8, color: C.onPrimaryDim, fontWeight: '700', letterSpacing: 0.5 },
+  hojeTomValue: { fontSize: 14, fontWeight: '800', color: C.onPrimaryDim },
+  hojeBpmBadge: { alignItems: 'center', backgroundColor: C.surface, borderWidth: 1, borderColor: C.chipBorder, borderRadius: 8, paddingHorizontal: 8, paddingVertical: 5, minWidth: 44 },
   hojeBpmLabel: { fontSize: 8, color: C.textMuted, fontWeight: '700', letterSpacing: 0.5 },
   hojeBpmValue: { fontSize: 14, fontWeight: '800', color: C.textMuted },
-  hojeSpotify: { width: 28, height: 28, borderRadius: 6, backgroundColor: C.accentDim, alignItems: 'center', justifyContent: 'center' },
   hojeTip: { flexDirection: 'row', alignItems: 'center', gap: 6, marginTop: 8 },
   hojeTipText: { fontSize: 11, color: C.textDim },
   emptyState: { flex: 1, alignItems: 'center', justifyContent: 'center', paddingHorizontal: 40, paddingTop: 80 },
   emptyTitle: { fontSize: 16, fontWeight: '700', color: C.textMuted, marginTop: 16, marginBottom: 8 },
   emptyDesc: { fontSize: 13, color: C.textDim, textAlign: 'center', lineHeight: 20 },
   emptyBtn: { marginTop: 20, backgroundColor: C.primary, paddingVertical: 10, paddingHorizontal: 24, borderRadius: 20 },
-  emptyBtnText: { fontSize: 14, fontWeight: '700', color: '#fff' },
+  emptyBtnText: { fontSize: 14, fontWeight: '700', color: C.onPrimary },
   // Repertório
   reperToolbar: { flexDirection: 'row', alignItems: 'center', paddingRight: 16 },
   filterRow: { flex: 1, flexDirection: 'row', gap: 8, paddingHorizontal: 16, paddingVertical: 12 },
   pill: { paddingHorizontal: 14, paddingVertical: 6, borderRadius: 20, backgroundColor: C.surface, borderWidth: 1, borderColor: C.border },
   pillActive: { backgroundColor: C.primaryDim, borderColor: C.primary },
   pillText: { fontSize: 13, color: C.textMuted, fontWeight: '500' },
-  pillTextActive: { color: C.primary, fontWeight: '700' },
+  pillTextActive: { color: C.onPrimaryDim, fontWeight: '700' },
   addSongBtn: { width: 36, height: 36, borderRadius: 18, backgroundColor: C.primary, alignItems: 'center', justifyContent: 'center' },
   songCard: { backgroundColor: C.surface, borderRadius: 12, padding: 12, borderWidth: 1, borderColor: C.border, flexDirection: 'row', alignItems: 'center' },
   keyBadge: { width: 40, height: 40, borderRadius: 10, alignItems: 'center', justifyContent: 'center' },
-  keyText: { fontSize: 14, fontWeight: '800' },
+  keyText: { fontSize: 14, fontWeight: '800', color: C.text },
   songTitle: { fontSize: 14, fontWeight: '700', color: C.text },
   songArtist: { fontSize: 12, color: C.textMuted, marginTop: 1 },
   songMeta: { flexDirection: 'row', gap: 6, marginTop: 5 },
@@ -3797,11 +3838,11 @@ const s = StyleSheet.create({
   songMetaText: { fontSize: 10, color: C.textMuted, fontWeight: '600' },
   songLinks: { flexDirection: 'row', gap: 6, marginLeft: 8 },
   acoesRow: { flexDirection: 'row', gap: 8, marginBottom: 10 },
-  acaoBtn: { flexDirection: 'row', alignItems: 'center', gap: 6, paddingHorizontal: 11, paddingVertical: 7, borderRadius: 9, backgroundColor: C.surfaceHigh, borderWidth: 1, borderColor: C.border },
+  acaoBtn: { flexDirection: 'row', alignItems: 'center', gap: 6, paddingHorizontal: 11, paddingVertical: 7, borderRadius: 9, backgroundColor: C.surface, borderWidth: 1, borderColor: C.chipBorder },
   acaoTexto: { fontSize: 11, fontWeight: '700', color: C.textMuted },
-  songMetaChipAcionavel: { flexDirection: 'row', alignItems: 'center', gap: 4, borderWidth: 1, borderColor: C.primaryDim },
+  songMetaChipAcionavel: { flexDirection: 'row', alignItems: 'center', gap: 4, borderWidth: 1, borderColor: C.primary },
   versaoTag: { minWidth: 16, height: 16, borderRadius: 8, backgroundColor: C.primaryDim, borderWidth: 1, borderColor: C.primary, alignItems: 'center', justifyContent: 'center', paddingHorizontal: 4 },
-  versaoTagText: { fontSize: 9, fontWeight: '800', color: C.primary },
+  versaoTagText: { fontSize: 9, fontWeight: '800', color: C.onPrimaryDim },
   notaRow: { flexDirection: 'row', alignItems: 'flex-start', gap: 5, marginTop: 4, paddingRight: 6 },
   roadmapRow: { flexDirection: 'row', alignItems: 'center', gap: 9, paddingVertical: 9, borderBottomWidth: 1, borderBottomColor: C.border },
   roadmapTitulo: { flex: 1, fontSize: 13, color: C.text },
@@ -3812,11 +3853,11 @@ const s = StyleSheet.create({
   notaTexto: { flex: 1, fontSize: 11, color: C.gold, lineHeight: 15, fontStyle: 'italic' },
   songCapa: { width: 40, height: 40, borderRadius: 10, backgroundColor: C.surfaceHigh, borderWidth: 2, borderColor: 'transparent' },
   songCapaNoRepertorio: { borderColor: C.primary },
-  linkBtn: { width: 30, height: 30, borderRadius: 8, backgroundColor: C.surfaceHigh, alignItems: 'center', justifyContent: 'center', borderWidth: 1, borderColor: C.border },
+  linkBtn: { width: 30, height: 30, borderRadius: 8, backgroundColor: C.surface, alignItems: 'center', justifyContent: 'center', borderWidth: 1, borderColor: C.chipBorder },
   linkBtnMini: { width: 28, height: 28, borderRadius: 7 },
   songTitleRow: { flexDirection: 'row', alignItems: 'center', gap: 6 },
   linkBtnLabel: { fontSize: 9, fontWeight: '800', color: C.textMuted },
-  linkBtnYt: { backgroundColor: '#1a0000', borderColor: '#FF000040' },
+  linkBtnYt: { backgroundColor: C.ytBg },
   linkBtnDisabled: { opacity: 0.4 },
   spotifyBtn: { backgroundColor: C.accentDim },
   spotifyBtnDisabled: { opacity: 0.4 },
@@ -3824,11 +3865,11 @@ const s = StyleSheet.create({
   cultosToolbar: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', paddingHorizontal: 16, paddingVertical: 12, borderBottomWidth: 1, borderBottomColor: C.border },
   cultosCount: { fontSize: 13, color: C.textMuted, fontWeight: '500' },
   newCultoBtn: { flexDirection: 'row', alignItems: 'center', gap: 6, backgroundColor: C.primary, paddingVertical: 8, paddingHorizontal: 14, borderRadius: 20 },
-  newCultoBtnText: { fontSize: 13, fontWeight: '700', color: '#fff' },
+  newCultoBtnText: { fontSize: 13, fontWeight: '700', color: C.onPrimary },
   cultoCard: { backgroundColor: C.surface, borderRadius: 14, borderWidth: 1, borderColor: C.border, marginBottom: 12, overflow: 'hidden' },
   cultoCardOpen: { borderColor: C.primary },
   cultoLabelRow: { flexDirection: 'row', alignItems: 'center', gap: 7, flexWrap: 'wrap' },
-  rascunhoTag: { backgroundColor: '#3A2E0A', borderWidth: 1, borderColor: C.gold, borderRadius: 5, paddingHorizontal: 6, paddingVertical: 2 },
+  rascunhoTag: { backgroundColor: C.goldBg, borderWidth: 1, borderColor: C.gold, borderRadius: 5, paddingHorizontal: 6, paddingVertical: 2 },
   rascunhoTagText: { fontSize: 9, fontWeight: '800', color: C.gold, letterSpacing: 0.5, textTransform: 'uppercase' },
   cultoHeader: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', padding: 14 },
   cultoHeaderLeft: { flexDirection: 'row', alignItems: 'center', gap: 12, flex: 1 },
@@ -3843,38 +3884,33 @@ const s = StyleSheet.create({
   cultoSongRow: { flexDirection: 'row', alignItems: 'center', gap: 8, paddingVertical: 8, borderBottomWidth: 1, borderBottomColor: C.border },
   cultoSongNum: { fontSize: 11, color: C.textDim, fontWeight: '700', width: 16, textAlign: 'center' },
   cultoKeyBadge: { width: 28, height: 28, borderRadius: 6, backgroundColor: C.primaryDim, alignItems: 'center', justifyContent: 'center' },
-  cultoKeyText: { fontSize: 11, fontWeight: '800', color: C.primary },
+  cultoKeyText: { fontSize: 11, fontWeight: '800', color: C.onPrimaryDim },
   cultoSongTitle: { fontSize: 13, fontWeight: '600', color: C.text },
   cultoSongArtist: { fontSize: 11, color: C.textMuted },
-  cultoBpmChip: { backgroundColor: C.surfaceHigh, borderRadius: 6, paddingHorizontal: 6, paddingVertical: 3, minWidth: 40, alignItems: 'center' },
+  cultoBpmChip: { backgroundColor: C.surface, borderWidth: 1, borderColor: C.chipBorder, borderRadius: 6, paddingHorizontal: 6, paddingVertical: 3, minWidth: 40, alignItems: 'center' },
   cultoBpmText: { fontSize: 12, fontWeight: '700', color: C.textMuted },
-  spotifyMini: { width: 28, height: 28, borderRadius: 6, backgroundColor: C.accentDim, alignItems: 'center', justifyContent: 'center' },
   // Escala
   escalaCard: { backgroundColor: C.surface, borderRadius: 12, padding: 12, borderWidth: 1, borderColor: C.border },
   escalaHeader: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginTop: 10, marginBottom: 6 },
   escalaRow: { flexDirection: 'row', alignItems: 'center', gap: 8, paddingVertical: 6 },
   escalaNome: { flex: 1, fontSize: 13, fontWeight: '600', color: C.text },
   escalaInstChip: { backgroundColor: C.primaryDim, borderRadius: 8, paddingHorizontal: 8, paddingVertical: 3 },
-  escalaInstText: { fontSize: 11, fontWeight: '700', color: C.primary },
+  escalaInstText: { fontSize: 11, fontWeight: '700', color: C.onPrimaryDim },
   escalaVazia: { fontSize: 12, color: C.textDim, paddingVertical: 4 },
   // Ensaios
-  ensaioCard: { flexDirection: 'row', alignItems: 'flex-start', backgroundColor: C.surface, borderRadius: 14, padding: 14, marginBottom: 10, borderWidth: 1, borderColor: C.border },
   ensaioDate: { width: 48, alignItems: 'center', marginRight: 14, backgroundColor: C.primaryDim, borderRadius: 10, paddingVertical: 8 },
-  ensaioDay: { fontSize: 22, fontWeight: '800', color: C.primary, lineHeight: 24 },
-  ensaioMonth: { fontSize: 11, color: C.primary, fontWeight: '600', textTransform: 'uppercase' },
-  ensaioInfo: { flex: 1 },
-  ensaioTitle: { fontSize: 15, fontWeight: '700', color: C.text },
+  ensaioDay: { fontSize: 22, fontWeight: '800', color: C.onPrimaryDim, lineHeight: 24 },
+  ensaioMonth: { fontSize: 11, color: C.onPrimaryDim, fontWeight: '600', textTransform: 'uppercase' },
   ensaioLocalRow: { flexDirection: 'row', alignItems: 'center', gap: 4, marginTop: 4 },
   ensaioLocal: { fontSize: 12, color: C.textMuted },
   obsRow: { flexDirection: 'row', alignItems: 'flex-start', gap: 4, marginTop: 6 },
   obsText: { fontSize: 12, color: C.primary, flex: 1 },
-  confirmBtn: { width: 32, height: 32, borderRadius: 16, backgroundColor: C.accentDim, alignItems: 'center', justifyContent: 'center' },
   // Chat
   // Resumo do setlist (contagem, tempo total e playlist do YouTube)
   resumoRow: { flexDirection: 'row', alignItems: 'center', gap: 10, paddingVertical: 10, paddingHorizontal: 2, marginBottom: 4 },
   resumoTexto: { fontSize: 13, color: C.textMuted, fontWeight: '600' },
   resumoAviso: { fontSize: 11, color: C.textDim, marginTop: 2 },
-  playlistBtn: { flexDirection: 'row', alignItems: 'center', gap: 6, backgroundColor: '#1a0000', borderWidth: 1, borderColor: '#FF000040', borderRadius: 8, paddingHorizontal: 10, paddingVertical: 7 },
+  playlistBtn: { flexDirection: 'row', alignItems: 'center', gap: 6, backgroundColor: C.ytBg, borderWidth: 1, borderColor: C.chipBorder, borderRadius: 8, paddingHorizontal: 10, paddingVertical: 7 },
   playlistBtnText: { fontSize: 11, fontWeight: '700', color: C.text },
 
   // Confirmação de presença
@@ -3882,21 +3918,21 @@ const s = StyleSheet.create({
   presencaBtns: { flexDirection: 'row', gap: 8 },
   presencaBtn: { flex: 1, flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 6, height: 38, borderRadius: 10, borderWidth: 1, borderColor: C.border, backgroundColor: C.surfaceHigh },
   presencaBtnOk: { backgroundColor: C.accentDim, borderColor: C.accent },
-  presencaBtnNo: { backgroundColor: '#4A1414', borderColor: C.danger },
+  presencaBtnNo: { backgroundColor: C.dangerBg, borderColor: C.danger },
   presencaBtnText: { fontSize: 13, fontWeight: '700', color: C.textMuted },
-  presencaBtnTextOn: { color: '#fff' },
+  presencaBtnTextOn: { color: C.text },
   presencaResumo: { fontSize: 11, color: C.textDim, textAlign: 'center' },
 
   chatContent: { padding: 16, paddingBottom: 8, flexGrow: 1 },
   chatDayWrap: { alignItems: 'center', marginVertical: 10 },
   chatDay: { fontSize: 10, color: C.textMuted, fontWeight: '700', letterSpacing: 0.5, textTransform: 'uppercase', backgroundColor: C.surfaceHigh, paddingHorizontal: 10, paddingVertical: 4, borderRadius: 10, overflow: 'hidden' },
-  bubble: { alignSelf: 'flex-start', maxWidth: '80%', backgroundColor: C.surface, borderRadius: 12, borderBottomLeftRadius: 4, padding: 10, marginBottom: 10, borderWidth: 1, borderColor: C.border },
+  bubble: { alignSelf: 'flex-start', maxWidth: '80%', backgroundColor: C.surfaceHigh, borderRadius: 12, borderBottomLeftRadius: 4, padding: 10, marginBottom: 10, borderWidth: 1, borderColor: C.border },
   bubbleMine: { alignSelf: 'flex-end', backgroundColor: C.primaryDim, borderBottomLeftRadius: 12, borderBottomRightRadius: 4, borderColor: C.primary },
   bubbleAuthor: { fontSize: 11, color: C.primary, fontWeight: '700', marginBottom: 4 },
   bubbleText: { fontSize: 14, color: C.text, lineHeight: 20 },
-  bubbleTextMine: { color: '#E8E0FF' },
+  bubbleTextMine: { color: C.onPrimaryDim },
   bubbleTime: { fontSize: 10, color: C.textDim, marginTop: 4, textAlign: 'right' },
-  bubbleTimeMine: { color: 'rgba(200,180,255,0.6)' },
+  bubbleTimeMine: { color: C.onPrimaryDimMuted },
   chatInput: { flexDirection: 'row', alignItems: 'center', gap: 10, paddingHorizontal: 16, paddingVertical: 10, borderTopWidth: 1, borderTopColor: C.border, backgroundColor: C.surface },
   chatField: { flex: 1, height: 42, backgroundColor: C.surfaceHigh, borderRadius: 21, paddingHorizontal: 16, fontSize: 14, color: C.text, borderWidth: 1, borderColor: C.border },
   sendBtn: { width: 42, height: 42, borderRadius: 21, backgroundColor: C.primary, alignItems: 'center', justifyContent: 'center' },
@@ -3904,6 +3940,7 @@ const s = StyleSheet.create({
 
 // ─── Root Export ──────────────────────────────────────────────────────────────
 export default function BandaScreen() {
+  const { C } = useBandaTema();
   const { user } = useAuth();
   const [unlocked, setUnlocked] = useState(false);
   const [checandoAcesso, setChecandoAcesso] = useState(true);
