@@ -75,9 +75,12 @@ export default function GrupoChatModal({
       .from('grupo_chat_mensagens')
       .select('*')
       .eq('grupo', grupo)
-      .order('created_at', { ascending: true })
+      // Ordem DESC + reverse: `limit` corta pelo começo da ordenação, então
+      // pedir ascendente traria as 300 mensagens mais ANTIGAS do grupo e a
+      // conversa pararia no meio depois que ele passasse de 300 mensagens.
+      .order('created_at', { ascending: false })
       .limit(300);
-    if (!error) setMensagens((data ?? []) as Mensagem[]);
+    if (!error) setMensagens(((data ?? []) as Mensagem[]).reverse());
     setLoading(false);
   }, [grupo]);
 

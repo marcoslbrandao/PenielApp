@@ -1,7 +1,7 @@
 import React, { useState, useRef, useEffect, useCallback } from 'react';
 import {
   View, Text, StyleSheet, ScrollView, TouchableOpacity,
-  TextInput, FlatList, Linking, Alert, KeyboardAvoidingView,
+  TextInput, FlatList, Linking, Alert, KeyboardAvoidingView, Image,
   Platform, StatusBar, Animated, Modal, ActivityIndicator, RefreshControl,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
@@ -26,6 +26,11 @@ type Song = {
   // Links reais da cifra e da letra, colados pela banda. Opcionais: quando
   // vazios, o app abre a BUSCA do site em vez de um endereço adivinhado.
   cifra_url?: string | null; letra_url?: string | null;
+  // Tom em que a cifra está publicada no site. Com song_key, permite abrir a
+  // cifra já transposta pro tom que a banda toca.
+  cifra_tom?: string | null;
+  // Vindos da busca do Deezer no cadastro (todos opcionais).
+  duracao_segundos?: number | null; capa_url?: string | null; deezer_id?: string | null;
   in_repertoire: boolean;
 };
 
@@ -44,6 +49,13 @@ type Culto = {
 };
 
 type EscalaEntry = { id: string; membro_id: string; instrumento: string };
+
+// Resposta de um músico a um culto ou ensaio. Quem ainda não respondeu não tem
+// linha nenhuma — é por isso que 'pendente' não existe como status.
+type Presenca = {
+  id: string; tipo: 'culto' | 'ensaio'; evento_id: string;
+  profile_id: string; status: 'confirmado' | 'ausente';
+};
 type BandaMembro = { id: string; profile_id: string; nome: string };
 
 type Ensaio = {
@@ -51,7 +63,10 @@ type Ensaio = {
   entries: CultoSongEntry[]; escala: EscalaEntry[];
 };
 
-type ChatMsg = { id: string; author: string; text: string; time: string; mine: boolean };
+// Uma linha de `banda_chat_mensagens`. `autor_nome` vem duplicado do banco de
+// propósito: a policy de SELECT de `profiles` só libera cada um ver a própria
+// linha, então não há como descobrir por join quem mandou a mensagem.
+type ChatMsg = { id: string; autor_id: string; autor_nome: string; texto: string; created_at: string };
 type Tab = 'hoje' | 'repertorio' | 'cultos' | 'ensaios' | 'chat';
 
 // ─── Link helpers ───────────────────────────────────────────────────
@@ -88,7 +103,16 @@ function spotifySearchUrl(s: Pick<Song, 'title' | 'artist'>) { return `https://o
 // montada na mão que possa dar 404.
 function cifraTarget(s: Song): LinkTarget {
   const saved = normalizeUrl(s.cifra_url);
-  return saved ? { url: saved, direct: true } : { url: cifraSearchUrl(s), direct: false };
+  if (!saved) return { url: cifraSearchUrl(s), direct: false };
+  // Sabendo em que tom a cifra está publicada, abre a página já transposta pro
+  // tom da banda. Um #key que já estivesse no link salvo é substituído.
+  if (!/cifraclub\.com\.br/i.test(saved)) return { url: saved, direct: true };
+  // Quem copia a URL da barra de endereço depois de transpor no site leva
+  // junto um `#key=7` que não tem nada a ver com o tom da banda. O fragmento
+  // antigo sempre sai; só entra um novo se houver transposição a fazer.
+  const limpa = saved.replace(/#.*$/, '');
+  const semitons = semitonsEntre(s.cifra_tom, s.song_key);
+  return { url: semitons ? `${limpa}#key=${semitons}` : limpa, direct: true };
 }
 function letraTarget(s: Song): LinkTarget {
   const saved = normalizeUrl(s.letra_url);
@@ -131,6 +155,110 @@ function extractSpotifyId(input: string): string {
   return /^[a-zA-Z0-9]{22}$/.test(bare) ? bare : '';
 }
 
+// ─── Tom e transposição ──────────────────────────────────────────────────────
+// O Cifra Club transpõe pela própria URL: `#key=N`, com N em semitons a partir
+// do tom em que a cifra foi publicada. O app não tem como adivinhar esse tom,
+// então ele fica salvo em `cifra_tom`; daí dá pra calcular quantos semitons
+// separam a cifra do tom que a banda toca e abrir a página já transposta.
+const GRAU_DA_NOTA: Record<string, number> = { C: 0, D: 2, E: 4, F: 5, G: 7, A: 9, B: 11 };
+
+// Aceita "G", "Gm", "F#", "Bb", "Am", "bb" — devolve 0..11 ou null.
+function grauDoTom(tom?: string | null): number | null {
+  const t = (tom ?? '').trim().toUpperCase().replace(/\s+/g, '');
+  const m = t.match(/^([A-G])([#B]?)/);
+  if (!m) return null;
+  const base = GRAU_DA_NOTA[m[1]];
+  if (base === undefined) return null;
+  // Nessa posição, "B" só pode ser bemol — a nota Si já foi consumida em m[1].
+  const alteracao = m[2] === '#' ? 1 : m[2] === 'B' ? -1 : 0;
+  return (((base + alteracao) % 12) + 12) % 12;
+}
+
+// Semitons de `de` até `para`, sempre 0..11 (o Cifra Club aceita essa faixa).
+function semitonsEntre(de?: string | null, para?: string | null): number {
+  const a = grauDoTom(de);
+  const b = grauDoTom(para);
+  if (a === null || b === null) return 0;
+  return (((b - a) % 12) + 12) % 12;
+}
+
+// ─── Duração ─────────────────────────────────────────────────────────────────
+function formatDuracao(segundos?: number | null): string {
+  const s = Math.max(0, Math.round(segundos ?? 0));
+  if (!s) return '';
+  const h = Math.floor(s / 3600);
+  const m = Math.floor((s % 3600) / 60);
+  const seg = s % 60;
+  return h > 0
+    ? `${h}:${String(m).padStart(2, '0')}:${String(seg).padStart(2, '0')}`
+    : `${m}:${String(seg).padStart(2, '0')}`;
+}
+
+// Soma a duração das músicas conhecidas de um setlist. Devolve também quantas
+// ficaram de fora, pra tela poder dizer "37:22 (2 sem duração)" em vez de
+// mostrar um total que parece exato e não é.
+function totalDoSetlist(songs: Song[]): { segundos: number; semDuracao: number } {
+  let segundos = 0, semDuracao = 0;
+  for (const s of songs) {
+    if (s.duracao_segundos && s.duracao_segundos > 0) segundos += s.duracao_segundos;
+    else semDuracao += 1;
+  }
+  return { segundos, semDuracao };
+}
+
+// ─── Playlist do YouTube com o setlist inteiro ───────────────────────────────
+// O YouTube monta uma playlist temporária a partir de uma lista de IDs na
+// própria URL — sem API, sem chave, sem gastar cota. É como o músico ouve o
+// culto inteiro na ordem, no carro, antes do ensaio.
+function youtubePlaylistUrl(ids: string[]): string {
+  const limpos = ids.filter(Boolean).slice(0, 50);
+  if (!limpos.length) return '';
+  return `https://www.youtube.com/watch_videos?video_ids=${limpos.join(',')}`;
+}
+
+// ─── Busca no Deezer ─────────────────────────────────────────────────────────
+// A API pública do Deezer não pede chave nem login (o Spotify pediria
+// client_id + secret e uma Edge Function só pra isso). Devolve título,
+// artista, capa do álbum e duração — o suficiente pra preencher o cadastro
+// sem digitar nada.
+type DeezerHit = {
+  id: string; title: string; artist: string;
+  duracao: number; capa: string; link: string;
+};
+
+async function buscarNoDeezer(termo: string): Promise<DeezerHit[]> {
+  const q = termo.trim();
+  if (q.length < 2) return [];
+  // Sem timeout, uma rede ruim deixaria o spinner girando pra sempre e a
+  // pessoa presa numa tela que parece travada — e o cadastro manual, que
+  // funciona sem internet nenhuma, fica logo abaixo.
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), 8000);
+  let json: any;
+  try {
+    const res = await fetch(`https://api.deezer.com/search?q=${encodeURIComponent(q)}&limit=15`, { signal: controller.signal });
+    if (!res.ok) throw new Error(`Deezer HTTP ${res.status}`);
+    // A leitura do corpo fica dentro do mesmo timeout: uma resposta que abre e
+    // depois trava no meio penduraria a busca do mesmo jeito.
+    json = await res.json();
+  } finally {
+    clearTimeout(timer);
+  }
+  const data = Array.isArray(json?.data) ? json.data : [];
+  return data.map((t: any) => ({
+    id: String(t?.id ?? ''),
+    title: String(t?.title ?? '').trim(),
+    artist: String(t?.artist?.name ?? '').trim(),
+    // O banco só aceita 0 < duração < 7200 (`songs_duracao_segundos_check`).
+    // O Deezer indexa sets e álbuns ao vivo como faixa única de horas — sem
+    // este corte, escolher um desses fazia o save falhar com erro cru do
+    // Postgres, sem a pessoa ter como saber que a culpa era da duração.
+    duracao: (() => { const d = Number(t?.duration) || 0; return d > 0 && d < 7200 ? d : 0; })(),
+    capa: String(t?.album?.cover_medium ?? ''),
+    link: String(t?.link ?? ''),
+  })).filter((h: DeezerHit) => h.id && h.title);
+}
+
 // ─── Date helpers ─────────────────────────────────────────────────────────────
 // Nomes de mês/dia da semana por idioma do app, para exibir a data do culto
 // (ex: "Domingo, 12 de Julho" / "Sunday, 12 July") de forma coerente com o
@@ -168,12 +296,27 @@ function todayISO(): string {
   return `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`;
 }
 
-// ─── Static mock data (chat — será Supabase futuramente) ─────────────────────
-const CHAT_INIT: ChatMsg[] = [
-  { id: '1', author: 'Lucas (Guitarra)', text: 'Pessoal, alguém pode mandar a cifra de Oceanos em Lá?', time: '14:32', mine: false },
-  { id: '2', author: 'Ana (Teclado)', text: 'Mandei no grupo do WhatsApp também 🎹', time: '14:35', mine: false },
-  { id: '3', author: 'Você', text: 'Recebi, obrigado!', time: '14:40', mine: true },
-];
+// ─── Chat: formatação de data ────────────────────────────────────────────────
+function horaDaMensagem(iso: string): string {
+  const d = new Date(iso);
+  return `${d.getHours()}:${String(d.getMinutes()).padStart(2, '0')}`;
+}
+// Chave só de dia (sem hora), pra saber onde entra o divisor de data.
+function diaDaMensagem(iso: string): string {
+  const d = new Date(iso);
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+}
+
+// "Hoje" e "Ontem" por extenso; datas mais antigas caem no formato normal do
+// app ("Domingo, 30 de Agosto").
+function rotuloDoDia(dia: string, hoje: string, lang: string, t: (k: string) => string): string {
+  if (dia === hoje) return t('banda.hoje');
+  const d = new Date(hoje);
+  d.setDate(d.getDate() - 1);
+  const ontem = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+  if (dia === ontem) return t('banda.ontem');
+  return formatDateLabel(dia, lang);
+}
 
 // ─── Gate ─────────────────────────────────────────────────────────────────────
 function InviteGate({ onUnlock }: { onUnlock: () => void }) {
@@ -252,12 +395,22 @@ function MusicaModal({ visible, song, onClose, onSaved }: {
   visible: boolean; song: Song | null; onClose: () => void; onSaved: () => void;
 }) {
   const { t } = useTranslation();
-  const empty = { title: '', artist: '', song_key: '', bpm: '', youtube_id: '', spotify_id: '', cifra_url: '', letra_url: '' };
+  const empty = { title: '', artist: '', song_key: '', bpm: '', youtube_id: '', spotify_id: '', cifra_url: '', letra_url: '', cifra_tom: '' };
   const [form, setForm] = useState(empty);
   const [inRepertoire, setInRepertoire] = useState(true);
   const [errors, setErrors] = useState<Partial<typeof empty>>({});
   const [saving, setSaving] = useState(false);
   const isEdit = !!song;
+
+  // Capa, duração e id do Deezer não são campos que a pessoa digita — vêm da
+  // busca — então ficam fora do `form` e viajam à parte até o save.
+  const [midia, setMidia] = useState<{ duracao: number | null; capa: string | null; deezerId: string | null }>(
+    { duracao: null, capa: null, deezerId: null },
+  );
+  const [busca, setBusca] = useState('');
+  const [hits, setHits] = useState<DeezerHit[]>([]);
+  const [buscando, setBuscando] = useState(false);
+  const [erroBusca, setErroBusca] = useState('');
 
   // Recarrega o formulário toda vez que o modal abre: com os dados da música
   // em edição, ou em branco quando é uma música nova.
@@ -269,14 +422,47 @@ function MusicaModal({ visible, song, onClose, onSaved }: {
         song_key: song.song_key ?? '', bpm: song.bpm != null ? String(song.bpm) : '',
         youtube_id: song.youtube_id ?? '', spotify_id: song.spotify_id ?? '',
         cifra_url: song.cifra_url ?? '', letra_url: song.letra_url ?? '',
+        cifra_tom: song.cifra_tom ?? '',
       });
       setInRepertoire(!!song.in_repertoire);
+      setMidia({ duracao: song.duracao_segundos ?? null, capa: song.capa_url ?? null, deezerId: song.deezer_id ?? null });
     } else {
-      setForm({ title: '', artist: '', song_key: '', bpm: '', youtube_id: '', spotify_id: '', cifra_url: '', letra_url: '' });
+      setForm({ title: '', artist: '', song_key: '', bpm: '', youtube_id: '', spotify_id: '', cifra_url: '', letra_url: '', cifra_tom: '' });
       setInRepertoire(true);
+      setMidia({ duracao: null, capa: null, deezerId: null });
     }
     setErrors({});
+    setBusca(''); setHits([]); setErroBusca('');
   }, [visible, song]);
+
+  // ── Busca no Deezer ────────────────────────────────────────────────────────
+  // Preenche título, artista, capa e duração sem digitar nada. A API pública do
+  // Deezer não pede chave nem login, então dá pra chamar direto do app.
+  const rodarBusca = async () => {
+    const termo = busca.trim() || `${form.title} ${form.artist}`.trim();
+    if (termo.length < 2) return;
+    setBuscando(true); setErroBusca('');
+    try {
+      const achados = await buscarNoDeezer(termo);
+      setHits(achados);
+      if (!achados.length) setErroBusca(t('banda.buscaSemResultado'));
+    } catch {
+      // Sem internet, Deezer fora do ar, bloqueio de rede — em todos os casos o
+      // cadastro manual continua funcionando, então o erro não trava nada.
+      setErroBusca(t('banda.buscaFalhou'));
+      setHits([]);
+    } finally {
+      // No finally pra que nenhum caminho de saída deixe o spinner girando.
+      setBuscando(false);
+    }
+  };
+
+  const aplicarHit = (hit: DeezerHit) => {
+    setForm(prev => ({ ...prev, title: hit.title, artist: hit.artist }));
+    setMidia({ duracao: hit.duracao || null, capa: hit.capa || null, deezerId: hit.id || null });
+    setErrors(p => ({ ...p, title: undefined, artist: undefined }));
+    setHits([]); setBusca('');
+  };
 
   const set = (field: keyof typeof empty) => (val: string) => setForm(prev => ({ ...prev, [field]: val }));
 
@@ -295,6 +481,10 @@ function MusicaModal({ visible, song, onClose, onSaved }: {
       youtube_id: extractYoutubeId(form.youtube_id),
       cifra_url: normalizeUrl(form.cifra_url) || null,
       letra_url: normalizeUrl(form.letra_url) || null,
+      cifra_tom: form.cifra_tom.trim().toUpperCase() || null,
+      duracao_segundos: midia.duracao,
+      capa_url: midia.capa,
+      deezer_id: midia.deezerId,
       in_repertoire: inRepertoire,
     };
     const { error } = song
@@ -310,10 +500,13 @@ function MusicaModal({ visible, song, onClose, onSaved }: {
   // está preenchido agora — link direto quando existe, busca do site quando não.
   const previewSong: Song = {
     id: '', title: form.title.trim(), artist: form.artist.trim(),
-    song_key: '', bpm: 0,
+    // song_key entra de verdade: sem ele a prévia nunca mostraria o #key da
+    // transposição e discordaria da dica logo acima, na mesma tela.
+    song_key: form.song_key.trim(), bpm: 0,
     spotify_id: extractSpotifyId(form.spotify_id),
     youtube_id: extractYoutubeId(form.youtube_id),
-    cifra_url: form.cifra_url, letra_url: form.letra_url, in_repertoire: true,
+    cifra_url: form.cifra_url, letra_url: form.letra_url,
+    cifra_tom: form.cifra_tom, in_repertoire: true,
   };
   const previewRows = (form.title.trim() && form.artist.trim())
     ? [
@@ -334,6 +527,59 @@ function MusicaModal({ visible, song, onClose, onSaved }: {
               <TouchableOpacity onPress={onClose}><Ionicons name="close" size={22} color={C.textMuted} /></TouchableOpacity>
             </View>
             <ScrollView showsVerticalScrollIndicator={false} keyboardShouldPersistTaps="handled">
+              {/* Busca no Deezer: preenche título, artista, capa e duração */}
+              <View style={nm.buscaBox}>
+                <Text style={nm.buscaTitulo}>{t('banda.buscarMusica')}</Text>
+                <View style={nm.buscaRow}>
+                  <TextInput
+                    style={[nm.fieldInput, { flex: 1 }]}
+                    placeholder={t('banda.buscarPlaceholder')}
+                    placeholderTextColor={C.textDim}
+                    value={busca}
+                    onChangeText={setBusca}
+                    autoCorrect={false}
+                    returnKeyType="search"
+                    onSubmitEditing={rodarBusca}
+                  />
+                  <TouchableOpacity style={nm.buscaBtn} onPress={rodarBusca} disabled={buscando} activeOpacity={0.85}>
+                    {buscando ? <ActivityIndicator color="#fff" size="small" /> : <Ionicons name="search" size={17} color="#fff" />}
+                  </TouchableOpacity>
+                </View>
+                {!!erroBusca && <Text style={nm.buscaErro}>{erroBusca}</Text>}
+                {hits.map(hit => (
+                  <TouchableOpacity key={hit.id} style={nm.hitRow} onPress={() => aplicarHit(hit)} activeOpacity={0.7}>
+                    {hit.capa
+                      ? <Image source={{ uri: hit.capa }} style={nm.hitCapa} />
+                      : <View style={[nm.hitCapa, nm.hitCapaVazia]}><Ionicons name="musical-note" size={14} color={C.textDim} /></View>}
+                    <View style={{ flex: 1 }}>
+                      <Text style={nm.hitTitulo} numberOfLines={1}>{hit.title}</Text>
+                      <Text style={nm.hitArtista} numberOfLines={1}>
+                        {hit.artist}{hit.duracao ? ` · ${formatDuracao(hit.duracao)}` : ''}
+                      </Text>
+                    </View>
+                    <Ionicons name="add-circle-outline" size={18} color={C.primary} />
+                  </TouchableOpacity>
+                ))}
+                {!hits.length && !erroBusca && <Text style={nm.buscaDica}>{t('banda.buscarDica')}</Text>}
+              </View>
+
+              {/* Capa e duração já escolhidas */}
+              {(midia.capa || midia.duracao) && (
+                <View style={nm.midiaRow}>
+                  {!!midia.capa && <Image source={{ uri: midia.capa }} style={nm.midiaCapa} />}
+                  <View style={{ flex: 1 }}>
+                    <Text style={nm.midiaLabel}>{t('banda.midiaDaMusica')}</Text>
+                    <Text style={nm.midiaValor}>
+                      {midia.duracao ? formatDuracao(midia.duracao) : t('banda.semDuracao')}
+                      {midia.capa ? ` · ${t('banda.comCapa')}` : ''}
+                    </Text>
+                  </View>
+                  <TouchableOpacity onPress={() => setMidia({ duracao: null, capa: null, deezerId: null })} hitSlop={8}>
+                    <Ionicons name="close-circle" size={19} color={C.textDim} />
+                  </TouchableOpacity>
+                </View>
+              )}
+
               {/* Título */}
               <View style={nm.fieldWrap}>
                 <Text style={nm.fieldLabel}>{t('banda.tituloObrigatorio')}</Text>
@@ -372,6 +618,18 @@ function MusicaModal({ visible, song, onClose, onSaved }: {
                 <Text style={nm.fieldLabel}>{t('banda.linkCifraOpcional')}</Text>
                 <TextInput style={nm.fieldInput} placeholder={t('banda.coleLinkCifra')} placeholderTextColor={C.textDim} value={form.cifra_url} onChangeText={set('cifra_url')} autoCorrect={false} autoCapitalize="none" keyboardType="url" />
               </View>
+              {/* Tom em que a cifra está publicada — permite abrir já transposta */}
+              {!!form.cifra_url.trim() && (
+                <View style={nm.fieldWrap}>
+                  <Text style={nm.fieldLabel}>{t('banda.tomDaCifra')}</Text>
+                  <TextInput style={[nm.fieldInput, { width: 110 }]} placeholder="Ex: D" placeholderTextColor={C.textDim} value={form.cifra_tom} onChangeText={v => set('cifra_tom')(v.toUpperCase())} autoCapitalize="characters" maxLength={3} />
+                  <Text style={nm.fieldHint}>
+                    {form.cifra_tom.trim() && form.song_key.trim() && semitonsEntre(form.cifra_tom, form.song_key) > 0
+                      ? t('banda.tomDaCifraTranspoe', { n: semitonsEntre(form.cifra_tom, form.song_key), tom: form.song_key.trim().toUpperCase() })
+                      : t('banda.tomDaCifraDica')}
+                  </Text>
+                </View>
+              )}
               {/* Letra */}
               <View style={nm.fieldWrap}>
                 <Text style={nm.fieldLabel}>{t('banda.linkLetraOpcional')}</Text>
@@ -430,6 +688,22 @@ const nm = StyleSheet.create({
   fieldInput: { backgroundColor: C.surfaceHigh, borderWidth: 1, borderColor: C.border, borderRadius: 10, paddingHorizontal: 14, height: 46, fontSize: 15, color: C.text },
   fieldInputError: { borderColor: C.danger },
   fieldError: { fontSize: 11, color: C.danger, marginTop: 3 },
+  fieldHint: { fontSize: 11, color: C.textDim, marginTop: 5, lineHeight: 15 },
+  buscaBox: { backgroundColor: C.surfaceHigh, borderRadius: 12, borderWidth: 1, borderColor: C.border, padding: 12, marginBottom: 16 },
+  buscaTitulo: { fontSize: 11, color: C.textMuted, fontWeight: '700', letterSpacing: 0.8, textTransform: 'uppercase', marginBottom: 8 },
+  buscaRow: { flexDirection: 'row', gap: 8, alignItems: 'center' },
+  buscaBtn: { width: 46, height: 46, borderRadius: 10, backgroundColor: C.primary, alignItems: 'center', justifyContent: 'center' },
+  buscaDica: { fontSize: 11, color: C.textDim, marginTop: 8, lineHeight: 15 },
+  buscaErro: { fontSize: 11, color: C.gold, marginTop: 8 },
+  hitRow: { flexDirection: 'row', alignItems: 'center', gap: 10, paddingVertical: 8, borderTopWidth: 1, borderTopColor: C.border, marginTop: 8 },
+  hitCapa: { width: 34, height: 34, borderRadius: 5, backgroundColor: C.surface },
+  hitCapaVazia: { alignItems: 'center', justifyContent: 'center' },
+  hitTitulo: { fontSize: 13, color: C.text, fontWeight: '600' },
+  hitArtista: { fontSize: 11, color: C.textMuted, marginTop: 1 },
+  midiaRow: { flexDirection: 'row', alignItems: 'center', gap: 10, backgroundColor: C.surfaceHigh, borderRadius: 10, borderWidth: 1, borderColor: C.border, padding: 10, marginBottom: 14 },
+  midiaCapa: { width: 40, height: 40, borderRadius: 6 },
+  midiaLabel: { fontSize: 10, color: C.textMuted, fontWeight: '700', letterSpacing: 0.6, textTransform: 'uppercase' },
+  midiaValor: { fontSize: 13, color: C.text, marginTop: 2 },
   saveBtn: { flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 8, backgroundColor: C.primary, borderRadius: 12, paddingVertical: 14, marginTop: 8 },
   saveBtnText: { fontSize: 16, fontWeight: '700', color: '#fff' },
   previewBox: { backgroundColor: C.surfaceHigh, borderRadius: 10, padding: 12, marginBottom: 12, borderWidth: 1, borderColor: C.border },
@@ -611,6 +885,81 @@ function LinkMiniButtons({ song, openLink }: { song: Song; openLink: (target: Li
       <TouchableOpacity style={[s.linkBtn, s.linkBtnMini, sp.direct ? s.spotifyBtn : s.spotifyBtnDisabled]} onPress={() => openLink(sp, 'Spotify')}>
         <Ionicons name="musical-note" size={14} color={sp.direct ? C.accent : C.textDim} />
       </TouchableOpacity>
+    </View>
+  );
+}
+
+// ─── Resumo do setlist ───────────────────────────────────────────────────────
+// Quantas músicas, quanto tempo de música e um botão que abre o culto inteiro
+// como playlist do YouTube. O total só aparece quando alguma música tem
+// duração; se faltar duração em algumas, a tela avisa em vez de mostrar um
+// número que parece exato e não é.
+function SetlistResumo({ songs, onPlaylist }: { songs: Song[]; onPlaylist: () => void }) {
+  const { t } = useTranslation();
+  const { segundos, semDuracao } = totalDoSetlist(songs);
+  const comVideo = songs.filter(sg => sg.youtube_id).length;
+  return (
+    <View style={s.resumoRow}>
+      <View style={{ flex: 1 }}>
+        <Text style={s.resumoTexto}>
+          {songs.length} {songs.length !== 1 ? t('banda.musicas') : t('banda.musica')}
+          {segundos > 0 ? ` · ${formatDuracao(segundos)}` : ''}
+        </Text>
+        {semDuracao > 0 && segundos > 0 && (
+          <Text style={s.resumoAviso}>{t('banda.semDuracaoAviso', { n: semDuracao })}</Text>
+        )}
+      </View>
+      {comVideo > 0 && (
+        <TouchableOpacity style={s.playlistBtn} onPress={onPlaylist} activeOpacity={0.85}>
+          <Ionicons name="logo-youtube" size={14} color="#FF0000" />
+          <Text style={s.playlistBtnText}>{t('banda.playlist', { n: comVideo })}</Text>
+        </TouchableOpacity>
+      )}
+    </View>
+  );
+}
+
+// ─── Confirmação de presença ─────────────────────────────────────────────────
+// Cada músico responde por si (a policy do banco garante isso). Tocar de novo
+// no botão já marcado apaga a resposta e volta pra "sem resposta".
+function PresencaBar({ presencas, meuId, escalados, onResponder }: {
+  presencas: Presenca[];
+  meuId?: string;
+  escalados: number;
+  onResponder: (status: 'confirmado' | 'ausente' | null) => void;
+}) {
+  const { t } = useTranslation();
+  const minha = presencas.find(pr => pr.profile_id === meuId)?.status ?? null;
+  const confirmados = presencas.filter(pr => pr.status === 'confirmado').length;
+  const ausentes = presencas.filter(pr => pr.status === 'ausente').length;
+  const semResposta = Math.max(0, escalados - confirmados - ausentes);
+
+  return (
+    <View style={s.presencaWrap}>
+      <View style={s.presencaBtns}>
+        <TouchableOpacity
+          style={[s.presencaBtn, minha === 'confirmado' && s.presencaBtnOk]}
+          onPress={() => onResponder(minha === 'confirmado' ? null : 'confirmado')}
+          activeOpacity={0.85}
+        >
+          <Ionicons name={minha === 'confirmado' ? 'checkmark-circle' : 'checkmark-circle-outline'}
+            size={16} color={minha === 'confirmado' ? '#fff' : C.accent} />
+          <Text style={[s.presencaBtnText, minha === 'confirmado' && s.presencaBtnTextOn]}>{t('banda.euVou')}</Text>
+        </TouchableOpacity>
+        <TouchableOpacity
+          style={[s.presencaBtn, minha === 'ausente' && s.presencaBtnNo]}
+          onPress={() => onResponder(minha === 'ausente' ? null : 'ausente')}
+          activeOpacity={0.85}
+        >
+          <Ionicons name={minha === 'ausente' ? 'close-circle' : 'close-circle-outline'}
+            size={16} color={minha === 'ausente' ? '#fff' : C.danger} />
+          <Text style={[s.presencaBtnText, minha === 'ausente' && s.presencaBtnTextOn]}>{t('banda.naoPosso')}</Text>
+        </TouchableOpacity>
+      </View>
+      <Text style={s.presencaResumo}>
+        {t('banda.presencaResumo', { ok: confirmados, nao: ausentes })}
+        {escalados > 0 ? t('banda.presencaPendentes', { n: semResposta }) : ''}
+      </Text>
     </View>
   );
 }
@@ -878,7 +1227,10 @@ function EscalaLista({ escala, membros, onRemover }: {
 
 // ─── Main Screen ──────────────────────────────────────────────────────────────
 function BandaMain() {
-  const { t } = useTranslation();
+  const { t, i18n } = useTranslation();
+  // Precisa da conta logada pra saber quais mensagens do chat são minhas e
+  // pra assinar o que eu mando.
+  const { user } = useAuth();
   const [activeTab, setActiveTab] = useState<Tab>('hoje');
   const [songs, setSongs] = useState<Song[]>([]);
   const [cultos, setCultos] = useState<Culto[]>([]);
@@ -892,7 +1244,14 @@ function BandaMain() {
   const [expandedEnsaio, setExpandedEnsaio] = useState<string | null>(null);
   const [filter, setFilter] = useState<'all' | 'repertoire'>('all');
   const [chatMsg, setChatMsg] = useState('');
-  const [messages, setMessages] = useState<ChatMsg[]>(CHAT_INIT);
+  const [messages, setMessages] = useState<ChatMsg[]>([]);
+  const [loadingChat, setLoadingChat] = useState(true);
+  const [presencas, setPresencas] = useState<Presenca[]>([]);
+  // Nome e papel da própria conta. `autor_nome` fica gravado na mensagem pra
+  // sempre, então não dá pra mandar antes de saber o nome de verdade — sem
+  // isso, quem abrisse o chat com a rede lenta gravaria o começo do e-mail.
+  const [meuPerfil, setMeuPerfil] = useState<{ nome: string; admin: boolean } | null>(null);
+  const [enviandoChat, setEnviandoChat] = useState(false);
   const [cultosModal, setCultosModal] = useState(false);
   const [ensaioModal, setEnsaioModal] = useState(false);
   const [musicaModal, setMusicaModal] = useState(false);
@@ -923,6 +1282,114 @@ function BandaMain() {
     const { data } = await supabase.from('banda_membros').select('*').order('nome');
     if (data) setMembros(data as BandaMembro[]);
   }, []);
+
+  // ── Chat da banda ───────────────────────────────────────────────────────────
+  // Antes esta aba era decorativa: três mensagens fixas no código, que nunca
+  // iam ao banco e sumiam ao fechar o app. Agora é a mesma mecânica que já
+  // roda em produção no chat dos grupos (`components/GrupoChatModal.tsx`):
+  // carrega o histórico uma vez e depois escuta o realtime do Postgres.
+  const fetchChat = useCallback(async () => {
+    // Ordem DESC + reverse: `limit` corta pelo começo da ordenação, então
+    // pedir ascendente traria as 300 mensagens mais ANTIGAS e a conversa
+    // pararia no meio assim que a banda passasse de 300 mensagens.
+    const { data, error } = await supabase
+      .from('banda_chat_mensagens')
+      .select('*')
+      .order('created_at', { ascending: false })
+      .limit(300);
+    if (!error) setMessages(((data ?? []) as ChatMsg[]).reverse());
+    setLoadingChat(false);
+  }, []);
+
+  // ── Confirmações de presença ────────────────────────────────────────────────
+  // A tabela é pequena (uma linha por músico por evento respondido), então vale
+  // mais trazer tudo de uma vez do que consultar culto a culto.
+  const fetchPresencas = useCallback(async () => {
+    const { data } = await supabase.from('banda_presenca').select('*');
+    if (data) setPresencas(data as Presenca[]);
+  }, []);
+
+  const responderPresenca = async (
+    tipo: 'culto' | 'ensaio', eventoId: string, status: 'confirmado' | 'ausente' | null,
+  ) => {
+    if (!user?.id) { Alert.alert(t('common.erro'), t('banda.chatPrecisaLogin')); return; }
+    const anterior = presencas;
+    // Responde na tela na hora; se o banco recusar, volta ao que estava.
+    const semAMinha = presencas.filter(pr => !(pr.tipo === tipo && pr.evento_id === eventoId && pr.profile_id === user.id));
+    setPresencas(status
+      ? [...semAMinha, { id: `local-${eventoId}`, tipo, evento_id: eventoId, profile_id: user.id, status }]
+      : semAMinha);
+
+    const { error } = status
+      ? await supabase.from('banda_presenca').upsert(
+          { tipo, evento_id: eventoId, profile_id: user.id, status, updated_at: new Date().toISOString() },
+          { onConflict: 'tipo,evento_id,profile_id' })
+      : await supabase.from('banda_presenca').delete()
+          .eq('tipo', tipo).eq('evento_id', eventoId).eq('profile_id', user.id);
+
+    // Rollback só da própria linha: restaurar o array inteiro descartaria
+    // respostas de outros músicos que tivessem chegado nesse meio-tempo.
+    if (error) {
+      setPresencas(prev => {
+        const semAMinha2 = prev.filter(pr => !(pr.tipo === tipo && pr.evento_id === eventoId && pr.profile_id === user.id));
+        const minhaAntes = anterior.find(pr => pr.tipo === tipo && pr.evento_id === eventoId && pr.profile_id === user.id);
+        return minhaAntes ? [...semAMinha2, minhaAntes] : semAMinha2;
+      });
+      Alert.alert(t('common.erro'), error.message);
+      return;
+    }
+    fetchPresencas();
+  };
+
+  const presencasDo = (tipo: 'culto' | 'ensaio', eventoId: string) =>
+    presencas.filter(pr => pr.tipo === tipo && pr.evento_id === eventoId);
+
+  // Quantas PESSOAS distintas estão na escala. A escala guarda uma linha por
+  // pessoa+instrumento de propósito (a Ana pode estar como Teclado e como
+  // Backing Vocal), enquanto a presença é uma resposta por pessoa — contar
+  // linhas faria a tela cobrar resposta de gente que já respondeu.
+  const pessoasNaEscala = (escala: EscalaEntry[]) => new Set(
+    escala
+      .map(e => membros.find(m => m.id === e.membro_id)?.profile_id)
+      .filter((id): id is string => !!id),
+  ).size;
+
+  useEffect(() => { fetchPresencas(); }, [fetchPresencas]);
+
+  useEffect(() => {
+    if (!user?.id) { setMeuPerfil(null); return; }
+    let vivo = true;
+    supabase.from('profiles').select('full_name, role').eq('id', user.id).single()
+      .then(({ data }) => {
+        if (!vivo) return;
+        // Resolve mesmo sem nome cadastrado — o que importa é saber que a
+        // consulta terminou, pra não travar o chat pra sempre.
+        setMeuPerfil({ nome: (data?.full_name ?? '').trim(), admin: data?.role === 'admin' });
+      });
+    return () => { vivo = false; };
+  }, [user?.id]);
+
+  useEffect(() => {
+    fetchChat();
+    const channel = supabase
+      .channel('banda_chat')
+      .on('postgres_changes',
+        { event: 'INSERT', schema: 'public', table: 'banda_chat_mensagens' },
+        payload => {
+          const nova = payload.new as ChatMsg;
+          // O próprio envio já inseriu a mensagem na lista local; sem esta
+          // checagem ela apareceria duas vezes pra quem mandou.
+          setMessages(prev => (prev.some(m => m.id === nova.id) ? prev : [...prev, nova]));
+        })
+      .on('postgres_changes',
+        { event: 'DELETE', schema: 'public', table: 'banda_chat_mensagens' },
+        payload => {
+          const removida = payload.old as { id: string };
+          setMessages(prev => prev.filter(m => m.id !== removida.id));
+        })
+      .subscribe();
+    return () => { supabase.removeChannel(channel); };
+  }, [fetchChat]);
 
   // ── Fetch cultos com músicas e escala ────────────────────────────────────────
   const fetchCultos = useCallback(async () => {
@@ -986,7 +1453,7 @@ function BandaMain() {
 
   useEffect(() => { fetchSongs(); fetchCultos(); fetchEnsaios(); fetchMembros(); }, [fetchSongs, fetchCultos, fetchEnsaios, fetchMembros]);
 
-  const handleRefresh = () => { setRefreshing(true); fetchSongs(); fetchCultos(); fetchEnsaios(); fetchMembros(); };
+  const handleRefresh = () => { setRefreshing(true); fetchSongs(); fetchCultos(); fetchEnsaios(); fetchMembros(); fetchPresencas(); };
 
   const removerDaEscala = (tipo: 'culto' | 'ensaio', id: string) => {
     Alert.alert(t('banda.removerDaEscala'), t('banda.desejaRemoverDaEscala'), [
@@ -1027,17 +1494,67 @@ function BandaMain() {
     Linking.openURL(target.url).catch(() => Alert.alert(t('common.erro'), t('banda.erroAbrirLink')));
   };
 
+  // Abre o setlist inteiro como playlist do YouTube, na ordem do culto. Só
+  // entram as músicas que têm vídeo cadastrado — as outras seriam buracos na
+  // playlist.
+  const abrirPlaylist = (entries: CultoSongEntry[]) => {
+    const ids = entries
+      .map(e => songs.find(sg => sg.id === e.song_id)?.youtube_id)
+      .filter((id): id is string => !!id);
+    const url = youtubePlaylistUrl(ids);
+    if (!url) { Alert.alert(t('banda.semLink'), t('banda.semVideosNoSetlist')); return; }
+    Linking.openURL(url).catch(() => Alert.alert(t('common.erro'), t('banda.erroAbrirLink')));
+  };
+
+  const songsDoSetlist = (entries: CultoSongEntry[]) =>
+    entries.map(e => songs.find(sg => sg.id === e.song_id)).filter((sg): sg is Song => !!sg);
+
   const abrirNovaMusica = () => { setEditSong(null); setMusicaModal(true); };
   const abrirEditarMusica = (song: Song) => { setEditSong(song); setMusicaModal(true); };
   const fecharMusicaModal = () => { setMusicaModal(false); setEditSong(null); };
 
-  const sendMessage = () => {
-    if (!chatMsg.trim()) return;
-    const now = new Date();
-    const time = `${now.getHours()}:${String(now.getMinutes()).padStart(2,'0')}`;
-    setMessages(prev => [...prev, { id: String(Date.now()), author: 'Você', text: chatMsg.trim(), time, mine: true }]);
+  // Nome que aparece na mensagem. Vem do diretório da banda, que já está
+  // carregado na tela — evita uma consulta a `profiles` só pra isso.
+  const meuNome = meuPerfil?.nome
+    || membros.find(m => m.profile_id === user?.id)?.nome
+    || user?.email?.split('@')[0]
+    || t('banda.voce');
+  // Só libera o envio depois que a consulta ao perfil voltou (ou que o
+  // diretório da banda chegou), pra não gravar um nome provisório no banco.
+  const nomePronto = meuPerfil !== null || membros.length > 0;
+
+  const sendMessage = async () => {
+    const texto = chatMsg.trim();
+    if (!texto || enviandoChat) return;
+    if (!user?.id) { Alert.alert(t('common.erro'), t('banda.chatPrecisaLogin')); return; }
+    setEnviandoChat(true);
+    const { data, error } = await supabase
+      .from('banda_chat_mensagens')
+      .insert({ autor_id: user.id, autor_nome: meuNome, texto })
+      .select()
+      .single();
+    setEnviandoChat(false);
+    if (error) { Alert.alert(t('common.erro'), error.message); return; }
+    // Aparece na hora pra quem mandou, sem esperar o realtime dar a volta.
+    if (data) setMessages(prev => (prev.some(m => m.id === (data as ChatMsg).id) ? prev : [...prev, data as ChatMsg]));
     setChatMsg('');
     setTimeout(() => scrollRef.current?.scrollToEnd({ animated: true }), 100);
+  };
+
+  // Segurar a própria mensagem apaga. A policy do banco só deixa apagar a
+  // própria (ou qualquer uma, se for admin).
+  const apagarMensagem = (msg: ChatMsg) => {
+    // A policy do banco deixa o autor apagar a própria e o admin apagar
+    // qualquer uma — a tela precisa oferecer as duas coisas, senão moderar só
+    // pelo painel do Supabase.
+    if (msg.autor_id !== user?.id && !meuPerfil?.admin) return;
+    Alert.alert(t('banda.apagarMensagem'), t('banda.apagarMensagemMsg'), [
+      { text: t('common.cancelar'), style: 'cancel' },
+      { text: t('common.remover'), style: 'destructive', onPress: async () => {
+        setMessages(prev => prev.filter(m => m.id !== msg.id));
+        await supabase.from('banda_chat_mensagens').delete().eq('id', msg.id);
+      }},
+    ]);
   };
 
   const cultoDoDia = cultos.find(c => c.date === today) ?? cultos[0] ?? null;
@@ -1097,7 +1614,17 @@ function BandaMain() {
                   <Text style={s.hojeSongCountLabel}>{t('banda.musicas')}</Text>
                 </View>
               </View>
+              <PresencaBar
+                presencas={presencasDo('culto', cultoDoDia.id)}
+                meuId={user?.id}
+                escalados={pessoasNaEscala(cultoDoDia.escala)}
+                onResponder={st => responderPresenca('culto', cultoDoDia.id, st)}
+              />
               <Text style={s.sectionLabel}>{t('banda.setlist')}</Text>
+              <SetlistResumo
+                songs={songsDoSetlist(cultoDoDia.entries)}
+                onPlaylist={() => abrirPlaylist(cultoDoDia.entries)}
+              />
               {cultoDoDia.entries.map((entry, idx) => {
                 const song = songs.find(sg => sg.id === entry.song_id);
                 if (!song) return null;
@@ -1168,9 +1695,18 @@ function BandaMain() {
               refreshControl={<RefreshControl refreshing={refreshing} onRefresh={handleRefresh} tintColor={C.primary} />}
               renderItem={({ item }) => (
                 <View style={s.songCard}>
-                  <View style={[s.keyBadge, { backgroundColor: item.in_repertoire ? C.primaryDim : C.surfaceHigh }]}>
-                    <Text style={[s.keyText, { color: item.in_repertoire ? C.primary : C.textMuted }]}>{item.song_key}</Text>
-                  </View>
+                  {item.capa_url ? (
+                    // A borda roxa faz o papel que o selo de tom fazia: dizer
+                    // de relance se a música está no repertório da banda.
+                    <Image
+                      source={{ uri: item.capa_url }}
+                      style={[s.songCapa, item.in_repertoire && s.songCapaNoRepertorio]}
+                    />
+                  ) : (
+                    <View style={[s.keyBadge, { backgroundColor: item.in_repertoire ? C.primaryDim : C.surfaceHigh }]}>
+                      <Text style={[s.keyText, { color: item.in_repertoire ? C.primary : C.textMuted }]}>{item.song_key}</Text>
+                    </View>
+                  )}
                   <TouchableOpacity style={{ flex: 1, marginLeft: 10 }} onPress={() => abrirEditarMusica(item)} activeOpacity={0.7}>
                     <View style={s.songTitleRow}>
                       <Text style={[s.songTitle, { flexShrink: 1 }]} numberOfLines={1}>{item.title}</Text>
@@ -1180,6 +1716,9 @@ function BandaMain() {
                     <View style={s.songMeta}>
                       <View style={s.songMetaChip}><Text style={s.songMetaText}>{t('banda.tomLabel')} {item.song_key}</Text></View>
                       <View style={s.songMetaChip}><Text style={s.songMetaText}>{item.bpm} BPM</Text></View>
+                      {!!item.duracao_segundos && (
+                        <View style={s.songMetaChip}><Text style={s.songMetaText}>{formatDuracao(item.duracao_segundos)}</Text></View>
+                      )}
                     </View>
                   </TouchableOpacity>
                   <View style={s.songLinks}>
@@ -1235,6 +1774,10 @@ function BandaMain() {
                     </TouchableOpacity>
                     {isOpen && (
                       <View style={s.cultoSongs}>
+                        <SetlistResumo
+                          songs={songsDoSetlist(culto.entries)}
+                          onPlaylist={() => abrirPlaylist(culto.entries)}
+                        />
                         <View style={s.cultoColHeader}>
                           <Text style={[s.cultoColLabel, { flex: 1, marginLeft: 52 }]}>{t('banda.colunaMusica')}</Text>
                           <Text style={[s.cultoColLabel, { width: 44, textAlign: 'center' }]}>{t('banda.tomLabel')}</Text>
@@ -1264,6 +1807,12 @@ function BandaMain() {
                           </TouchableOpacity>
                         </View>
                         <EscalaLista escala={culto.escala} membros={membros} onRemover={id => removerDaEscala('culto', id)} />
+                        <PresencaBar
+                          presencas={presencasDo('culto', culto.id)}
+                          meuId={user?.id}
+                          escalados={pessoasNaEscala(culto.escala)}
+                          onResponder={st => responderPresenca('culto', culto.id, st)}
+                        />
                       </View>
                     )}
                   </View>
@@ -1336,6 +1885,10 @@ function BandaMain() {
                     </TouchableOpacity>
                     {isOpen && (
                       <View style={s.cultoSongs}>
+                        <SetlistResumo
+                          songs={songsDoSetlist(ensaio.entries)}
+                          onPlaylist={() => abrirPlaylist(ensaio.entries)}
+                        />
                         <View style={s.cultoColHeader}>
                           <Text style={[s.cultoColLabel, { flex: 1, marginLeft: 52 }]}>{t('banda.colunaMusica')}</Text>
                           <Text style={[s.cultoColLabel, { width: 44, textAlign: 'center' }]}>{t('banda.tomLabel')}</Text>
@@ -1367,6 +1920,12 @@ function BandaMain() {
                           </TouchableOpacity>
                         </View>
                         <EscalaLista escala={ensaio.escala} membros={membros} onRemover={id => removerDaEscala('ensaio', id)} />
+                        <PresencaBar
+                          presencas={presencasDo('ensaio', ensaio.id)}
+                          meuId={user?.id}
+                          escalados={pessoasNaEscala(ensaio.escala)}
+                          onResponder={st => responderPresenca('ensaio', ensaio.id, st)}
+                        />
                       </View>
                     )}
                   </View>
@@ -1381,19 +1940,46 @@ function BandaMain() {
       {/* ══ CHAT ══════════════════════════════════════════════════════════════ */}
       {activeTab === 'chat' && (
         <KeyboardAvoidingView style={{ flex: 1 }} behavior={Platform.OS === 'ios' ? 'padding' : undefined} keyboardVerticalOffset={90}>
-          <ScrollView ref={scrollRef} contentContainerStyle={s.chatContent} onContentSizeChange={() => scrollRef.current?.scrollToEnd({ animated: false })}>
-            {messages.map(m => (
-              <View key={m.id} style={[s.bubble, m.mine && s.bubbleMine]}>
-                {!m.mine && <Text style={s.bubbleAuthor}>{m.author}</Text>}
-                <Text style={[s.bubbleText, m.mine && s.bubbleTextMine]}>{m.text}</Text>
-                <Text style={[s.bubbleTime, m.mine && s.bubbleTimeMine]}>{m.time}</Text>
-              </View>
-            ))}
-          </ScrollView>
+          {loadingChat ? (
+            <View style={s.loadingWrap}><ActivityIndicator color={C.primary} /></View>
+          ) : (
+            <ScrollView ref={scrollRef} contentContainerStyle={s.chatContent} onContentSizeChange={() => scrollRef.current?.scrollToEnd({ animated: false })}>
+              {messages.length === 0 ? (
+                <View style={s.emptyState}>
+                  <Ionicons name="chatbubbles-outline" size={48} color={C.textDim} />
+                  <Text style={s.emptyTitle}>{t('banda.chatVazio')}</Text>
+                  <Text style={s.emptyDesc}>{t('banda.chatVazioDesc')}</Text>
+                </View>
+              ) : messages.map((m, idx) => {
+                const mine = m.autor_id === user?.id;
+                // Divisor de data quando a mensagem cai num dia diferente da anterior.
+                const dia = diaDaMensagem(m.created_at);
+                const mostraDia = idx === 0 || diaDaMensagem(messages[idx - 1].created_at) !== dia;
+                return (
+                  <View key={m.id}>
+                    {mostraDia && (
+                      <View style={s.chatDayWrap}>
+                        <Text style={s.chatDay}>{rotuloDoDia(dia, today, i18n.language, t)}</Text>
+                      </View>
+                    )}
+                    <TouchableOpacity
+                      activeOpacity={mine || meuPerfil?.admin ? 0.7 : 1}
+                      onLongPress={() => apagarMensagem(m)}
+                      style={[s.bubble, mine && s.bubbleMine]}
+                    >
+                      {!mine && <Text style={s.bubbleAuthor}>{m.autor_nome}</Text>}
+                      <Text style={[s.bubbleText, mine && s.bubbleTextMine]}>{m.texto}</Text>
+                      <Text style={[s.bubbleTime, mine && s.bubbleTimeMine]}>{horaDaMensagem(m.created_at)}</Text>
+                    </TouchableOpacity>
+                  </View>
+                );
+              })}
+            </ScrollView>
+          )}
           <View style={s.chatInput}>
-            <TextInput style={s.chatField} placeholder={t('banda.mensagemPlaceholder')} placeholderTextColor={C.textDim} value={chatMsg} onChangeText={setChatMsg} returnKeyType="send" onSubmitEditing={sendMessage} />
-            <TouchableOpacity style={s.sendBtn} onPress={sendMessage}>
-              <Ionicons name="send" size={18} color="#fff" />
+            <TextInput style={s.chatField} placeholder={t('banda.mensagemPlaceholder')} placeholderTextColor={C.textDim} value={chatMsg} onChangeText={setChatMsg} returnKeyType="send" onSubmitEditing={sendMessage} maxLength={1000} />
+            <TouchableOpacity style={[s.sendBtn, (!chatMsg.trim() || enviandoChat || !nomePronto) && { opacity: 0.45 }]} onPress={sendMessage} disabled={!chatMsg.trim() || enviandoChat || !nomePronto}>
+              {enviandoChat ? <ActivityIndicator color="#fff" size="small" /> : <Ionicons name="send" size={18} color="#fff" />}
             </TouchableOpacity>
           </View>
         </KeyboardAvoidingView>
@@ -1475,6 +2061,8 @@ const s = StyleSheet.create({
   songMetaChip: { backgroundColor: C.surfaceHigh, borderRadius: 6, paddingHorizontal: 7, paddingVertical: 2 },
   songMetaText: { fontSize: 10, color: C.textMuted, fontWeight: '600' },
   songLinks: { flexDirection: 'row', gap: 6, marginLeft: 8 },
+  songCapa: { width: 40, height: 40, borderRadius: 10, backgroundColor: C.surfaceHigh, borderWidth: 2, borderColor: 'transparent' },
+  songCapaNoRepertorio: { borderColor: C.primary },
   linkBtn: { width: 30, height: 30, borderRadius: 8, backgroundColor: C.surfaceHigh, alignItems: 'center', justifyContent: 'center', borderWidth: 1, borderColor: C.border },
   linkBtnMini: { width: 28, height: 28, borderRadius: 7 },
   songTitleRow: { flexDirection: 'row', alignItems: 'center', gap: 6 },
@@ -1530,7 +2118,26 @@ const s = StyleSheet.create({
   obsText: { fontSize: 12, color: C.primary, flex: 1 },
   confirmBtn: { width: 32, height: 32, borderRadius: 16, backgroundColor: C.accentDim, alignItems: 'center', justifyContent: 'center' },
   // Chat
-  chatContent: { padding: 16, paddingBottom: 8 },
+  // Resumo do setlist (contagem, tempo total e playlist do YouTube)
+  resumoRow: { flexDirection: 'row', alignItems: 'center', gap: 10, paddingVertical: 10, paddingHorizontal: 2, marginBottom: 4 },
+  resumoTexto: { fontSize: 13, color: C.textMuted, fontWeight: '600' },
+  resumoAviso: { fontSize: 11, color: C.textDim, marginTop: 2 },
+  playlistBtn: { flexDirection: 'row', alignItems: 'center', gap: 6, backgroundColor: '#1a0000', borderWidth: 1, borderColor: '#FF000040', borderRadius: 8, paddingHorizontal: 10, paddingVertical: 7 },
+  playlistBtnText: { fontSize: 11, fontWeight: '700', color: C.text },
+
+  // Confirmação de presença
+  presencaWrap: { marginTop: 14, paddingTop: 12, borderTopWidth: 1, borderTopColor: C.border, gap: 8 },
+  presencaBtns: { flexDirection: 'row', gap: 8 },
+  presencaBtn: { flex: 1, flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 6, height: 38, borderRadius: 10, borderWidth: 1, borderColor: C.border, backgroundColor: C.surfaceHigh },
+  presencaBtnOk: { backgroundColor: C.accentDim, borderColor: C.accent },
+  presencaBtnNo: { backgroundColor: '#4A1414', borderColor: C.danger },
+  presencaBtnText: { fontSize: 13, fontWeight: '700', color: C.textMuted },
+  presencaBtnTextOn: { color: '#fff' },
+  presencaResumo: { fontSize: 11, color: C.textDim, textAlign: 'center' },
+
+  chatContent: { padding: 16, paddingBottom: 8, flexGrow: 1 },
+  chatDayWrap: { alignItems: 'center', marginVertical: 10 },
+  chatDay: { fontSize: 10, color: C.textMuted, fontWeight: '700', letterSpacing: 0.5, textTransform: 'uppercase', backgroundColor: C.surfaceHigh, paddingHorizontal: 10, paddingVertical: 4, borderRadius: 10, overflow: 'hidden' },
   bubble: { alignSelf: 'flex-start', maxWidth: '80%', backgroundColor: C.surface, borderRadius: 12, borderBottomLeftRadius: 4, padding: 10, marginBottom: 10, borderWidth: 1, borderColor: C.border },
   bubbleMine: { alignSelf: 'flex-end', backgroundColor: C.primaryDim, borderBottomLeftRadius: 12, borderBottomRightRadius: 4, borderColor: C.primary },
   bubbleAuthor: { fontSize: 11, color: C.primary, fontWeight: '700', marginBottom: 4 },
