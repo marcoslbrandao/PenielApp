@@ -41,11 +41,26 @@ type LinkTarget = { url: string; direct: boolean };
 
 type CultoSongEntry = {
   song_id: string; song_key: string; bpm: string; order_index: number;
+  // Recado desta música NESTE culto ("entrar direto no refrão"). Fica no
+  // evento, não no repertório: a mesma canção pode ser tocada de um jeito no
+  // domingo de manhã e de outro no camping.
+  nota?: string | null;
+};
+
+// Um item da ordem do culto que não é música: oração, avisos, oferta,
+// pregação. As músicas não são duplicadas aqui — a tela junta as duas listas
+// na hora de mostrar, usando o mesmo `order_index`.
+type RoadmapItem = {
+  id: string; titulo: string; descricao?: string | null;
+  duracao_segundos?: number | null; order_index: number;
 };
 
 type Culto = {
   id: string; label: string; date: string;
-  entries: CultoSongEntry[]; escala: EscalaEntry[];
+  // false = rascunho: escondido de quem não é admin enquanto a escala não
+  // está pronta. É filtro de interface, não barreira de segurança.
+  publicado: boolean;
+  entries: CultoSongEntry[]; escala: EscalaEntry[]; roadmap: RoadmapItem[];
 };
 
 type EscalaEntry = { id: string; membro_id: string; instrumento: string };
@@ -60,7 +75,20 @@ type BandaMembro = { id: string; profile_id: string; nome: string };
 
 type Ensaio = {
   id: string; label: string; date: string; time: string; local: string; observacao: string;
+  publicado: boolean;
   entries: CultoSongEntry[]; escala: EscalaEntry[];
+};
+
+// Um dia em que o músico avisou que não pode servir — declarado antes de
+// existir culto nenhum, diferente da confirmação de presença.
+type Indisponibilidade = {
+  id: string; profile_id: string; data: string;
+};
+
+// Formação salva ("equipe A"), pra montar a escala de um culto num toque.
+type BandaTime = {
+  id: string; nome: string;
+  membros: { membro_id: string; instrumento: string }[];
 };
 
 // Uma linha de `banda_chat_mensagens`. `autor_nome` vem duplicado do banco de
@@ -291,6 +319,20 @@ function diaEMes(iso: string, lang: string = 'pt'): { dia: string; mes: string }
   const [, m, d] = iso.split('-').map(Number);
   return { dia: String(d).padStart(2, '0'), mes: meses[m - 1].slice(0, 3) };
 }
+// Grade de um mês pra desenhar o calendário: começa no domingo da semana do
+// dia 1 e termina no sábado da semana do último dia, com null nos espaços de
+// fora do mês.
+function gradeDoMes(ano: number, mes: number): (string | null)[] {
+  const primeiro = new Date(ano, mes, 1);
+  const dias = new Date(ano, mes + 1, 0).getDate();
+  const celulas: (string | null)[] = Array(primeiro.getDay()).fill(null);
+  for (let d = 1; d <= dias; d++) {
+    celulas.push(`${ano}-${String(mes + 1).padStart(2, '0')}-${String(d).padStart(2, '0')}`);
+  }
+  while (celulas.length % 7 !== 0) celulas.push(null);
+  return celulas;
+}
+
 function todayISO(): string {
   const d = new Date();
   return `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`;
@@ -729,6 +771,9 @@ function NovoCultoModal({ visible, onClose, onSaved, songs }: {
   const [entries, setEntries] = useState<CultoSongEntry[]>([]);
   const [dateError, setDateError] = useState('');
   const [saving, setSaving] = useState(false);
+  // Ligado por padrão pra não mudar o comportamento de quem já usa: quem
+  // quiser montar em paz desliga e publica depois.
+  const [publicado, setPublicado] = useState(true);
 
   const isSongSelected = (id: string) => entries.some(e => e.song_id === id);
   const toggleSong = (song: Song) => {
@@ -762,7 +807,7 @@ function NovoCultoModal({ visible, onClose, onSaved, songs }: {
 
     // 1. Cria o culto
     const { data: cultoData, error: cultoError } = await supabase
-      .from('cultos').insert({ label, date: iso }).select().single();
+      .from('cultos').insert({ label, date: iso, publicado }).select().single();
     if (cultoError || !cultoData) { Alert.alert(t('common.erro'), cultoError?.message); setSaving(false); return; }
 
     // 2. Insere as músicas do culto
@@ -826,6 +871,16 @@ function NovoCultoModal({ visible, onClose, onSaved, songs }: {
                 );
               })}
             </ScrollView>
+            <TouchableOpacity style={md.publicarRow} onPress={() => setPublicado(v => !v)} activeOpacity={0.7}>
+              <Ionicons name={publicado ? 'eye-outline' : 'eye-off-outline'} size={18} color={publicado ? C.accent : C.gold} />
+              <View style={{ flex: 1 }}>
+                <Text style={md.publicarTitulo}>{publicado ? t('banda.publicarAgora') : t('banda.salvarComoRascunho')}</Text>
+                <Text style={md.publicarDesc}>{publicado ? t('banda.publicarAgoraDesc') : t('banda.salvarComoRascunhoDesc')}</Text>
+              </View>
+              <View style={[md.publicarSwitch, publicado && md.publicarSwitchOn]}>
+                <View style={[md.publicarKnob, publicado && md.publicarKnobOn]} />
+              </View>
+            </TouchableOpacity>
             <TouchableOpacity style={[md.saveBtn, saving && { opacity: 0.7 }]} onPress={handleSave} disabled={saving} activeOpacity={0.85}>
               {saving ? <ActivityIndicator color="#fff" /> : <><Ionicons name="save-outline" size={18} color="#fff" /><Text style={md.saveBtnText}>{t('banda.salvarCulto')}</Text></>}
             </TouchableOpacity>
@@ -836,6 +891,18 @@ function NovoCultoModal({ visible, onClose, onSaved, songs }: {
   );
 }
 const md = StyleSheet.create({
+  avisoIndisp: { flexDirection: 'row', alignItems: 'flex-start', gap: 8, backgroundColor: '#3A2E0A', borderWidth: 1, borderColor: C.gold, borderRadius: 10, padding: 10, marginBottom: 16 },
+  avisoIndispText: { flex: 1, fontSize: 12, color: C.gold, lineHeight: 16 },
+  salvarTimeRow: { flexDirection: 'row', gap: 8, alignItems: 'center', marginBottom: 16 },
+  salvarTimeBtn: { width: 46, height: 46, borderRadius: 10, backgroundColor: C.primary, alignItems: 'center', justifyContent: 'center' },
+  timesDica: { fontSize: 11, color: C.textDim, marginTop: -8, marginBottom: 10, lineHeight: 15 },
+  publicarRow: { flexDirection: 'row', alignItems: 'center', gap: 12, backgroundColor: C.surfaceHigh, borderWidth: 1, borderColor: C.border, borderRadius: 12, padding: 12, marginTop: 12 },
+  publicarTitulo: { fontSize: 14, fontWeight: '700', color: C.text },
+  publicarDesc: { fontSize: 11, color: C.textMuted, marginTop: 2, lineHeight: 15 },
+  publicarSwitch: { width: 42, height: 24, borderRadius: 12, backgroundColor: C.border, padding: 3, justifyContent: 'center' },
+  publicarSwitchOn: { backgroundColor: C.accentDim },
+  publicarKnob: { width: 18, height: 18, borderRadius: 9, backgroundColor: C.textDim },
+  publicarKnobOn: { backgroundColor: C.accent, alignSelf: 'flex-end' },
   overlay: { flex: 1, justifyContent: 'flex-end', backgroundColor: 'rgba(0,0,0,0.7)' },
   sheet: { backgroundColor: C.surface, borderTopLeftRadius: 24, borderTopRightRadius: 24, padding: 20, paddingBottom: 36, maxHeight: '92%' },
   header: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginBottom: 20 },
@@ -979,6 +1046,7 @@ function NovoEnsaioModal({ visible, onClose, onSaved, songs }: {
   const [entries, setEntries] = useState<CultoSongEntry[]>([]);
   const [dateError, setDateError] = useState('');
   const [saving, setSaving] = useState(false);
+  const [publicado, setPublicado] = useState(true);
 
   const isSongSelected = (id: string) => entries.some(e => e.song_id === id);
   const toggleSong = (song: Song) => {
@@ -1012,7 +1080,7 @@ function NovoEnsaioModal({ visible, onClose, onSaved, songs }: {
     setSaving(true);
 
     const { data: ensaioData, error: ensaioError } = await supabase
-      .from('ensaios').insert({ label, date: iso, time: time.trim(), local: local.trim(), observacao: observacao.trim() }).select().single();
+      .from('ensaios').insert({ label, date: iso, time: time.trim(), local: local.trim(), observacao: observacao.trim(), publicado }).select().single();
     if (ensaioError || !ensaioData) { Alert.alert(t('common.erro'), ensaioError?.message ?? t('banda.erroSalvarEnsaio')); setSaving(false); return; }
 
     const ensaioSongs = entries.map(e => ({
@@ -1092,6 +1160,16 @@ function NovoEnsaioModal({ visible, onClose, onSaved, songs }: {
                 })}
               </View>
             </ScrollView>
+            <TouchableOpacity style={md.publicarRow} onPress={() => setPublicado(v => !v)} activeOpacity={0.7}>
+              <Ionicons name={publicado ? 'eye-outline' : 'eye-off-outline'} size={18} color={publicado ? C.accent : C.gold} />
+              <View style={{ flex: 1 }}>
+                <Text style={md.publicarTitulo}>{publicado ? t('banda.publicarAgora') : t('banda.salvarComoRascunho')}</Text>
+                <Text style={md.publicarDesc}>{publicado ? t('banda.publicarAgoraDesc') : t('banda.salvarComoRascunhoDesc')}</Text>
+              </View>
+              <View style={[md.publicarSwitch, publicado && md.publicarSwitchOn]}>
+                <View style={[md.publicarKnob, publicado && md.publicarKnobOn]} />
+              </View>
+            </TouchableOpacity>
             <TouchableOpacity style={[md.saveBtn, saving && { opacity: 0.7 }]} onPress={handleSave} disabled={saving} activeOpacity={0.85}>
               {saving ? <ActivityIndicator color="#fff" /> : <><Ionicons name="save-outline" size={18} color="#fff" /><Text style={md.saveBtnText}>{t('banda.salvarEnsaio')}</Text></>}
             </TouchableOpacity>
@@ -1108,19 +1186,83 @@ function NovoEnsaioModal({ visible, onClose, onSaved, songs }: {
 // que ela vai tocar naquele culto/ensaio específico.
 const INSTRUMENTOS = ['vocal', 'violao', 'guitarra', 'baixo', 'bateria', 'teclado', 'ministro', 'outro'] as const;
 
-function EscalaModal({ visible, onClose, onSaved, membros, tipo, eventoId }: {
+function EscalaModal({ visible, onClose, onSaved, membros, tipo, eventoId, times, escalaAtual, indisponiveis, onTimesMudaram }: {
   visible: boolean; onClose: () => void; onSaved: () => void;
   membros: BandaMembro[]; tipo: 'culto' | 'ensaio'; eventoId: string;
+  times: BandaTime[]; escalaAtual: EscalaEntry[]; indisponiveis: string[];
+  onTimesMudaram: () => void;
 }) {
   const { t } = useTranslation();
   const [membroId, setMembroId] = useState('');
   const [instrumento, setInstrumento] = useState<typeof INSTRUMENTOS[number] | ''>('');
   const [outroTexto, setOutroTexto] = useState('');
   const [saving, setSaving] = useState(false);
+  const [aplicando, setAplicando] = useState(false);
+  const [nomeNovoTime, setNomeNovoTime] = useState('');
 
   useEffect(() => {
-    if (!visible) { setMembroId(''); setInstrumento(''); setOutroTexto(''); }
+    if (!visible) { setMembroId(''); setInstrumento(''); setOutroTexto(''); setNomeNovoTime(''); }
   }, [visible]);
+
+  const tabelaEscala = tipo === 'culto' ? 'culto_escala' : 'ensaio_escala';
+  const campoEvento = tipo === 'culto' ? 'culto_id' : 'ensaio_id';
+
+  // Aplica uma formação salva de uma vez. Quem já está escalado com aquele
+  // instrumento é ignorado — a constraint única do banco recusaria a linha
+  // repetida e derrubaria o lote inteiro.
+  const aplicarTime = async (time: BandaTime) => {
+    if (aplicando) return;
+    if (!time.membros.length) { Alert.alert(t('banda.times'), t('banda.timeVazio')); return; }
+    const novos = time.membros.filter(tm =>
+      !escalaAtual.some(e => e.membro_id === tm.membro_id && e.instrumento === tm.instrumento));
+    if (!novos.length) { Alert.alert(t('banda.times'), t('banda.timeJaAplicado')); return; }
+    setAplicando(true);
+    // upsert com ignoreDuplicates em vez de insert: `escalaAtual` é o retrato
+    // do último fetch, então se outro líder escalou alguém pelo celular dele
+    // no meio do caminho, um insert comum violaria a constraint única e
+    // derrubaria o time inteiro — ninguém entraria.
+    const { error } = await supabase.from(tabelaEscala).upsert(
+      novos.map(tm => ({ [campoEvento]: eventoId, membro_id: tm.membro_id, instrumento: tm.instrumento })),
+      { onConflict: `${campoEvento},membro_id,instrumento`, ignoreDuplicates: true });
+    setAplicando(false);
+    if (error) { Alert.alert(t('common.erro'), error.message); return; }
+    onSaved(); onClose();
+  };
+
+  // Salva a escala montada agora como uma formação reutilizável.
+  const [salvandoTime, setSalvandoTime] = useState(false);
+
+  const salvarComoTime = async () => {
+    const nome = nomeNovoTime.trim();
+    if (!nome || !escalaAtual.length || salvandoTime) return;
+    setSalvandoTime(true);
+    const { data, error } = await supabase.from('banda_times').insert({ nome }).select().single();
+    if (error || !data) { setSalvandoTime(false); Alert.alert(t('common.erro'), error?.message ?? ''); return; }
+
+    const { error: erroMembros } = await supabase.from('banda_time_membros').insert(
+      escalaAtual.map(e => ({ time_id: data.id, membro_id: e.membro_id, instrumento: e.instrumento })));
+    setSalvandoTime(false);
+    if (erroMembros) {
+      // Sem isto, o time ficaria salvo e vazio pra sempre — e ao ser aplicado
+      // diria "todos já estão na escala", que é exatamente a mensagem errada.
+      await supabase.from('banda_times').delete().eq('id', data.id);
+      Alert.alert(t('common.erro'), erroMembros.message);
+      return;
+    }
+    setNomeNovoTime('');
+    onTimesMudaram();
+    Alert.alert(t('banda.times'), t('banda.timeSalvo', { nome }));
+  };
+
+  const apagarTime = (time: BandaTime) => {
+    Alert.alert(time.nome, t('banda.apagarTimeMsg'), [
+      { text: t('common.cancelar'), style: 'cancel' },
+      { text: t('common.remover'), style: 'destructive', onPress: async () => {
+        await supabase.from('banda_times').delete().eq('id', time.id);
+        onTimesMudaram();
+      }},
+    ]);
+  };
 
   const labelDoInstrumento: Record<typeof INSTRUMENTOS[number], string> = {
     vocal: t('banda.instVocal'), violao: t('banda.instViolao'), guitarra: t('banda.instGuitarra'),
@@ -1150,6 +1292,60 @@ function EscalaModal({ visible, onClose, onSaved, membros, tipo, eventoId }: {
               <TouchableOpacity onPress={onClose}><Ionicons name="close" size={22} color={C.textMuted} /></TouchableOpacity>
             </View>
             <ScrollView showsVerticalScrollIndicator={false}>
+              {/* Quem avisou que não pode neste dia */}
+              {indisponiveis.length > 0 && (
+                <View style={md.avisoIndisp}>
+                  <Ionicons name="alert-circle-outline" size={15} color={C.gold} />
+                  <Text style={md.avisoIndispText}>
+                    {t('banda.avisoIndisponiveis', { nomes: indisponiveis.join(', ') })}
+                  </Text>
+                </View>
+              )}
+
+              {/* Formações salvas */}
+              {times.length > 0 && (
+                <>
+                  <Text style={md.label}>{t('banda.times')}</Text>
+                  <Text style={md.timesDica}>{t('banda.timesDica')}</Text>
+                  <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 8, marginBottom: 16 }}>
+                    {times.map(time => (
+                      <TouchableOpacity
+                        key={time.id}
+                        style={[s.pill, aplicando && { opacity: 0.6 }]}
+                        onPress={() => aplicarTime(time)}
+                        onLongPress={() => apagarTime(time)}
+                        disabled={aplicando}
+                      >
+                        <Text style={s.pillText}>{time.nome} · {time.membros.length}</Text>
+                      </TouchableOpacity>
+                    ))}
+                  </View>
+                </>
+              )}
+
+              {/* Salvar a escala atual como formação */}
+              {escalaAtual.length > 0 && (
+                <View style={md.salvarTimeRow}>
+                  <TextInput
+                    style={[md.input, { flex: 1, marginBottom: 0 }]}
+                    placeholder={t('banda.nomeDoTime')}
+                    placeholderTextColor={C.textDim}
+                    value={nomeNovoTime}
+                    onChangeText={setNomeNovoTime}
+                    maxLength={60}
+                  />
+                  <TouchableOpacity
+                    style={[md.salvarTimeBtn, (!nomeNovoTime.trim() || salvandoTime) && { opacity: 0.45 }]}
+                    onPress={salvarComoTime}
+                    disabled={!nomeNovoTime.trim() || salvandoTime}
+                  >
+                    {salvandoTime
+                      ? <ActivityIndicator color="#fff" size="small" />
+                      : <Ionicons name="bookmark-outline" size={17} color="#fff" />}
+                  </TouchableOpacity>
+                </View>
+              )}
+
               <Text style={md.label}>{t('banda.pessoa')}</Text>
               {membros.length === 0 ? (
                 <Text style={[s.emptyDesc, { textAlign: 'left', paddingTop: 0, marginBottom: 14 }]}>{t('banda.semMembrosNaBanda')}</Text>
@@ -1226,6 +1422,513 @@ function EscalaLista({ escala, membros, onRemover }: {
 }
 
 // ─── Main Screen ──────────────────────────────────────────────────────────────
+// ─── Indisponibilidade ───────────────────────────────────────────────────────
+// Calendário do mês onde cada um marca os dias em que não pode servir. Quem
+// monta a escala vê isso antes de escalar, em vez de descobrir na véspera.
+function IndisponibilidadeModal({ visible, onClose, indisponibilidades, membros, meuId, onAlternar }: {
+  visible: boolean; onClose: () => void;
+  indisponibilidades: Indisponibilidade[];
+  membros: BandaMembro[];
+  meuId?: string;
+  onAlternar: (dia: string) => void;
+}) {
+  const { t, i18n } = useTranslation();
+  const hoje = new Date();
+  const [ano, setAno] = useState(hoje.getFullYear());
+  const [mes, setMes] = useState(hoje.getMonth());
+  const meses = MONTHS_BY_LANG[i18n.language] ?? MONTHS_BY_LANG.pt;
+  const celulas = gradeDoMes(ano, mes);
+  const hojeISO = todayISO();
+
+  // O modal fica montado o tempo todo (só o `visible` muda), então sem isto
+  // ele reabriria no mês em que foi fechado — navegar até dezembro e voltar
+  // uma hora depois pra marcar esta semana abria em dezembro.
+  useEffect(() => {
+    if (!visible) return;
+    const agora = new Date();
+    setAno(agora.getFullYear()); setMes(agora.getMonth());
+  }, [visible]);
+
+  const andarMes = (passo: number) => {
+    const d = new Date(ano, mes + passo, 1);
+    setAno(d.getFullYear()); setMes(d.getMonth());
+  };
+
+  const doDia = (dia: string) => indisponibilidades.filter(i => i.data === dia);
+  const souEu = (dia: string) => doDia(dia).some(i => i.profile_id === meuId);
+
+  return (
+    <Modal visible={visible} animationType="slide" transparent>
+      <View style={nm.overlay}>
+        <View style={[nm.sheet, { maxHeight: '92%' }]}>
+          <View style={nm.header}>
+            <Text style={nm.title}>{t('banda.indisponibilidade')}</Text>
+            <TouchableOpacity onPress={onClose}><Ionicons name="close" size={22} color={C.textMuted} /></TouchableOpacity>
+          </View>
+          <Text style={ind.explicacao}>{t('banda.indisponibilidadeDesc')}</Text>
+
+          <View style={ind.mesRow}>
+            <TouchableOpacity onPress={() => andarMes(-1)} hitSlop={10}>
+              <Ionicons name="chevron-back" size={20} color={C.textMuted} />
+            </TouchableOpacity>
+            <Text style={ind.mesTexto}>{meses[mes]} {ano}</Text>
+            <TouchableOpacity onPress={() => andarMes(1)} hitSlop={10}>
+              <Ionicons name="chevron-forward" size={20} color={C.textMuted} />
+            </TouchableOpacity>
+          </View>
+
+          <View style={ind.semanaRow}>
+            {(DAYS_BY_LANG[i18n.language] ?? DAYS_BY_LANG.pt).map((d, i) => (
+              <Text key={i} style={ind.semanaLabel}>{d.slice(0, 1)}</Text>
+            ))}
+          </View>
+
+          <ScrollView showsVerticalScrollIndicator={false}>
+            <View style={ind.grade}>
+              {celulas.map((dia, i) => {
+                if (!dia) return <View key={`v${i}`} style={ind.celulaVazia} />;
+                const marcados = doDia(dia);
+                const meu = souEu(dia);
+                const passado = dia < hojeISO;
+                return (
+                  <TouchableOpacity
+                    key={dia}
+                    style={[ind.celula, meu && ind.celulaMinha, passado && { opacity: 0.35 }]}
+                    onPress={() => !passado && onAlternar(dia)}
+                    disabled={passado}
+                    activeOpacity={0.7}
+                  >
+                    <Text style={[ind.celulaNum, meu && ind.celulaNumMinha, dia === hojeISO && ind.celulaHoje]}>
+                      {Number(dia.slice(8))}
+                    </Text>
+                    {marcados.length > 0 && (
+                      <View style={ind.pontos}>
+                        {marcados.slice(0, 3).map(m => (
+                          <View key={m.id} style={[ind.ponto, m.profile_id === meuId && ind.pontoMeu]} />
+                        ))}
+                      </View>
+                    )}
+                  </TouchableOpacity>
+                );
+              })}
+            </View>
+
+            {/* Quem está fora, dia a dia */}
+            {(() => {
+              const doMes = indisponibilidades
+                .filter(i => i.data.startsWith(`${ano}-${String(mes + 1).padStart(2, '0')}`) && i.data >= hojeISO)
+                .sort((a, b) => a.data.localeCompare(b.data));
+              if (!doMes.length) return <Text style={ind.vazio}>{t('banda.ninguemIndisponivel')}</Text>;
+              return (
+                <View style={{ marginTop: 18 }}>
+                  <Text style={ind.listaTitulo}>{t('banda.quemEstaFora')}</Text>
+                  {doMes.map(i => (
+                    <View key={i.id} style={ind.listaRow}>
+                      <Text style={ind.listaData}>{formatDateLabel(i.data, i18n.language)}</Text>
+                      <Text style={ind.listaNome}>
+                        {/* "Você" só pra mim mesmo. Um admin que nunca resgatou o
+                            código da banda não está em `banda_membros`, e o
+                            fallback antigo mostrava o dia dele como se fosse meu. */}
+                        {membros.find(m => m.profile_id === i.profile_id)?.nome
+                          ?? (i.profile_id === meuId ? t('banda.voce') : t('banda.outroMembro'))}
+                      </Text>
+                    </View>
+                  ))}
+                </View>
+              );
+            })()}
+          </ScrollView>
+        </View>
+      </View>
+    </Modal>
+  );
+}
+const ind = StyleSheet.create({
+  explicacao: { fontSize: 12, color: C.textMuted, lineHeight: 17, marginBottom: 16 },
+  mesRow: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginBottom: 12 },
+  mesTexto: { fontSize: 15, fontWeight: '700', color: C.text },
+  semanaRow: { flexDirection: 'row', marginBottom: 6 },
+  semanaLabel: { flex: 1, textAlign: 'center', fontSize: 10, color: C.textDim, fontWeight: '700' },
+  grade: { flexDirection: 'row', flexWrap: 'wrap' },
+  celula: { width: `${100 / 7}%`, aspectRatio: 1, alignItems: 'center', justifyContent: 'center', borderRadius: 8 },
+  celulaVazia: { width: `${100 / 7}%`, aspectRatio: 1 },
+  celulaMinha: { backgroundColor: '#4A1414', borderWidth: 1, borderColor: C.danger },
+  celulaNum: { fontSize: 13, color: C.text },
+  celulaNumMinha: { color: '#fff', fontWeight: '700' },
+  celulaHoje: { color: C.gold, fontWeight: '800' },
+  pontos: { flexDirection: 'row', gap: 2, marginTop: 3, height: 4 },
+  ponto: { width: 4, height: 4, borderRadius: 2, backgroundColor: C.textDim },
+  pontoMeu: { backgroundColor: C.danger },
+  vazio: { fontSize: 12, color: C.textDim, textAlign: 'center', marginTop: 20 },
+  listaTitulo: { fontSize: 11, color: C.textMuted, fontWeight: '700', letterSpacing: 0.8, textTransform: 'uppercase', marginBottom: 8 },
+  listaRow: { flexDirection: 'row', justifyContent: 'space-between', paddingVertical: 8, borderBottomWidth: 1, borderBottomColor: C.border },
+  listaData: { fontSize: 13, color: C.textMuted },
+  listaNome: { fontSize: 13, color: C.text, fontWeight: '600' },
+});
+
+// ─── Relatórios ──────────────────────────────────────────────────────────────
+// Duas perguntas que o líder faz toda semana: "a gente já não tocou isso
+// domingo passado?" e "quem está sobrecarregado neste mês?". Tudo calculado
+// do que já está no banco — nenhuma tabela nova.
+function RelatoriosModal({ visible, onClose, cultos, ensaios, songs, membros }: {
+  visible: boolean; onClose: () => void;
+  cultos: Culto[]; ensaios: Ensaio[]; songs: Song[]; membros: BandaMembro[];
+}) {
+  const { t, i18n } = useTranslation();
+  const [aba, setAba] = useState<'musicas' | 'grade'>('musicas');
+  const [dias, setDias] = useState(90);
+  const hoje = new Date();
+  const hojeStr = todayISO();
+  const [ano, setAno] = useState(hoje.getFullYear());
+  const [mes, setMes] = useState(hoje.getMonth());
+  const meses = MONTHS_BY_LANG[i18n.language] ?? MONTHS_BY_LANG.pt;
+
+  // Mesma razão do calendário: reabrir sempre no mês corrente e na primeira aba.
+  useEffect(() => {
+    if (!visible) return;
+    const agora = new Date();
+    setAno(agora.getFullYear()); setMes(agora.getMonth());
+    setAba('musicas');
+  }, [visible]);
+
+  // ── Músicas mais tocadas ──
+  const corte = (() => {
+    const d = new Date();
+    d.setDate(d.getDate() - dias);
+    return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+  })();
+
+  const ranking = (() => {
+    const contagem = new Map<string, number>();
+    // Ensaio conta junto: uma música ensaiada três vezes também já está gasta.
+    for (const ev of [...cultos, ...ensaios]) {
+      // Teto em hoje: o culto de domingo que vem ainda não foi tocado, e
+      // contá-lo faria a música sumir da lista de "não tocadas" justamente
+      // quando o líder está decidindo o repertório.
+      if (ev.date < corte || ev.date > hojeStr) continue;
+      for (const e of ev.entries) contagem.set(e.song_id, (contagem.get(e.song_id) ?? 0) + 1);
+    }
+    return [...contagem.entries()]
+      .map(([id, n]) => ({ song: songs.find(sg => sg.id === id), n }))
+      .filter((r): r is { song: Song; n: number } => !!r.song)
+      .sort((a, b) => b.n - a.n || a.song.title.localeCompare(b.song.title));
+  })();
+  const maxN = ranking[0]?.n ?? 1;
+
+  // Músicas do repertório que não entraram em nada no período — o outro lado
+  // útil do relatório: o que está encostado.
+  const esquecidas = songs.filter(sg => sg.in_repertoire && !ranking.some(r => r.song.id === sg.id));
+
+  // ── Grade do mês: instrumento × data ──
+  const prefixoMes = `${ano}-${String(mes + 1).padStart(2, '0')}`;
+  // Marca o tipo: culto e ensaio no mesmo dia viravam duas colunas "14"
+  // idênticas, sem nada dizendo qual era qual.
+  const idsDeEnsaio = new Set(ensaios.map(e => e.id));
+  const eventosDoMes = [...cultos, ...ensaios]
+    .filter(ev => ev.date.startsWith(prefixoMes))
+    .sort((a, b) => a.date.localeCompare(b.date));
+
+  // Agrupa por nome normalizado. O instrumento é gravado já traduzido e o
+  // campo "outro" é texto livre, então "Teclado", "Keyboard" e "teclado "
+  // viravam três linhas separadas na grade. A primeira grafia encontrada é a
+  // que aparece.
+  const instrumentos = (() => {
+    const porChave = new Map<string, string>();
+    for (const ev of eventosDoMes) {
+      for (const e of ev.escala) {
+        const chave = e.instrumento.trim().toLowerCase();
+        if (chave && !porChave.has(chave)) porChave.set(chave, e.instrumento.trim());
+      }
+    }
+    return [...porChave.entries()].sort((a, b) => a[1].localeCompare(b[1]));
+  })();
+
+  const andarMes = (passo: number) => {
+    const d = new Date(ano, mes + passo, 1);
+    setAno(d.getFullYear()); setMes(d.getMonth());
+  };
+
+  return (
+    <Modal visible={visible} animationType="slide" transparent>
+      <View style={nm.overlay}>
+        <View style={[nm.sheet, { maxHeight: '92%' }]}>
+          <View style={nm.header}>
+            <Text style={nm.title}>{t('banda.relatorios')}</Text>
+            <TouchableOpacity onPress={onClose}><Ionicons name="close" size={22} color={C.textMuted} /></TouchableOpacity>
+          </View>
+
+          <View style={rel.abas}>
+            {(['musicas', 'grade'] as const).map(a => (
+              <TouchableOpacity key={a} style={[rel.aba, aba === a && rel.abaAtiva]} onPress={() => setAba(a)}>
+                <Text style={[rel.abaTexto, aba === a && rel.abaTextoAtivo]}>
+                  {a === 'musicas' ? t('banda.maisTocadas') : t('banda.gradeDoMes')}
+                </Text>
+              </TouchableOpacity>
+            ))}
+          </View>
+
+          {aba === 'musicas' ? (
+            <>
+              <View style={rel.periodoRow}>
+                {[30, 90, 365].map(d => (
+                  <TouchableOpacity key={d} style={[rel.periodo, dias === d && rel.periodoAtivo]} onPress={() => setDias(d)}>
+                    <Text style={[rel.periodoTexto, dias === d && rel.periodoTextoAtivo]}>
+                      {d === 365 ? t('banda.periodoAno') : t('banda.periodoDias', { n: d })}
+                    </Text>
+                  </TouchableOpacity>
+                ))}
+              </View>
+              <ScrollView showsVerticalScrollIndicator={false}>
+                {ranking.length === 0 ? (
+                  <Text style={ind.vazio}>{t('banda.semDadosPeriodo')}</Text>
+                ) : ranking.map((r, i) => (
+                  <View key={r.song.id} style={rel.linha}>
+                    <Text style={rel.posicao}>{i + 1}</Text>
+                    <View style={{ flex: 1 }}>
+                      <Text style={rel.musicaTitulo} numberOfLines={1}>{r.song.title}</Text>
+                      <Text style={rel.musicaArtista} numberOfLines={1}>{r.song.artist}</Text>
+                      <View style={rel.barraFundo}>
+                        <View style={[rel.barra, { width: `${Math.round((r.n / maxN) * 100)}%` }]} />
+                      </View>
+                    </View>
+                    <Text style={rel.vezes}>{t('banda.vezes', { n: r.n })}</Text>
+                  </View>
+                ))}
+                {esquecidas.length > 0 && (
+                  <View style={{ marginTop: 22 }}>
+                    <Text style={ind.listaTitulo}>{t('banda.naoTocadas', { n: esquecidas.length })}</Text>
+                    <Text style={rel.esquecidasTexto}>
+                      {esquecidas.slice(0, 25).map(sg => sg.title).join(' · ')}
+                      {esquecidas.length > 25 ? ' …' : ''}
+                    </Text>
+                  </View>
+                )}
+              </ScrollView>
+            </>
+          ) : (
+            <>
+              <View style={ind.mesRow}>
+                <TouchableOpacity onPress={() => andarMes(-1)} hitSlop={10}>
+                  <Ionicons name="chevron-back" size={20} color={C.textMuted} />
+                </TouchableOpacity>
+                <Text style={ind.mesTexto}>{meses[mes]} {ano}</Text>
+                <TouchableOpacity onPress={() => andarMes(1)} hitSlop={10}>
+                  <Ionicons name="chevron-forward" size={20} color={C.textMuted} />
+                </TouchableOpacity>
+              </View>
+              {eventosDoMes.length === 0 ? (
+                <Text style={ind.vazio}>{t('banda.semEventosNoMes')}</Text>
+              ) : (
+                // Rolagem horizontal: com muitos cultos no mês a grade passa da
+                // largura da tela, e cortar coluna seria pior que rolar.
+                <ScrollView horizontal showsHorizontalScrollIndicator>
+                  <View>
+                    <View style={rel.gradeCabecalho}>
+                      <View style={rel.gradeCanto} />
+                      {eventosDoMes.map(ev => (
+                        <View key={ev.id} style={rel.gradeColuna}>
+                          <Text style={rel.gradeDia}>{Number(ev.date.slice(8))}</Text>
+                          <Text style={rel.gradeTipo}>
+                            {idsDeEnsaio.has(ev.id) ? t('banda.ensaioSingular') : t('banda.cultoSingular')}
+                          </Text>
+                        </View>
+                      ))}
+                    </View>
+                    <ScrollView showsVerticalScrollIndicator={false} style={{ maxHeight: 380 }}>
+                      {instrumentos.map(([chave, rotuloInst]) => (
+                        <View key={chave} style={rel.gradeLinha}>
+                          <View style={rel.gradeCanto}>
+                            <Text style={rel.gradeInstrumento} numberOfLines={2}>{rotuloInst}</Text>
+                          </View>
+                          {eventosDoMes.map(ev => {
+                            const quem = ev.escala
+                              .filter(e => e.instrumento.trim().toLowerCase() === chave)
+                              .map(e => membros.find(m => m.id === e.membro_id)?.nome ?? '?')
+                              .map(n => n.split(' ')[0]);
+                            return (
+                              <View key={ev.id} style={rel.gradeColuna}>
+                                {quem.length === 0 ? (
+                                  <Text style={rel.gradeVazio}>—</Text>
+                                ) : (
+                                  <Text style={rel.gradeNome} numberOfLines={2}>{quem.join(', ')}</Text>
+                                )}
+                              </View>
+                            );
+                          })}
+                        </View>
+                      ))}
+                    </ScrollView>
+                  </View>
+                </ScrollView>
+              )}
+            </>
+          )}
+        </View>
+      </View>
+    </Modal>
+  );
+}
+const rel = StyleSheet.create({
+  abas: { flexDirection: 'row', gap: 8, marginBottom: 14 },
+  aba: { flex: 1, paddingVertical: 9, borderRadius: 10, backgroundColor: C.surfaceHigh, borderWidth: 1, borderColor: C.border, alignItems: 'center' },
+  abaAtiva: { backgroundColor: C.primaryDim, borderColor: C.primary },
+  abaTexto: { fontSize: 12, fontWeight: '700', color: C.textMuted },
+  abaTextoAtivo: { color: C.primary },
+  periodoRow: { flexDirection: 'row', gap: 6, marginBottom: 14 },
+  periodo: { paddingHorizontal: 12, paddingVertical: 6, borderRadius: 8, backgroundColor: C.surfaceHigh, borderWidth: 1, borderColor: C.border },
+  periodoAtivo: { backgroundColor: C.primaryDim, borderColor: C.primary },
+  periodoTexto: { fontSize: 11, color: C.textMuted, fontWeight: '600' },
+  periodoTextoAtivo: { color: C.primary },
+  linha: { flexDirection: 'row', alignItems: 'center', gap: 10, paddingVertical: 9, borderBottomWidth: 1, borderBottomColor: C.border },
+  posicao: { width: 22, fontSize: 12, fontWeight: '800', color: C.textDim, textAlign: 'center' },
+  musicaTitulo: { fontSize: 13, color: C.text, fontWeight: '600' },
+  musicaArtista: { fontSize: 11, color: C.textMuted, marginTop: 1 },
+  barraFundo: { height: 4, borderRadius: 2, backgroundColor: C.surfaceHigh, marginTop: 6, overflow: 'hidden' },
+  barra: { height: 4, borderRadius: 2, backgroundColor: C.primary },
+  vezes: { fontSize: 12, fontWeight: '700', color: C.textMuted, minWidth: 34, textAlign: 'right' },
+  esquecidasTexto: { fontSize: 12, color: C.textDim, lineHeight: 18 },
+  gradeCabecalho: { flexDirection: 'row', borderBottomWidth: 1, borderBottomColor: C.border, paddingBottom: 6 },
+  gradeLinha: { flexDirection: 'row', alignItems: 'center', borderBottomWidth: 1, borderBottomColor: C.border, minHeight: 42 },
+  gradeCanto: { width: 92, paddingRight: 8, justifyContent: 'center' },
+  gradeColuna: { width: 74, alignItems: 'center', justifyContent: 'center', paddingHorizontal: 3 },
+  gradeDia: { fontSize: 12, fontWeight: '800', color: C.textMuted },
+  gradeTipo: { fontSize: 8.5, color: C.textDim, textTransform: 'uppercase', letterSpacing: 0.3, marginTop: 1 },
+  gradeInstrumento: { fontSize: 11, color: C.text, fontWeight: '600' },
+  gradeNome: { fontSize: 10.5, color: C.text, textAlign: 'center' },
+  gradeVazio: { fontSize: 12, color: C.textDim },
+});
+
+// ─── Nota da música no evento ────────────────────────────────────────────────
+// O recado que hoje se perde no chat: "entrar direto no refrão", "sem bateria
+// na primeira estrofe". Fica preso à música DAQUELE culto, não ao repertório.
+function NotaMusicaModal({ alvo, onClose, onSalvo }: {
+  alvo: { tipo: 'culto' | 'ensaio'; eventoId: string; songId: string; titulo: string; nota: string } | null;
+  onClose: () => void;
+  onSalvo: () => void;
+}) {
+  const { t } = useTranslation();
+  const [texto, setTexto] = useState('');
+  const [salvando, setSalvando] = useState(false);
+
+  useEffect(() => { setTexto(alvo?.nota ?? ''); }, [alvo]);
+
+  const salvar = async () => {
+    if (!alvo || salvando) return;
+    setSalvando(true);
+    const tabela = alvo.tipo === 'culto' ? 'culto_songs' : 'ensaio_songs';
+    const coluna = alvo.tipo === 'culto' ? 'culto_id' : 'ensaio_id';
+    const { error } = await supabase.from(tabela)
+      .update({ nota: texto.trim() || null })
+      .eq(coluna, alvo.eventoId).eq('song_id', alvo.songId);
+    setSalvando(false);
+    if (error) { Alert.alert(t('common.erro'), error.message); return; }
+    onSalvo(); onClose();
+  };
+
+  return (
+    <Modal visible={!!alvo} animationType="slide" transparent>
+      <View style={nm.overlay}>
+        <KeyboardAvoidingView behavior={Platform.OS === 'ios' ? 'padding' : undefined} style={{ width: '100%' }}>
+          <View style={nm.sheet}>
+            <View style={nm.header}>
+              <Text style={nm.title} numberOfLines={1}>{alvo?.titulo ?? ''}</Text>
+              <TouchableOpacity onPress={onClose}><Ionicons name="close" size={22} color={C.textMuted} /></TouchableOpacity>
+            </View>
+            <Text style={nm.fieldLabel}>{t('banda.notaDaMusica')}</Text>
+            <TextInput
+              style={[nm.fieldInput, { height: 100, textAlignVertical: 'top', paddingTop: 12 }]}
+              placeholder={t('banda.notaPlaceholder')}
+              placeholderTextColor={C.textDim}
+              value={texto}
+              onChangeText={setTexto}
+              multiline
+              maxLength={300}
+            />
+            <Text style={nm.fieldHint}>{t('banda.notaDica')}</Text>
+            <TouchableOpacity style={[nm.saveBtn, salvando && { opacity: 0.7 }]} onPress={salvar} disabled={salvando} activeOpacity={0.85}>
+              {salvando ? <ActivityIndicator color="#fff" /> : <><Ionicons name="checkmark-outline" size={18} color="#fff" /><Text style={nm.saveBtnText}>{t('banda.salvarAlteracoes')}</Text></>}
+            </TouchableOpacity>
+          </View>
+        </KeyboardAvoidingView>
+      </View>
+    </Modal>
+  );
+}
+
+// ─── Ordem do culto ──────────────────────────────────────────────────────────
+// O que acontece no culto além das músicas: abertura, oração, avisos, oferta,
+// pregação. Com a duração de cada parte, somada à das músicas, dá pra saber
+// se o culto cabe no tempo antes de começar.
+const ROADMAP_SUGESTOES = ['abertura', 'oracao', 'avisos', 'oferta', 'pregacao', 'ministracao'] as const;
+
+function RoadmapItemModal({ visible, cultoId, onClose, onSalvo, proximoIndice }: {
+  visible: boolean; cultoId: string; onClose: () => void; onSalvo: () => void; proximoIndice: number;
+}) {
+  const { t } = useTranslation();
+  const [titulo, setTitulo] = useState('');
+  const [minutos, setMinutos] = useState('');
+  const [salvando, setSalvando] = useState(false);
+
+  useEffect(() => { if (!visible) { setTitulo(''); setMinutos(''); } }, [visible]);
+
+  const rotulo: Record<typeof ROADMAP_SUGESTOES[number], string> = {
+    abertura: t('banda.itemAbertura'), oracao: t('banda.itemOracao'), avisos: t('banda.itemAvisos'),
+    oferta: t('banda.itemOferta'), pregacao: t('banda.itemPregacao'), ministracao: t('banda.itemMinistracao'),
+  };
+
+  const salvar = async () => {
+    const nome = titulo.trim();
+    if (!nome || salvando) return;
+    const min = Number(minutos);
+    // O banco recusa acima de 6h (`culto_roadmap_duracao_segundos_check`). Sem
+    // este aviso, digitar 400 minutos devolvia o erro cru do Postgres sem
+    // ninguém ter como saber qual era o limite.
+    if (min > 360) { Alert.alert(t('common.atencao'), t('banda.itemMinutosLimite')); return; }
+    setSalvando(true);
+    const { error } = await supabase.from('culto_roadmap').insert({
+      culto_id: cultoId, titulo: nome,
+      duracao_segundos: min > 0 ? Math.round(min * 60) : null,
+      order_index: proximoIndice,
+    });
+    setSalvando(false);
+    if (error) { Alert.alert(t('common.erro'), error.message); return; }
+    onSalvo(); onClose();
+  };
+
+  return (
+    <Modal visible={visible} animationType="slide" transparent>
+      <View style={nm.overlay}>
+        <KeyboardAvoidingView behavior={Platform.OS === 'ios' ? 'padding' : undefined} style={{ width: '100%' }}>
+          <View style={nm.sheet}>
+            <View style={nm.header}>
+              <Text style={nm.title}>{t('banda.novoItemDoCulto')}</Text>
+              <TouchableOpacity onPress={onClose}><Ionicons name="close" size={22} color={C.textMuted} /></TouchableOpacity>
+            </View>
+            <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 8, marginBottom: 16 }}>
+              {ROADMAP_SUGESTOES.map(sug => (
+                <TouchableOpacity key={sug} style={s.pill} onPress={() => setTitulo(rotulo[sug])}>
+                  <Text style={s.pillText}>{rotulo[sug]}</Text>
+                </TouchableOpacity>
+              ))}
+            </View>
+            <View style={nm.fieldWrap}>
+              <Text style={nm.fieldLabel}>{t('banda.itemTitulo')}</Text>
+              <TextInput style={nm.fieldInput} placeholder={t('banda.itemTituloPlaceholder')} placeholderTextColor={C.textDim} value={titulo} onChangeText={setTitulo} maxLength={80} />
+            </View>
+            <View style={nm.fieldWrap}>
+              <Text style={nm.fieldLabel}>{t('banda.itemMinutos')}</Text>
+              <TextInput style={[nm.fieldInput, { width: 110 }]} placeholder="Ex: 10" placeholderTextColor={C.textDim} value={minutos} onChangeText={v => setMinutos(v.replace(/\D/g, ''))} keyboardType="numeric" maxLength={3} />
+            </View>
+            <TouchableOpacity style={[nm.saveBtn, (salvando || !titulo.trim()) && { opacity: 0.6 }]} onPress={salvar} disabled={salvando || !titulo.trim()} activeOpacity={0.85}>
+              {salvando ? <ActivityIndicator color="#fff" /> : <><Ionicons name="add" size={18} color="#fff" /><Text style={nm.saveBtnText}>{t('banda.adicionarItem')}</Text></>}
+            </TouchableOpacity>
+          </View>
+        </KeyboardAvoidingView>
+      </View>
+    </Modal>
+  );
+}
+
 function BandaMain() {
   const { t, i18n } = useTranslation();
   // Precisa da conta logada pra saber quais mensagens do chat são minhas e
@@ -1247,6 +1950,15 @@ function BandaMain() {
   const [messages, setMessages] = useState<ChatMsg[]>([]);
   const [loadingChat, setLoadingChat] = useState(true);
   const [presencas, setPresencas] = useState<Presenca[]>([]);
+  const [indisponibilidades, setIndisponibilidades] = useState<Indisponibilidade[]>([]);
+  const [indispModal, setIndispModal] = useState(false);
+  const [relatorioModal, setRelatorioModal] = useState(false);
+  const [times, setTimes] = useState<BandaTime[]>([]);
+  // Qual música de qual evento está com a nota aberta pra edição.
+  const [roadmapModal, setRoadmapModal] = useState<{ cultoId: string; proximo: number } | null>(null);
+  const [notaModal, setNotaModal] = useState<
+    { tipo: 'culto' | 'ensaio'; eventoId: string; songId: string; titulo: string; nota: string } | null
+  >(null);
   // Nome e papel da própria conta. `autor_nome` fica gravado na mensagem pra
   // sempre, então não dá pra mandar antes de saber o nome de verdade — sem
   // isso, quem abrisse o chat com a rede lenta gravaria o começo do e-mail.
@@ -1354,7 +2066,65 @@ function BandaMain() {
       .filter((id): id is string => !!id),
   ).size;
 
-  useEffect(() => { fetchPresencas(); }, [fetchPresencas]);
+  // ── Indisponibilidade ───────────────────────────────────────────────────────
+  // Traz a partir de ontem: dias passados não servem pra nada e a lista
+  // cresceria pra sempre.
+  const fetchIndisponibilidades = useCallback(async () => {
+    const ontem = new Date();
+    ontem.setDate(ontem.getDate() - 1);
+    const desde = `${ontem.getFullYear()}-${String(ontem.getMonth() + 1).padStart(2, '0')}-${String(ontem.getDate()).padStart(2, '0')}`;
+    const { data } = await supabase
+      .from('banda_indisponibilidade').select('*').gte('data', desde).order('data');
+    if (data) setIndisponibilidades(data as Indisponibilidade[]);
+  }, []);
+
+  // Dias com toque em voo. Sem isto, marcar dez dias seguidos de viagem
+  // rápido fazia o segundo toque no mesmo dia ver o estado antigo, mandar um
+  // segundo insert e estourar a constraint única com erro cru do Postgres.
+  const indispEmVoo = useRef<Set<string>>(new Set());
+
+  const alternarIndisponibilidade = async (dia: string) => {
+    if (!user?.id) { Alert.alert(t('common.erro'), t('banda.chatPrecisaLogin')); return; }
+    if (indispEmVoo.current.has(dia)) return;
+    indispEmVoo.current.add(dia);
+
+    const existente = indisponibilidades.find(i => i.profile_id === user.id && i.data === dia);
+    const anterior = indisponibilidades;
+    // Pinta na hora: o calendário responde ao toque mesmo com a rede lenta.
+    setIndisponibilidades(prev => existente
+      ? prev.filter(i => i.id !== existente.id)
+      : [...prev, { id: `local-${dia}`, profile_id: user.id, data: dia }]);
+
+    const { error } = existente
+      ? await supabase.from('banda_indisponibilidade').delete().eq('id', existente.id)
+      : await supabase.from('banda_indisponibilidade').insert({ profile_id: user.id, data: dia });
+
+    indispEmVoo.current.delete(dia);
+    if (error) { setIndisponibilidades(anterior); Alert.alert(t('common.erro'), error.message); return; }
+    fetchIndisponibilidades();
+  };
+
+  const minhasIndisponibilidades = indisponibilidades.filter(i => i.profile_id === user?.id);
+
+  // Quem avisou que não pode servir num dia — usado pra avisar na hora de
+  // montar a escala, que é o ponto da funcionalidade.
+  const indisponiveisNoDia = (dia: string) => indisponibilidades
+    .filter(i => i.data === dia)
+    .map(i => membros.find(m => m.profile_id === i.profile_id)?.nome)
+    .filter((n): n is string => !!n);
+
+  const fetchTimes = useCallback(async () => {
+    const { data: timesData } = await supabase.from('banda_times').select('*').order('nome');
+    if (!timesData) return;
+    const { data: membrosData } = await supabase.from('banda_time_membros').select('*');
+    setTimes(timesData.map((tm: any) => ({
+      id: tm.id, nome: tm.nome,
+      membros: (membrosData ?? []).filter((x: any) => x.time_id === tm.id)
+        .map((x: any) => ({ membro_id: x.membro_id, instrumento: x.instrumento })),
+    })));
+  }, []);
+
+  useEffect(() => { fetchPresencas(); fetchIndisponibilidades(); fetchTimes(); }, [fetchPresencas, fetchIndisponibilidades, fetchTimes]);
 
   useEffect(() => {
     if (!user?.id) { setMeuPerfil(null); return; }
@@ -1399,15 +2169,21 @@ function BandaMain() {
 
     const cultosWithEntries: Culto[] = await Promise.all(
       cultosData.map(async (culto: any) => {
-        const [{ data: entriesData }, { data: escalaData }] = await Promise.all([
+        const [{ data: entriesData }, { data: escalaData }, { data: roadmapData }] = await Promise.all([
           supabase.from('culto_songs').select('*').eq('culto_id', culto.id).order('order_index'),
           supabase.from('culto_escala').select('*').eq('culto_id', culto.id),
+          supabase.from('culto_roadmap').select('*').eq('culto_id', culto.id).order('order_index'),
         ]);
         return {
           id: culto.id, label: culto.label, date: culto.date,
+          publicado: culto.publicado !== false,
+          roadmap: (roadmapData ?? []).map((r: any) => ({
+            id: r.id, titulo: r.titulo, descricao: r.descricao,
+            duracao_segundos: r.duracao_segundos, order_index: r.order_index,
+          })),
           entries: (entriesData ?? []).map((e: any) => ({
             song_id: e.song_id, song_key: e.song_key,
-            bpm: String(e.bpm), order_index: e.order_index,
+            bpm: String(e.bpm), order_index: e.order_index, nota: e.nota,
           })),
           escala: (escalaData ?? []).map((e: any) => ({
             id: e.id, membro_id: e.membro_id, instrumento: e.instrumento,
@@ -1436,9 +2212,10 @@ function BandaMain() {
         return {
           id: ensaio.id, label: ensaio.label, date: ensaio.date,
           time: ensaio.time ?? '', local: ensaio.local ?? '', observacao: ensaio.observacao ?? '',
+          publicado: ensaio.publicado !== false,
           entries: (entriesData ?? []).map((e: any) => ({
             song_id: e.song_id, song_key: e.song_key,
-            bpm: String(e.bpm), order_index: e.order_index,
+            bpm: String(e.bpm), order_index: e.order_index, nota: e.nota,
           })),
           escala: (escalaData ?? []).map((e: any) => ({
             id: e.id, membro_id: e.membro_id, instrumento: e.instrumento,
@@ -1453,7 +2230,7 @@ function BandaMain() {
 
   useEffect(() => { fetchSongs(); fetchCultos(); fetchEnsaios(); fetchMembros(); }, [fetchSongs, fetchCultos, fetchEnsaios, fetchMembros]);
 
-  const handleRefresh = () => { setRefreshing(true); fetchSongs(); fetchCultos(); fetchEnsaios(); fetchMembros(); fetchPresencas(); };
+  const handleRefresh = () => { setRefreshing(true); fetchSongs(); fetchCultos(); fetchEnsaios(); fetchMembros(); fetchPresencas(); fetchIndisponibilidades(); fetchTimes(); };
 
   const removerDaEscala = (tipo: 'culto' | 'ensaio', id: string) => {
     Alert.alert(t('banda.removerDaEscala'), t('banda.desejaRemoverDaEscala'), [
@@ -1509,6 +2286,23 @@ function BandaMain() {
   const songsDoSetlist = (entries: CultoSongEntry[]) =>
     entries.map(e => songs.find(sg => sg.id === e.song_id)).filter((sg): sg is Song => !!sg);
 
+  const removerItemRoadmap = (item: RoadmapItem) => {
+    Alert.alert(item.titulo, t('banda.removerItemMsg'), [
+      { text: t('common.cancelar'), style: 'cancel' },
+      { text: t('common.remover'), style: 'destructive', onPress: async () => {
+        await supabase.from('culto_roadmap').delete().eq('id', item.id);
+        fetchCultos();
+      }},
+    ]);
+  };
+
+  // Tempo total do culto: as músicas mais os itens da ordem do culto.
+  const totalDoCulto = (culto: Culto) => {
+    const musicas = totalDoSetlist(songsDoSetlist(culto.entries));
+    const itens = culto.roadmap.reduce((soma, r) => soma + (r.duracao_segundos ?? 0), 0);
+    return { segundos: musicas.segundos + itens, semDuracao: musicas.semDuracao };
+  };
+
   const abrirNovaMusica = () => { setEditSong(null); setMusicaModal(true); };
   const abrirEditarMusica = (song: Song) => { setEditSong(song); setMusicaModal(true); };
   const fecharMusicaModal = () => { setMusicaModal(false); setEditSong(null); };
@@ -1557,7 +2351,21 @@ function BandaMain() {
     ]);
   };
 
-  const cultoDoDia = cultos.find(c => c.date === today) ?? cultos[0] ?? null;
+  // Rascunho fica escondido de quem não é admin. Vale repetir o que a migração
+  // já diz: é filtro de tela, não barreira de segurança — serve pra ninguém ver
+  // escala pela metade, não pra guardar segredo.
+  const podeVerRascunho = !!meuPerfil?.admin;
+  const cultosVisiveis = cultos.filter(c => c.publicado || podeVerRascunho);
+  const ensaiosVisiveis = ensaios.filter(e => e.publicado || podeVerRascunho);
+
+  const alternarPublicado = async (tipo: 'culto' | 'ensaio', id: string, publicado: boolean) => {
+    const tabela = tipo === 'culto' ? 'cultos' : 'ensaios';
+    const { error } = await supabase.from(tabela).update({ publicado }).eq('id', id);
+    if (error) { Alert.alert(t('common.erro'), error.message); return; }
+    tipo === 'culto' ? fetchCultos() : fetchEnsaios();
+  };
+
+  const cultoDoDia = cultosVisiveis.find(c => c.date === today) ?? cultosVisiveis[0] ?? null;
   const filteredSongs = filter === 'repertoire' ? songs.filter(sg => sg.in_repertoire) : songs;
 
   const TABS: { id: Tab; icon: string; label: string }[] = [
@@ -1579,8 +2387,15 @@ function BandaMain() {
           <Text style={s.headerSub}>{t('banda.subtitulo')}</Text>
         </View>
         <View style={s.headerRight}>
-          <View style={s.onlineDot} />
-          <Text style={s.onlineText}>{songs.length} {t('banda.musicas')}</Text>
+          <TouchableOpacity style={s.headerIconBtn} onPress={() => setIndispModal(true)} hitSlop={6}>
+            <Ionicons name="calendar-outline" size={18} color={C.textMuted} />
+            {minhasIndisponibilidades.length > 0 && (
+              <View style={s.headerBadge}><Text style={s.headerBadgeText}>{minhasIndisponibilidades.length}</Text></View>
+            )}
+          </TouchableOpacity>
+          <TouchableOpacity style={s.headerIconBtn} onPress={() => setRelatorioModal(true)} hitSlop={6}>
+            <Ionicons name="bar-chart-outline" size={18} color={C.textMuted} />
+          </TouchableOpacity>
         </View>
       </View>
 
@@ -1631,10 +2446,23 @@ function BandaMain() {
                 return (
                   <View key={entry.song_id} style={s.hojeCard}>
                     <View style={s.hojeOrder}><Text style={s.hojeOrderNum}>{idx + 1}</Text></View>
-                    <View style={{ flex: 1 }}>
-                      <Text style={s.hojeSongTitle}>{song.title}</Text>
-                      <Text style={s.hojeSongArtist}>{song.artist}</Text>
-                    </View>
+                    <TouchableOpacity
+                      style={{ flex: 1 }}
+                      activeOpacity={0.7}
+                      onPress={() => setNotaModal({
+                        tipo: 'culto', eventoId: cultoDoDia.id, songId: entry.song_id,
+                        titulo: song.title, nota: entry.nota ?? '',
+                      })}
+                    >
+                      <Text style={s.hojeSongTitle} numberOfLines={1}>{song.title}</Text>
+                      <Text style={s.hojeSongArtist} numberOfLines={1}>{song.artist}</Text>
+                      {entry.nota ? (
+                        <View style={s.notaRow}>
+                          <Ionicons name="chatbox-ellipses-outline" size={11} color={C.gold} />
+                          <Text style={s.notaTexto} numberOfLines={2}>{entry.nota}</Text>
+                        </View>
+                      ) : null}
+                    </TouchableOpacity>
                     <View style={s.hojeTomBadge}>
                       <Text style={s.hojeTomLabel}>{t('banda.tom')}</Text>
                       <Text style={s.hojeTomValue}>{entry.song_key}</Text>
@@ -1736,7 +2564,7 @@ function BandaMain() {
       {activeTab === 'cultos' && (
         <View style={{ flex: 1 }}>
           <View style={s.cultosToolbar}>
-            <Text style={s.cultosCount}>{cultos.length} {cultos.length !== 1 ? t('banda.tabCultos').toLowerCase() : t('banda.cultoSingular')}</Text>
+            <Text style={s.cultosCount}>{cultosVisiveis.length} {cultosVisiveis.length !== 1 ? t('banda.tabCultos').toLowerCase() : t('banda.cultoSingular')}</Text>
             <TouchableOpacity style={s.newCultoBtn} onPress={() => setCultosModal(true)} activeOpacity={0.85}>
               <Ionicons name="add" size={18} color="#fff" />
               <Text style={s.newCultoBtnText}>{t('banda.novoCulto')}</Text>
@@ -1744,7 +2572,7 @@ function BandaMain() {
           </View>
           {loadingCultos ? (
             <View style={s.loadingWrap}><ActivityIndicator color={C.primary} /></View>
-          ) : cultos.length === 0 ? (
+          ) : cultosVisiveis.length === 0 ? (
             <View style={s.emptyState}>
               <Ionicons name="mic-outline" size={48} color={C.textDim} />
               <Text style={s.emptyTitle}>{t('banda.nenhumCultoAinda')}</Text>
@@ -1753,7 +2581,7 @@ function BandaMain() {
           ) : (
             <ScrollView contentContainerStyle={{ padding: 16, paddingBottom: 32 }}
               refreshControl={<RefreshControl refreshing={refreshing} onRefresh={handleRefresh} tintColor={C.primary} />}>
-              {cultos.map(culto => {
+              {cultosVisiveis.map(culto => {
                 const isOpen = expandedCulto === culto.id;
                 return (
                   <View key={culto.id} style={[s.cultoCard, isOpen && s.cultoCardOpen]}>
@@ -1761,11 +2589,29 @@ function BandaMain() {
                       <View style={s.cultoHeaderLeft}>
                         <View style={[s.cultoDot, culto.date === today && { backgroundColor: C.gold }]} />
                         <View>
-                          <Text style={s.cultoLabel}>{culto.label}</Text>
+                          <View style={s.cultoLabelRow}>
+                            <Text style={s.cultoLabel}>{culto.label}</Text>
+                            {!culto.publicado && (
+                              <View style={s.rascunhoTag}><Text style={s.rascunhoTagText}>{t('banda.rascunho')}</Text></View>
+                            )}
+                          </View>
                           <Text style={s.cultoMeta}>{culto.entries.length} {culto.entries.length !== 1 ? t('banda.musicas') : t('banda.musica')}{culto.date === today ? t('banda.hojeSufixo') : ''}</Text>
                         </View>
                       </View>
                       <View style={s.cultoHeaderRight}>
+                        {podeVerRascunho && (
+                          <TouchableOpacity
+                            onPress={() => alternarPublicado('culto', culto.id, !culto.publicado)}
+                            style={s.deleteBtn}
+                            hitSlop={6}
+                          >
+                            <Ionicons
+                              name={culto.publicado ? 'eye-outline' : 'eye-off-outline'}
+                              size={15}
+                              color={culto.publicado ? C.accent : C.gold}
+                            />
+                          </TouchableOpacity>
+                        )}
                         <TouchableOpacity onPress={() => deleteCulto(culto.id)} style={s.deleteBtn}>
                           <Ionicons name="trash-outline" size={15} color={C.danger} />
                         </TouchableOpacity>
@@ -1791,15 +2637,85 @@ function BandaMain() {
                             <View key={entry.song_id} style={[s.cultoSongRow, idx === culto.entries.length - 1 && { borderBottomWidth: 0 }]}>
                               <Text style={s.cultoSongNum}>{idx + 1}</Text>
                               <View style={s.cultoKeyBadge}><Text style={s.cultoKeyText}>{entry.song_key}</Text></View>
-                              <View style={{ flex: 1 }}>
+                              <TouchableOpacity
+                                style={{ flex: 1 }}
+                                activeOpacity={0.7}
+                                onPress={() => setNotaModal({
+                                  tipo: 'culto', eventoId: culto.id, songId: entry.song_id,
+                                  titulo: song.title, nota: entry.nota ?? '',
+                                })}
+                              >
                                 <Text style={s.cultoSongTitle}>{song.title}</Text>
                                 <Text style={s.cultoSongArtist}>{song.artist}</Text>
-                              </View>
+                                {entry.nota ? (
+                                  <View style={s.notaRow}>
+                                    <Ionicons name="chatbox-ellipses-outline" size={11} color={C.gold} />
+                                    <Text style={s.notaTexto} numberOfLines={2}>{entry.nota}</Text>
+                                  </View>
+                                ) : null}
+                              </TouchableOpacity>
                               <View style={s.cultoBpmChip}><Text style={s.cultoBpmText}>{entry.bpm}</Text></View>
                               <LinkMiniButtons song={song} openLink={openLink} />
                             </View>
                           );
                         })}
+                        <View style={s.escalaHeader}>
+                          <Text style={s.cultoColLabel}>{t('banda.ordemDoCulto').toUpperCase()}</Text>
+                          <TouchableOpacity
+                            // max(order_index)+1, não a contagem: depois de remover um
+                            // item do meio, a contagem repetiria um índice já usado e a
+                            // ordem passaria a variar a cada recarga.
+                            onPress={() => setRoadmapModal({
+                              cultoId: culto.id,
+                              proximo: culto.roadmap.reduce((max, r) => Math.max(max, r.order_index + 1), 0),
+                            })}
+                            hitSlop={6}
+                          >
+                            <Ionicons name="add-circle-outline" size={17} color={C.primary} />
+                          </TouchableOpacity>
+                        </View>
+                        {culto.roadmap.length === 0 ? (
+                          <Text style={s.escalaVazia}>{t('banda.ordemVazia')}</Text>
+                        ) : (
+                          <>
+                            {culto.roadmap.map(item => (
+                              <View key={item.id} style={s.roadmapRow}>
+                                <Ionicons name="ellipse-outline" size={11} color={C.textDim} />
+                                <Text style={s.roadmapTitulo}>{item.titulo}</Text>
+                                <Text style={s.roadmapDuracao}>
+                                  {item.duracao_segundos ? formatDuracao(item.duracao_segundos) : '—'}
+                                </Text>
+                                {/* Lixeira visível: antes só dava pra remover segurando o
+                                    item, sem nada na tela dizendo isso — o toque simples
+                                    piscava e não fazia nada, o que lê como botão quebrado. */}
+                                <TouchableOpacity onPress={() => removerItemRoadmap(item)} hitSlop={8}>
+                                  <Ionicons name="close-circle-outline" size={16} color={C.textDim} />
+                                </TouchableOpacity>
+                              </View>
+                            ))}
+                          </>
+                        )}
+
+                        {/* Total fora do ramo do roadmap: um culto só com músicas
+                            também merece saber quanto tempo tem. E o aviso de
+                            músicas sem duração vem junto, pra ninguém tomar um
+                            total incompleto por exato. */}
+                        {(() => {
+                          const total = totalDoCulto(culto);
+                          if (total.segundos <= 0) return null;
+                          return (
+                            <View style={s.roadmapTotal}>
+                              <View>
+                                <Text style={s.roadmapTotalLabel}>{t('banda.totalDoCulto')}</Text>
+                                {total.semDuracao > 0 && (
+                                  <Text style={s.resumoAviso}>{t('banda.semDuracaoAviso', { n: total.semDuracao })}</Text>
+                                )}
+                              </View>
+                              <Text style={s.roadmapTotalValor}>{formatDuracao(total.segundos)}</Text>
+                            </View>
+                          );
+                        })()}
+
                         <View style={s.escalaHeader}>
                           <Text style={s.cultoColLabel}>{t('banda.escala').toUpperCase()}</Text>
                           <TouchableOpacity onPress={() => setEscalaModal({ tipo: 'culto', eventoId: culto.id })} hitSlop={6}>
@@ -1828,7 +2744,7 @@ function BandaMain() {
       {activeTab === 'ensaios' && (
         <View style={{ flex: 1 }}>
           <View style={s.cultosToolbar}>
-            <Text style={s.cultosCount}>{ensaios.length} {ensaios.length !== 1 ? t('banda.tabEnsaios').toLowerCase() : t('banda.ensaioSingular')}</Text>
+            <Text style={s.cultosCount}>{ensaiosVisiveis.length} {ensaiosVisiveis.length !== 1 ? t('banda.tabEnsaios').toLowerCase() : t('banda.ensaioSingular')}</Text>
             <TouchableOpacity style={s.newCultoBtn} onPress={() => setEnsaioModal(true)} activeOpacity={0.85}>
               <Ionicons name="add" size={18} color="#fff" />
               <Text style={s.newCultoBtnText}>{t('banda.novoEnsaio')}</Text>
@@ -1836,7 +2752,7 @@ function BandaMain() {
           </View>
           {loadingEnsaios ? (
             <View style={s.loadingWrap}><ActivityIndicator color={C.primary} /></View>
-          ) : ensaios.length === 0 ? (
+          ) : ensaiosVisiveis.length === 0 ? (
             <View style={s.emptyState}>
               <Ionicons name="calendar-outline" size={48} color={C.textDim} />
               <Text style={s.emptyTitle}>{t('banda.nenhumEnsaioAinda')}</Text>
@@ -1845,7 +2761,7 @@ function BandaMain() {
           ) : (
             <ScrollView contentContainerStyle={{ padding: 16, paddingBottom: 32 }}
               refreshControl={<RefreshControl refreshing={refreshing} onRefresh={handleRefresh} tintColor={C.primary} />}>
-              {ensaios.map(ensaio => {
+              {ensaiosVisiveis.map(ensaio => {
                 const isOpen = expandedEnsaio === ensaio.id;
                 const { dia, mes } = diaEMes(ensaio.date);
                 return (
@@ -1856,7 +2772,12 @@ function BandaMain() {
                         <Text style={s.ensaioMonth}>{mes}</Text>
                       </View>
                       <View style={{ flex: 1, marginLeft: 12 }}>
-                        <Text style={s.cultoLabel}>{ensaio.label}{ensaio.date === today ? t('banda.hojeSufixo') : ''}</Text>
+                        <View style={s.cultoLabelRow}>
+                          <Text style={s.cultoLabel}>{ensaio.label}{ensaio.date === today ? t('banda.hojeSufixo') : ''}</Text>
+                          {!ensaio.publicado && (
+                            <View style={s.rascunhoTag}><Text style={s.rascunhoTagText}>{t('banda.rascunho')}</Text></View>
+                          )}
+                        </View>
                         {!!ensaio.time && (
                           <View style={s.ensaioLocalRow}>
                             <Ionicons name="time-outline" size={13} color={C.textMuted} />
@@ -1877,6 +2798,19 @@ function BandaMain() {
                         )}
                       </View>
                       <View style={s.cultoHeaderRight}>
+                        {podeVerRascunho && (
+                          <TouchableOpacity
+                            onPress={() => alternarPublicado('ensaio', ensaio.id, !ensaio.publicado)}
+                            style={s.deleteBtn}
+                            hitSlop={6}
+                          >
+                            <Ionicons
+                              name={ensaio.publicado ? 'eye-outline' : 'eye-off-outline'}
+                              size={15}
+                              color={ensaio.publicado ? C.accent : C.gold}
+                            />
+                          </TouchableOpacity>
+                        )}
                         <TouchableOpacity onPress={() => deleteEnsaio(ensaio.id)} style={s.deleteBtn}>
                           <Ionicons name="trash-outline" size={15} color={C.danger} />
                         </TouchableOpacity>
@@ -1904,10 +2838,23 @@ function BandaMain() {
                             <View key={entry.song_id} style={[s.cultoSongRow, idx === ensaio.entries.length - 1 && { borderBottomWidth: 0 }]}>
                               <Text style={s.cultoSongNum}>{idx + 1}</Text>
                               <View style={s.cultoKeyBadge}><Text style={s.cultoKeyText}>{entry.song_key}</Text></View>
-                              <View style={{ flex: 1 }}>
+                              <TouchableOpacity
+                                style={{ flex: 1 }}
+                                activeOpacity={0.7}
+                                onPress={() => setNotaModal({
+                                  tipo: 'ensaio', eventoId: ensaio.id, songId: entry.song_id,
+                                  titulo: song.title, nota: entry.nota ?? '',
+                                })}
+                              >
                                 <Text style={s.cultoSongTitle}>{song.title}</Text>
                                 <Text style={s.cultoSongArtist}>{song.artist}</Text>
-                              </View>
+                                {entry.nota ? (
+                                  <View style={s.notaRow}>
+                                    <Ionicons name="chatbox-ellipses-outline" size={11} color={C.gold} />
+                                    <Text style={s.notaTexto} numberOfLines={2}>{entry.nota}</Text>
+                                  </View>
+                                ) : null}
+                              </TouchableOpacity>
                               <View style={s.cultoBpmChip}><Text style={s.cultoBpmText}>{entry.bpm}</Text></View>
                               <LinkMiniButtons song={song} openLink={openLink} />
                             </View>
@@ -1985,6 +2932,38 @@ function BandaMain() {
         </KeyboardAvoidingView>
       )}
 
+      <IndisponibilidadeModal
+        visible={indispModal}
+        onClose={() => setIndispModal(false)}
+        indisponibilidades={indisponibilidades}
+        membros={membros}
+        meuId={user?.id}
+        onAlternar={alternarIndisponibilidade}
+      />
+
+      <RelatoriosModal
+        visible={relatorioModal}
+        onClose={() => setRelatorioModal(false)}
+        cultos={cultosVisiveis}
+        ensaios={ensaiosVisiveis}
+        songs={songs}
+        membros={membros}
+      />
+
+      <RoadmapItemModal
+        visible={!!roadmapModal}
+        cultoId={roadmapModal?.cultoId ?? ''}
+        proximoIndice={roadmapModal?.proximo ?? 0}
+        onClose={() => setRoadmapModal(null)}
+        onSalvo={fetchCultos}
+      />
+
+      <NotaMusicaModal
+        alvo={notaModal}
+        onClose={() => setNotaModal(null)}
+        onSalvo={() => { fetchCultos(); fetchEnsaios(); }}
+      />
+
       {!!escalaModal && (
         <EscalaModal
           visible={!!escalaModal}
@@ -1993,6 +2972,20 @@ function BandaMain() {
           membros={membros}
           tipo={escalaModal.tipo}
           eventoId={escalaModal.eventoId}
+          times={times}
+          escalaAtual={
+            (escalaModal.tipo === 'culto'
+              ? cultos.find(c => c.id === escalaModal.eventoId)
+              : ensaios.find(e => e.id === escalaModal.eventoId)
+            )?.escala ?? []
+          }
+          indisponiveis={indisponiveisNoDia(
+            (escalaModal.tipo === 'culto'
+              ? cultos.find(c => c.id === escalaModal.eventoId)
+              : ensaios.find(e => e.id === escalaModal.eventoId)
+            )?.date ?? ''
+          )}
+          onTimesMudaram={fetchTimes}
         />
       )}
     </SafeAreaView>
@@ -2008,6 +3001,9 @@ const s = StyleSheet.create({
   headerRight: { flexDirection: 'row', alignItems: 'center', gap: 6 },
   onlineDot: { width: 8, height: 8, borderRadius: 4, backgroundColor: C.accent },
   onlineText: { fontSize: 12, color: C.textMuted },
+  headerIconBtn: { width: 34, height: 34, borderRadius: 10, backgroundColor: C.surfaceHigh, borderWidth: 1, borderColor: C.border, alignItems: 'center', justifyContent: 'center' },
+  headerBadge: { position: 'absolute', top: -4, right: -4, minWidth: 16, height: 16, borderRadius: 8, backgroundColor: C.gold, alignItems: 'center', justifyContent: 'center', paddingHorizontal: 4 },
+  headerBadgeText: { fontSize: 9, fontWeight: '800', color: '#000' },
   tabBar: { flexDirection: 'row', borderBottomWidth: 1, borderBottomColor: C.border, backgroundColor: C.surface },
   tabItem: { flex: 1, alignItems: 'center', paddingVertical: 10, gap: 3 },
   tabItemActive: { borderBottomWidth: 2, borderBottomColor: C.primary },
@@ -2061,6 +3057,14 @@ const s = StyleSheet.create({
   songMetaChip: { backgroundColor: C.surfaceHigh, borderRadius: 6, paddingHorizontal: 7, paddingVertical: 2 },
   songMetaText: { fontSize: 10, color: C.textMuted, fontWeight: '600' },
   songLinks: { flexDirection: 'row', gap: 6, marginLeft: 8 },
+  notaRow: { flexDirection: 'row', alignItems: 'flex-start', gap: 5, marginTop: 4, paddingRight: 6 },
+  roadmapRow: { flexDirection: 'row', alignItems: 'center', gap: 9, paddingVertical: 9, borderBottomWidth: 1, borderBottomColor: C.border },
+  roadmapTitulo: { flex: 1, fontSize: 13, color: C.text },
+  roadmapDuracao: { fontSize: 12, color: C.textMuted, fontWeight: '600' },
+  roadmapTotal: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', paddingVertical: 10, marginTop: 2 },
+  roadmapTotalLabel: { fontSize: 11, color: C.textMuted, fontWeight: '700', letterSpacing: 0.6, textTransform: 'uppercase' },
+  roadmapTotalValor: { fontSize: 15, color: C.primary, fontWeight: '800' },
+  notaTexto: { flex: 1, fontSize: 11, color: C.gold, lineHeight: 15, fontStyle: 'italic' },
   songCapa: { width: 40, height: 40, borderRadius: 10, backgroundColor: C.surfaceHigh, borderWidth: 2, borderColor: 'transparent' },
   songCapaNoRepertorio: { borderColor: C.primary },
   linkBtn: { width: 30, height: 30, borderRadius: 8, backgroundColor: C.surfaceHigh, alignItems: 'center', justifyContent: 'center', borderWidth: 1, borderColor: C.border },
@@ -2078,6 +3082,9 @@ const s = StyleSheet.create({
   newCultoBtnText: { fontSize: 13, fontWeight: '700', color: '#fff' },
   cultoCard: { backgroundColor: C.surface, borderRadius: 14, borderWidth: 1, borderColor: C.border, marginBottom: 12, overflow: 'hidden' },
   cultoCardOpen: { borderColor: C.primary },
+  cultoLabelRow: { flexDirection: 'row', alignItems: 'center', gap: 7, flexWrap: 'wrap' },
+  rascunhoTag: { backgroundColor: '#3A2E0A', borderWidth: 1, borderColor: C.gold, borderRadius: 5, paddingHorizontal: 6, paddingVertical: 2 },
+  rascunhoTagText: { fontSize: 9, fontWeight: '800', color: C.gold, letterSpacing: 0.5, textTransform: 'uppercase' },
   cultoHeader: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', padding: 14 },
   cultoHeaderLeft: { flexDirection: 'row', alignItems: 'center', gap: 12, flex: 1 },
   cultoDot: { width: 10, height: 10, borderRadius: 5, backgroundColor: C.primary },
