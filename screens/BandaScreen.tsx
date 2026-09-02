@@ -9,6 +9,7 @@ import { Ionicons } from '@expo/vector-icons';
 import { useTranslation } from 'react-i18next';
 import { supabase } from '../lib/supabase';
 import { useAuth } from '../lib/useAuth';
+import MetronomoModal from '../components/MetronomoModal';
 
 // ─── Palette ──────────────────────────────────────────────────────────────────
 const C = {
@@ -34,6 +35,16 @@ type Song = {
   in_repertoire: boolean;
 };
 
+// "A nossa versão em Sol": tom, BPM e links próprios, com nome. A música em
+// `songs` continua sendo o original — não existe linha aqui pra ela, e é por
+// isso que `versao_id` é nulo em todo lugar quando se toca o original.
+type SongVersao = {
+  id: string; song_id: string; nome: string;
+  song_key: string; bpm?: number | null; duracao_segundos?: number | null;
+  cifra_url?: string | null; cifra_tom?: string | null; letra_url?: string | null;
+  youtube_id?: string | null; spotify_id?: string | null;
+};
+
 // Alvo de um botão de link: além da URL, guarda se é o link direto salvo pela
 // banda (direct: true) ou apenas a busca do site (direct: false) — a interface
 // usa isso pra deixar o botão aceso ou apagado.
@@ -45,6 +56,8 @@ type CultoSongEntry = {
   // evento, não no repertório: a mesma canção pode ser tocada de um jeito no
   // domingo de manhã e de outro no camping.
   nota?: string | null;
+  // Versão usada neste evento. Nulo = o original.
+  versao_id?: string | null;
 };
 
 // Um item da ordem do culto que não é música: oração, avisos, oferta,
@@ -83,6 +96,18 @@ type Ensaio = {
 // existir culto nenhum, diferente da confirmação de presença.
 type Indisponibilidade = {
   id: string; profile_id: string; data: string;
+};
+
+type Comentario = {
+  id: string; culto_id: string; autor_id: string; autor_nome: string;
+  texto: string; created_at: string;
+};
+
+// Uma linha do histórico da escala, gravada por gatilho no banco — não depende
+// de ninguém lembrar de anotar.
+type EscalaLog = {
+  id: string; tipo: string; evento_id: string; acao: 'adicionou' | 'removeu';
+  membro_nome: string; instrumento: string; autor_nome: string; created_at: string;
 };
 
 // Formação salva ("equipe A"), pra montar a escala de um culto num toque.
@@ -232,6 +257,47 @@ function totalDoSetlist(songs: Song[]): { segundos: number; semDuracao: number }
     else semDuracao += 1;
   }
   return { segundos, semDuracao };
+}
+
+// ─── Agenda do celular ───────────────────────────────────────────────────────
+// `expo-calendar` seria o caminho nativo, mas é um módulo nativo novo: exigiria
+// build e revisão da App Store, e não chegaria por OTA. Este link abre a tela
+// de "novo evento" já preenchida e funciona nos dois sistemas hoje.
+//
+// A data vai SEM o "Z" do fim de propósito: assim o horário é interpretado no
+// fuso do calendário de quem abre, e não vira uma hora deslocada para quem
+// estiver viajando.
+function horaEMinuto(hora: string): { h: number; min: number } {
+  const m = (hora || '').match(/(\d{1,2})\D?(\d{2})?/);
+  // Limita uma vez só, aqui. Antes o início era limitado e o fim não: digitar
+  // "930" (a regex gulosa lê 93 como hora) dava início 23:00 e fim quatro dias
+  // depois, porque `new Date(..., 93, ...)` transborda em silêncio.
+  const h = Math.min(23, Math.max(0, Number(m?.[1] ?? 9) || 0));
+  const min = Math.min(59, Math.max(0, Number(m?.[2] ?? 0) || 0));
+  return { h, min };
+}
+
+function carimbo(d: Date): string {
+  const p = (n: number) => String(n).padStart(2, '0');
+  return `${d.getFullYear()}${p(d.getMonth() + 1)}${p(d.getDate())}T${p(d.getHours())}${p(d.getMinutes())}00`;
+}
+
+function googleAgendaUrl(
+  titulo: string, dataISO: string, hora: string, duracaoMin: number, detalhes: string, local: string,
+): string {
+  if (!dataISO) return '';
+  const [y, mo, d] = dataISO.split('-').map(Number);
+  const { h, min } = horaEMinuto(hora);
+  const inicio = new Date(y, mo - 1, d, h, min);
+  // O fim sai do início somando milissegundos: a virada de dia (22:00 + 2h)
+  // fica correta sem nenhuma conta de calendário à mão.
+  const fim = new Date(inicio.getTime() + Math.max(15, duracaoMin) * 60000);
+  const q = new URLSearchParams({
+    action: 'TEMPLATE', text: titulo, dates: `${carimbo(inicio)}/${carimbo(fim)}`,
+  });
+  if (detalhes) q.set('details', detalhes);
+  if (local) q.set('location', local);
+  return `https://calendar.google.com/calendar/render?${q.toString()}`;
 }
 
 // ─── Playlist do YouTube com o setlist inteiro ───────────────────────────────
@@ -763,8 +829,8 @@ const nm = StyleSheet.create({
 });
 
 // ─── Novo Culto Modal ─────────────────────────────────────────────────────────
-function NovoCultoModal({ visible, onClose, onSaved, songs }: {
-  visible: boolean; onClose: () => void; onSaved: () => void; songs: Song[];
+function NovoCultoModal({ visible, onClose, onSaved, songs, versoes }: {
+  visible: boolean; onClose: () => void; onSaved: () => void; songs: Song[]; versoes: SongVersao[];
 }) {
   const { t, i18n } = useTranslation();
   const [date, setDate] = useState('');
@@ -783,6 +849,26 @@ function NovoCultoModal({ visible, onClose, onSaved, songs }: {
       setEntries(prev => [...prev, { song_id: song.id, song_key: song.song_key, bpm: String(song.bpm), order_index: prev.length }]);
     }
   };
+  // Escolher a versão já traz o tom e o BPM dela pro setlist — que é o motivo
+  // de a versão existir. Voltar pro original recupera os valores da música.
+  const escolherVersao = (song: Song, versao: SongVersao | null) => {
+    setEntries(prev => prev.map(e => {
+      if (e.song_id !== song.id) return e;
+      // Uma versão criada só pra mudar o BPM tem tom vazio (`not null default ''`).
+      // Nesse caso o tom que a pessoa digitou pra este culto tem que ficar de
+      // pé — voltar em silêncio pro tom do repertório é perder o trabalho dela.
+      const tom = versao
+        ? (versao.song_key || e.song_key || song.song_key)
+        : song.song_key;
+      return {
+        ...e,
+        versao_id: versao?.id ?? null,
+        song_key: tom ?? '',
+        bpm: String(versao?.bpm ?? song.bpm ?? ''),
+      };
+    }));
+  };
+
   const updateEntry = (songId: string, field: 'song_key' | 'bpm', value: string) => {
     setEntries(prev => prev.map(e => e.song_id === songId ? { ...e, [field]: field === 'song_key' ? value.toUpperCase() : value } : e));
   };
@@ -812,6 +898,7 @@ function NovoCultoModal({ visible, onClose, onSaved, songs }: {
 
     // 2. Insere as músicas do culto
     const cultoSongs = entries.map(e => ({
+      versao_id: e.versao_id ?? null,
       culto_id: cultoData.id, song_id: e.song_id,
       song_key: e.song_key, bpm: Number(e.bpm), order_index: e.order_index,
     }));
@@ -855,6 +942,19 @@ function NovoCultoModal({ visible, onClose, onSaved, songs }: {
                       </View>
                     </TouchableOpacity>
                     {selected && entry && (
+                      <>
+                      {versoes.some(v => v.song_id === song.id) && (
+                        <View style={md.versaoRow}>
+                          {[null, ...versoes.filter(v => v.song_id === song.id)].map(v => {
+                            const ativa = (entry.versao_id ?? null) === (v?.id ?? null);
+                            return (
+                              <TouchableOpacity key={v?.id ?? 'original'} style={[s.pill, ativa && s.pillActive]} onPress={() => escolherVersao(song, v)}>
+                                <Text style={[s.pillText, ativa && s.pillTextActive]}>{v ? v.nome : t('banda.versaoOriginal')}</Text>
+                              </TouchableOpacity>
+                            );
+                          })}
+                        </View>
+                      )}
                       <View style={md.overrideRow}>
                         <View style={md.overrideField}>
                           <Text style={md.overrideLabel}>{t('banda.tomLabel')}</Text>
@@ -866,6 +966,7 @@ function NovoCultoModal({ visible, onClose, onSaved, songs }: {
                         </View>
                         <Text style={md.overrideHint}>{t('banda.ajusteParaEsteCulto')}</Text>
                       </View>
+                    </>
                     )}
                   </View>
                 );
@@ -891,6 +992,7 @@ function NovoCultoModal({ visible, onClose, onSaved, songs }: {
   );
 }
 const md = StyleSheet.create({
+  versaoRow: { flexDirection: 'row', flexWrap: 'wrap', gap: 6, marginTop: 10, marginLeft: 4 },
   avisoIndisp: { flexDirection: 'row', alignItems: 'flex-start', gap: 8, backgroundColor: '#3A2E0A', borderWidth: 1, borderColor: C.gold, borderRadius: 10, padding: 10, marginBottom: 16 },
   avisoIndispText: { flex: 1, fontSize: 12, color: C.gold, lineHeight: 16 },
   salvarTimeRow: { flexDirection: 'row', gap: 8, alignItems: 'center', marginBottom: 16 },
@@ -928,6 +1030,29 @@ const md = StyleSheet.create({
   saveBtn: { flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 8, backgroundColor: C.primary, borderRadius: 12, paddingVertical: 14 },
   saveBtnText: { fontSize: 16, fontWeight: '700', color: '#fff' },
 });
+
+// Devolve a música como ela deve ser TOCADA neste evento: os campos da versão
+// escolhida sobrescrevem os do original, e o que a versão não define continua
+// vindo da música. Assim os quatro botões de link, o tom e a duração passam a
+// falar da versão certa sem duplicar nada no banco.
+function comVersao(song: Song, versao?: SongVersao | null): Song {
+  if (!versao) return song;
+  return {
+    ...song,
+    song_key: versao.song_key || song.song_key,
+    bpm: versao.bpm ?? song.bpm,
+    duracao_segundos: versao.duracao_segundos ?? song.duracao_segundos,
+    // cifra_url e cifra_tom andam juntos: são "qual cifra" e "em que tom ela
+    // foi publicada". Herdar o tom do original junto com uma cifra nova abriria
+    // a página transposta pelo número errado — pior que não transpor.
+    ...(versao.cifra_url
+      ? { cifra_url: versao.cifra_url, cifra_tom: versao.cifra_tom ?? null }
+      : { cifra_url: song.cifra_url, cifra_tom: song.cifra_tom }),
+    letra_url: versao.letra_url ?? song.letra_url,
+    youtube_id: versao.youtube_id || song.youtube_id,
+    spotify_id: versao.spotify_id || song.spotify_id,
+  };
+}
 
 // ─── Botões de link (cifra, letra, YouTube, Spotify) ────────────────────────
 // Quatro botões em toda música, em qualquer lista. Aceso = a banda salvou o
@@ -1035,8 +1160,8 @@ function PresencaBar({ presencas, meuId, escalados, onResponder }: {
 // Igual ao NovoCultoModal (data + músicas do repertório com tom/BPM
 // ajustáveis), só que também pede horário, local e uma observação opcional —
 // os mesmos dados que a aba Ensaios sempre mostrou, agora vindos do banco.
-function NovoEnsaioModal({ visible, onClose, onSaved, songs }: {
-  visible: boolean; onClose: () => void; onSaved: () => void; songs: Song[];
+function NovoEnsaioModal({ visible, onClose, onSaved, songs, versoes }: {
+  visible: boolean; onClose: () => void; onSaved: () => void; songs: Song[]; versoes: SongVersao[];
 }) {
   const { t, i18n } = useTranslation();
   const [date, setDate] = useState('');
@@ -1056,6 +1181,26 @@ function NovoEnsaioModal({ visible, onClose, onSaved, songs }: {
       setEntries(prev => [...prev, { song_id: song.id, song_key: song.song_key, bpm: String(song.bpm), order_index: prev.length }]);
     }
   };
+  // Escolher a versão já traz o tom e o BPM dela pro setlist — que é o motivo
+  // de a versão existir. Voltar pro original recupera os valores da música.
+  const escolherVersao = (song: Song, versao: SongVersao | null) => {
+    setEntries(prev => prev.map(e => {
+      if (e.song_id !== song.id) return e;
+      // Uma versão criada só pra mudar o BPM tem tom vazio (`not null default ''`).
+      // Nesse caso o tom que a pessoa digitou pra este culto tem que ficar de
+      // pé — voltar em silêncio pro tom do repertório é perder o trabalho dela.
+      const tom = versao
+        ? (versao.song_key || e.song_key || song.song_key)
+        : song.song_key;
+      return {
+        ...e,
+        versao_id: versao?.id ?? null,
+        song_key: tom ?? '',
+        bpm: String(versao?.bpm ?? song.bpm ?? ''),
+      };
+    }));
+  };
+
   const updateEntry = (songId: string, field: 'song_key' | 'bpm', value: string) => {
     setEntries(prev => prev.map(e => e.song_id === songId ? { ...e, [field]: field === 'song_key' ? value.toUpperCase() : value } : e));
   };
@@ -1084,6 +1229,7 @@ function NovoEnsaioModal({ visible, onClose, onSaved, songs }: {
     if (ensaioError || !ensaioData) { Alert.alert(t('common.erro'), ensaioError?.message ?? t('banda.erroSalvarEnsaio')); setSaving(false); return; }
 
     const ensaioSongs = entries.map(e => ({
+      versao_id: e.versao_id ?? null,
       ensaio_id: ensaioData.id, song_id: e.song_id,
       song_key: e.song_key, bpm: Number(e.bpm), order_index: e.order_index,
     }));
@@ -1143,6 +1289,19 @@ function NovoEnsaioModal({ visible, onClose, onSaved, songs }: {
                         </View>
                       </TouchableOpacity>
                       {selected && entry && (
+                        <>
+                        {versoes.some(v => v.song_id === song.id) && (
+                          <View style={md.versaoRow}>
+                            {[null, ...versoes.filter(v => v.song_id === song.id)].map(v => {
+                              const ativa = (entry.versao_id ?? null) === (v?.id ?? null);
+                              return (
+                                <TouchableOpacity key={v?.id ?? 'original'} style={[s.pill, ativa && s.pillActive]} onPress={() => escolherVersao(song, v)}>
+                                  <Text style={[s.pillText, ativa && s.pillTextActive]}>{v ? v.nome : t('banda.versaoOriginal')}</Text>
+                                </TouchableOpacity>
+                              );
+                            })}
+                          </View>
+                        )}
                         <View style={md.overrideRow}>
                           <View style={md.overrideField}>
                             <Text style={md.overrideLabel}>{t('banda.tomLabel')}</Text>
@@ -1154,6 +1313,7 @@ function NovoEnsaioModal({ visible, onClose, onSaved, songs }: {
                           </View>
                           <Text style={md.overrideHint}>{t('banda.ajusteParaEsteCulto')}</Text>
                         </View>
+                      </>
                       )}
                     </View>
                   );
@@ -1929,6 +2089,373 @@ function RoadmapItemModal({ visible, cultoId, onClose, onSalvo, proximoIndice }:
   );
 }
 
+// ─── Comentários e histórico do culto ────────────────────────────────────────
+// A conversa sobre o culto some no chat geral em dois dias. Aqui ela fica
+// presa ao culto, junto do setlist, e ainda está lá no domingo de manhã. O
+// histórico ao lado responde "quem me tirou da escala?" sem discussão.
+function ComentariosModal({ culto, onClose, meuId, meuNome, souAdmin, nomePronto }: {
+  culto: Culto | null; onClose: () => void;
+  meuId?: string; meuNome: string; souAdmin: boolean; nomePronto: boolean;
+}) {
+  const { t, i18n } = useTranslation();
+  const [aba, setAba] = useState<'conversa' | 'historico'>('conversa');
+  const [comentarios, setComentarios] = useState<Comentario[]>([]);
+  const [historico, setHistorico] = useState<EscalaLog[]>([]);
+  const [texto, setTexto] = useState('');
+  const [enviando, setEnviando] = useState(false);
+  const [carregando, setCarregando] = useState(true);
+  const listaRef = useRef<ScrollView>(null);
+
+  const cultoId = culto?.id ?? '';
+
+  const carregar = useCallback(async () => {
+    if (!cultoId) return;
+    setCarregando(true);
+    const [{ data: coments }, { data: logs }] = await Promise.all([
+      // DESC + reverse pelo mesmo motivo do chat: `limit` corta pelo começo da
+      // ordenação, então pedir ascendente traria os comentários mais antigos.
+      supabase.from('culto_comentarios').select('*').eq('culto_id', cultoId)
+        .order('created_at', { ascending: false }).limit(200),
+      supabase.from('banda_escala_log').select('*')
+        .eq('tipo', 'culto').eq('evento_id', cultoId)
+        .order('created_at', { ascending: false }).limit(100),
+    ]);
+    setComentarios(((coments ?? []) as Comentario[]).reverse());
+    setHistorico((logs ?? []) as EscalaLog[]);
+    setCarregando(false);
+  }, [cultoId]);
+
+  useEffect(() => {
+    if (!culto) return;
+    setAba('conversa');
+    carregar();
+    const canal = supabase
+      .channel(`culto_comentarios_${cultoId}`)
+      .on('postgres_changes',
+        { event: 'INSERT', schema: 'public', table: 'culto_comentarios', filter: `culto_id=eq.${cultoId}` },
+        payload => {
+          const nova = payload.new as Comentario;
+          setComentarios(prev => (prev.some(c => c.id === nova.id) ? prev : [...prev, nova]));
+        })
+      // Sem filtro no DELETE, de propósito: com a REPLICA IDENTITY padrão o
+      // `old` de um DELETE traz só a chave primária, então `culto_id` nem vem
+      // no payload e um filtro por ele nunca casaria — o comentário apagado
+      // ficaria na tela dos outros até fechar e reabrir. É por isso que o chat
+      // da banda também escuta sem filtro.
+      .on('postgres_changes',
+        { event: 'DELETE', schema: 'public', table: 'culto_comentarios' },
+        payload => {
+          const fora = payload.old as { id: string };
+          setComentarios(prev => prev.filter(c => c.id !== fora.id));
+        })
+      .subscribe();
+    return () => { supabase.removeChannel(canal); };
+  }, [culto, cultoId, carregar]);
+
+  const enviar = async () => {
+    const conteudo = texto.trim();
+    // `autor_nome` fica gravado pra sempre na linha: enviar antes de o perfil
+    // resolver gravaria o começo do e-mail como nome, sem UI pra corrigir.
+    if (!conteudo || enviando || !meuId || !cultoId || !nomePronto) return;
+    setEnviando(true);
+    const { data, error } = await supabase.from('culto_comentarios')
+      .insert({ culto_id: cultoId, autor_id: meuId, autor_nome: meuNome, texto: conteudo })
+      .select().single();
+    setEnviando(false);
+    if (error) { Alert.alert(t('common.erro'), error.message); return; }
+    if (data) setComentarios(prev => (prev.some(c => c.id === (data as Comentario).id) ? prev : [...prev, data as Comentario]));
+    setTexto('');
+    setTimeout(() => listaRef.current?.scrollToEnd({ animated: true }), 100);
+  };
+
+  const apagar = (c: Comentario) => {
+    if (c.autor_id !== meuId && !souAdmin) return;
+    Alert.alert(t('banda.apagarMensagem'), t('banda.apagarComentarioMsg'), [
+      { text: t('common.cancelar'), style: 'cancel' },
+      { text: t('common.remover'), style: 'destructive', onPress: async () => {
+        setComentarios(prev => prev.filter(x => x.id !== c.id));
+        const { error } = await supabase.from('culto_comentarios').delete().eq('id', c.id);
+        // Sem isto, uma exclusão recusada pelo banco sumia da tela e voltava
+        // sozinha no próximo carregamento, sem explicação nenhuma.
+        if (error) { Alert.alert(t('common.erro'), error.message); carregar(); }
+      }},
+    ]);
+  };
+
+  return (
+    <Modal visible={!!culto} animationType="slide" transparent onRequestClose={onClose}>
+      <View style={nm.overlay}>
+        <KeyboardAvoidingView behavior={Platform.OS === 'ios' ? 'padding' : undefined} style={{ width: '100%' }}>
+          <View style={[nm.sheet, { maxHeight: '88%' }]}>
+            <View style={nm.header}>
+              <View style={{ flex: 1 }}>
+                <Text style={nm.title} numberOfLines={1}>{culto?.label ?? ''}</Text>
+                <Text style={ind.explicacao}>
+                  {culto ? formatDateLabel(culto.date, i18n.language) : ''}
+                </Text>
+              </View>
+              <TouchableOpacity onPress={onClose}><Ionicons name="close" size={22} color={C.textMuted} /></TouchableOpacity>
+            </View>
+
+            <View style={rel.abas}>
+              {(['conversa', 'historico'] as const).map(a => (
+                <TouchableOpacity key={a} style={[rel.aba, aba === a && rel.abaAtiva]} onPress={() => setAba(a)}>
+                  <Text style={[rel.abaTexto, aba === a && rel.abaTextoAtivo]}>
+                    {a === 'conversa' ? t('banda.conversa') : t('banda.historico')}
+                  </Text>
+                </TouchableOpacity>
+              ))}
+            </View>
+
+            {carregando ? (
+              <View style={s.loadingWrap}><ActivityIndicator color={C.primary} /></View>
+            ) : aba === 'conversa' ? (
+              <>
+                <ScrollView ref={listaRef} style={{ maxHeight: 340 }} showsVerticalScrollIndicator={false}>
+                  {comentarios.length === 0 ? (
+                    <Text style={ind.vazio}>{t('banda.semComentarios')}</Text>
+                  ) : comentarios.map(c => {
+                    const meu = c.autor_id === meuId;
+                    return (
+                      <TouchableOpacity
+                        key={c.id}
+                        activeOpacity={meu || souAdmin ? 0.7 : 1}
+                        onLongPress={() => apagar(c)}
+                        style={[s.bubble, meu && s.bubbleMine]}
+                      >
+                        {!meu && <Text style={s.bubbleAuthor}>{c.autor_nome}</Text>}
+                        <Text style={[s.bubbleText, meu && s.bubbleTextMine]}>{c.texto}</Text>
+                        <Text style={[s.bubbleTime, meu && s.bubbleTimeMine]}>{horaDaMensagem(c.created_at)}</Text>
+                      </TouchableOpacity>
+                    );
+                  })}
+                </ScrollView>
+                <View style={[s.chatInput, { borderTopWidth: 0, paddingHorizontal: 0, backgroundColor: 'transparent' }]}>
+                  <TextInput
+                    style={s.chatField}
+                    placeholder={t('banda.comentarPlaceholder')}
+                    placeholderTextColor={C.textDim}
+                    value={texto}
+                    onChangeText={setTexto}
+                    maxLength={600}
+                    returnKeyType="send"
+                    onSubmitEditing={enviar}
+                  />
+                  <TouchableOpacity
+                    style={[s.sendBtn, (!texto.trim() || enviando || !nomePronto) && { opacity: 0.45 }]}
+                    onPress={enviar}
+                    disabled={!texto.trim() || enviando || !nomePronto}
+                  >
+                    {enviando ? <ActivityIndicator color="#fff" size="small" /> : <Ionicons name="send" size={18} color="#fff" />}
+                  </TouchableOpacity>
+                </View>
+              </>
+            ) : (
+              <ScrollView style={{ maxHeight: 420 }} showsVerticalScrollIndicator={false}>
+                {historico.length === 0 ? (
+                  <Text style={ind.vazio}>{t('banda.semHistorico')}</Text>
+                ) : historico.map(h => (
+                  <View key={h.id} style={ind.listaRow}>
+                    <View style={{ flex: 1 }}>
+                      <Text style={ind.listaNome}>
+                        {h.membro_nome} · {h.instrumento}
+                      </Text>
+                      <Text style={ind.listaData}>
+                        {t(h.acao === 'adicionou' ? 'banda.logAdicionou' : 'banda.logRemoveu',
+                          { autor: h.autor_nome || t('banda.alguem') })}
+                      </Text>
+                    </View>
+                    <Text style={ind.listaData}>
+                      {/* Data junto da hora: linhas de semanas diferentes
+                          pareciam do mesmo dia mostrando só "9:12". */}
+                      {rotuloDoDia(diaDaMensagem(h.created_at), todayISO(), i18n.language, t)}
+                      {' · '}{horaDaMensagem(h.created_at)}
+                    </Text>
+                  </View>
+                ))}
+              </ScrollView>
+            )}
+          </View>
+        </KeyboardAvoidingView>
+      </View>
+    </Modal>
+  );
+}
+
+// ─── Versões da música ───────────────────────────────────────────────────────
+// Hoje o tom da banda é ajustado por culto e some ali: no culto seguinte
+// alguém tem que lembrar de novo, e a cifra continua abrindo no tom do site.
+// Uma versão é essa escolha com nome e memória.
+function VersoesModal({ song, versoes, onClose, onMudou }: {
+  song: Song | null; versoes: SongVersao[]; onClose: () => void; onMudou: () => void;
+}) {
+  const { t } = useTranslation();
+  const vazio = { nome: '', song_key: '', bpm: '', cifra_url: '', cifra_tom: '' };
+  const [form, setForm] = useState(vazio);
+  const [editando, setEditando] = useState<string | null>(null);
+  const [salvando, setSalvando] = useState(false);
+
+  useEffect(() => { if (!song) { setForm(vazio); setEditando(null); } }, [song]);
+
+  const set = (campo: keyof typeof vazio) => (v: string) => setForm(p => ({ ...p, [campo]: v }));
+
+  // Pré-preenche com o original: quase sempre a versão muda só o tom, e
+  // redigitar título de cifra e BPM à toa é o tipo de atrito que faz ninguém usar.
+  const começarNova = () => {
+    if (!song) return;
+    setEditando(null);
+    setForm({
+      nome: '', song_key: song.song_key ?? '',
+      bpm: song.bpm ? String(song.bpm) : '',
+      cifra_url: song.cifra_url ?? '', cifra_tom: song.cifra_tom ?? '',
+    });
+  };
+
+  const editar = (v: SongVersao) => {
+    setEditando(v.id);
+    setForm({
+      nome: v.nome, song_key: v.song_key ?? '',
+      bpm: v.bpm ? String(v.bpm) : '',
+      cifra_url: v.cifra_url ?? '', cifra_tom: v.cifra_tom ?? '',
+    });
+  };
+
+  const salvar = async () => {
+    if (!song || salvando) return;
+    const nome = form.nome.trim();
+    if (!nome) { Alert.alert(t('common.atencao'), t('banda.versaoPrecisaNome')); return; }
+    const bpmNum = Number(form.bpm);
+    setSalvando(true);
+    const payload = {
+      song_id: song.id, nome,
+      song_key: form.song_key.trim().toUpperCase(),
+      bpm: bpmNum > 0 && bpmNum < 400 ? bpmNum : null,
+      cifra_url: normalizeUrl(form.cifra_url) || null,
+      cifra_tom: form.cifra_tom.trim().toUpperCase() || null,
+    };
+    const { error } = editando
+      ? await supabase.from('song_versoes').update(payload).eq('id', editando)
+      : await supabase.from('song_versoes').insert(payload);
+    setSalvando(false);
+    if (error) {
+      // O par (song_id, nome) é único: dois "Nossa versão" na mesma música
+      // seriam impossíveis de distinguir no seletor do setlist.
+      Alert.alert(t('common.erro'), error.code === '23505' ? t('banda.versaoNomeRepetido') : error.message);
+      return;
+    }
+    setForm(vazio); setEditando(null);
+    onMudou();
+  };
+
+  const apagar = (v: SongVersao) => {
+    Alert.alert(v.nome, t('banda.apagarVersaoMsg'), [
+      { text: t('common.cancelar'), style: 'cancel' },
+      { text: t('common.remover'), style: 'destructive', onPress: async () => {
+        const { error } = await supabase.from('song_versoes').delete().eq('id', v.id);
+        if (error) { Alert.alert(t('common.erro'), error.message); return; }
+        if (editando === v.id) { setEditando(null); setForm(vazio); }
+        onMudou();
+      }},
+    ]);
+  };
+
+  const minhas = versoes.filter(v => v.song_id === song?.id);
+
+  return (
+    <Modal visible={!!song} animationType="slide" transparent onRequestClose={onClose}>
+      <View style={nm.overlay}>
+        <KeyboardAvoidingView behavior={Platform.OS === 'ios' ? 'padding' : undefined} style={{ width: '100%' }}>
+          <View style={[nm.sheet, { maxHeight: '90%' }]}>
+            <View style={nm.header}>
+              <View style={{ flex: 1 }}>
+                <Text style={nm.title} numberOfLines={1}>{t('banda.versoes')}</Text>
+                <Text style={ind.explicacao}>{song?.title ?? ''}</Text>
+              </View>
+              <TouchableOpacity onPress={onClose}><Ionicons name="close" size={22} color={C.textMuted} /></TouchableOpacity>
+            </View>
+
+            <ScrollView showsVerticalScrollIndicator={false} keyboardShouldPersistTaps="handled">
+              {/* O original nunca é uma linha no banco — aparece aqui só pra
+                  deixar claro que ele continua existindo. */}
+              <View style={vs.linha}>
+                <View style={{ flex: 1 }}>
+                  <Text style={vs.nome}>{t('banda.versaoOriginal')}</Text>
+                  <Text style={vs.detalhe}>
+                    {song?.song_key}{song?.bpm ? ` · ${song.bpm} BPM` : ''}
+                  </Text>
+                </View>
+                <Ionicons name="lock-closed-outline" size={14} color={C.textDim} />
+              </View>
+
+              {minhas.map(v => (
+                <View key={v.id} style={vs.linha}>
+                  <TouchableOpacity style={{ flex: 1 }} onPress={() => editar(v)} activeOpacity={0.7}>
+                    <Text style={vs.nome}>{v.nome}</Text>
+                    <Text style={vs.detalhe}>
+                      {v.song_key || song?.song_key}{v.bpm ? ` · ${v.bpm} BPM` : ''}
+                      {v.cifra_url ? ` · ${t('banda.comCifra')}` : ''}
+                    </Text>
+                  </TouchableOpacity>
+                  <TouchableOpacity onPress={() => apagar(v)} hitSlop={8}>
+                    <Ionicons name="trash-outline" size={15} color={C.danger} />
+                  </TouchableOpacity>
+                </View>
+              ))}
+
+              <View style={{ height: 18 }} />
+              <Text style={nm.groupLabel}>
+                {editando ? t('banda.editarVersao') : t('banda.novaVersao')}
+              </Text>
+              <View style={nm.fieldWrap}>
+                <Text style={nm.fieldLabel}>{t('banda.versaoNome')}</Text>
+                <TextInput style={nm.fieldInput} placeholder={t('banda.versaoNomePlaceholder')} placeholderTextColor={C.textDim} value={form.nome} onChangeText={set('nome')} maxLength={40} />
+              </View>
+              <View style={{ flexDirection: 'row', gap: 12 }}>
+                <View style={{ flex: 1 }}>
+                  <View style={nm.fieldWrap}>
+                    <Text style={nm.fieldLabel}>{t('banda.tomLabel')}</Text>
+                    <TextInput style={nm.fieldInput} placeholder="Ex: G" placeholderTextColor={C.textDim} value={form.song_key} onChangeText={v => set('song_key')(v.toUpperCase())} autoCapitalize="characters" maxLength={3} />
+                  </View>
+                </View>
+                <View style={{ flex: 1 }}>
+                  <View style={nm.fieldWrap}>
+                    <Text style={nm.fieldLabel}>BPM</Text>
+                    <TextInput style={nm.fieldInput} placeholder="Ex: 72" placeholderTextColor={C.textDim} value={form.bpm} onChangeText={v => set('bpm')(v.replace(/\D/g, ''))} keyboardType="numeric" maxLength={3} />
+                  </View>
+                </View>
+              </View>
+              <View style={nm.fieldWrap}>
+                <Text style={nm.fieldLabel}>{t('banda.linkCifraOpcional')}</Text>
+                <TextInput style={nm.fieldInput} placeholder={t('banda.coleLinkCifra')} placeholderTextColor={C.textDim} value={form.cifra_url} onChangeText={set('cifra_url')} autoCorrect={false} autoCapitalize="none" keyboardType="url" />
+              </View>
+              {!!form.cifra_url.trim() && (
+                <View style={nm.fieldWrap}>
+                  <Text style={nm.fieldLabel}>{t('banda.tomDaCifra')}</Text>
+                  <TextInput style={[nm.fieldInput, { width: 110 }]} placeholder="Ex: D" placeholderTextColor={C.textDim} value={form.cifra_tom} onChangeText={v => set('cifra_tom')(v.toUpperCase())} autoCapitalize="characters" maxLength={3} />
+                </View>
+              )}
+              {!!editando && (
+                <TouchableOpacity onPress={começarNova} style={{ paddingVertical: 8 }}>
+                  <Text style={{ fontSize: 12, color: C.primary, fontWeight: '700' }}>{t('banda.criarOutraVersao')}</Text>
+                </TouchableOpacity>
+              )}
+            </ScrollView>
+
+            <TouchableOpacity style={[nm.saveBtn, (salvando || !form.nome.trim()) && { opacity: 0.6 }]} onPress={salvar} disabled={salvando || !form.nome.trim()} activeOpacity={0.85}>
+              {salvando ? <ActivityIndicator color="#fff" /> : <><Ionicons name="checkmark-outline" size={18} color="#fff" /><Text style={nm.saveBtnText}>{editando ? t('banda.salvarAlteracoes') : t('banda.adicionarVersao')}</Text></>}
+            </TouchableOpacity>
+          </View>
+        </KeyboardAvoidingView>
+      </View>
+    </Modal>
+  );
+}
+const vs = StyleSheet.create({
+  linha: { flexDirection: 'row', alignItems: 'center', gap: 10, paddingVertical: 11, borderBottomWidth: 1, borderBottomColor: C.border },
+  nome: { fontSize: 14, color: C.text, fontWeight: '600' },
+  detalhe: { fontSize: 11.5, color: C.textMuted, marginTop: 2 },
+});
+
 function BandaMain() {
   const { t, i18n } = useTranslation();
   // Precisa da conta logada pra saber quais mensagens do chat são minhas e
@@ -1954,8 +2481,12 @@ function BandaMain() {
   const [indispModal, setIndispModal] = useState(false);
   const [relatorioModal, setRelatorioModal] = useState(false);
   const [times, setTimes] = useState<BandaTime[]>([]);
+  const [versoes, setVersoes] = useState<SongVersao[]>([]);
+  const [versoesSong, setVersoesSong] = useState<Song | null>(null);
   // Qual música de qual evento está com a nota aberta pra edição.
   const [roadmapModal, setRoadmapModal] = useState<{ cultoId: string; proximo: number } | null>(null);
+  const [comentariosCulto, setComentariosCulto] = useState<Culto | null>(null);
+  const [metronomo, setMetronomo] = useState<{ bpm: number | null; titulo: string } | null>(null);
   const [notaModal, setNotaModal] = useState<
     { tipo: 'culto' | 'ensaio'; eventoId: string; songId: string; titulo: string; nota: string } | null
   >(null);
@@ -2113,6 +2644,11 @@ function BandaMain() {
     .map(i => membros.find(m => m.profile_id === i.profile_id)?.nome)
     .filter((n): n is string => !!n);
 
+  const fetchVersoes = useCallback(async () => {
+    const { data } = await supabase.from('song_versoes').select('*').order('nome');
+    if (data) setVersoes(data as SongVersao[]);
+  }, []);
+
   const fetchTimes = useCallback(async () => {
     const { data: timesData } = await supabase.from('banda_times').select('*').order('nome');
     if (!timesData) return;
@@ -2124,7 +2660,7 @@ function BandaMain() {
     })));
   }, []);
 
-  useEffect(() => { fetchPresencas(); fetchIndisponibilidades(); fetchTimes(); }, [fetchPresencas, fetchIndisponibilidades, fetchTimes]);
+  useEffect(() => { fetchPresencas(); fetchIndisponibilidades(); fetchTimes(); fetchVersoes(); }, [fetchPresencas, fetchIndisponibilidades, fetchTimes, fetchVersoes]);
 
   useEffect(() => {
     if (!user?.id) { setMeuPerfil(null); return; }
@@ -2184,6 +2720,7 @@ function BandaMain() {
           entries: (entriesData ?? []).map((e: any) => ({
             song_id: e.song_id, song_key: e.song_key,
             bpm: String(e.bpm), order_index: e.order_index, nota: e.nota,
+            versao_id: e.versao_id,
           })),
           escala: (escalaData ?? []).map((e: any) => ({
             id: e.id, membro_id: e.membro_id, instrumento: e.instrumento,
@@ -2216,6 +2753,7 @@ function BandaMain() {
           entries: (entriesData ?? []).map((e: any) => ({
             song_id: e.song_id, song_key: e.song_key,
             bpm: String(e.bpm), order_index: e.order_index, nota: e.nota,
+            versao_id: e.versao_id,
           })),
           escala: (escalaData ?? []).map((e: any) => ({
             id: e.id, membro_id: e.membro_id, instrumento: e.instrumento,
@@ -2230,7 +2768,7 @@ function BandaMain() {
 
   useEffect(() => { fetchSongs(); fetchCultos(); fetchEnsaios(); fetchMembros(); }, [fetchSongs, fetchCultos, fetchEnsaios, fetchMembros]);
 
-  const handleRefresh = () => { setRefreshing(true); fetchSongs(); fetchCultos(); fetchEnsaios(); fetchMembros(); fetchPresencas(); fetchIndisponibilidades(); fetchTimes(); };
+  const handleRefresh = () => { setRefreshing(true); fetchSongs(); fetchCultos(); fetchEnsaios(); fetchMembros(); fetchPresencas(); fetchIndisponibilidades(); fetchTimes(); fetchVersoes(); };
 
   const removerDaEscala = (tipo: 'culto' | 'ensaio', id: string) => {
     Alert.alert(t('banda.removerDaEscala'), t('banda.desejaRemoverDaEscala'), [
@@ -2283,8 +2821,23 @@ function BandaMain() {
     Linking.openURL(url).catch(() => Alert.alert(t('common.erro'), t('banda.erroAbrirLink')));
   };
 
+  // A música como ela vai ser tocada: com a versão escolhida aplicada por cima
+  // do original, pra que tom, BPM e os quatro links falem da versão certa.
+  const musicaDaEntrada = (entry: CultoSongEntry): Song | null => {
+    const song = songs.find(sg => sg.id === entry.song_id);
+    if (!song) return null;
+    const base = comVersao(song, entry.versao_id ? versoes.find(v => v.id === entry.versao_id) : null);
+    // O tom gravado no evento é a última palavra: é ele que aparece no selo da
+    // linha, e o botão da cifra tem que abrir nesse mesmo tom. Sem isto, o selo
+    // dizia F# e a cifra abria em G.
+    return entry.song_key ? { ...base, song_key: entry.song_key } : base;
+  };
+
+  const nomeDaVersao = (entry: CultoSongEntry) =>
+    entry.versao_id ? versoes.find(v => v.id === entry.versao_id)?.nome ?? '' : '';
+
   const songsDoSetlist = (entries: CultoSongEntry[]) =>
-    entries.map(e => songs.find(sg => sg.id === e.song_id)).filter((sg): sg is Song => !!sg);
+    entries.map(musicaDaEntrada).filter((sg): sg is Song => !!sg);
 
   const removerItemRoadmap = (item: RoadmapItem) => {
     Alert.alert(item.titulo, t('banda.removerItemMsg'), [
@@ -2301,6 +2854,16 @@ function BandaMain() {
     const musicas = totalDoSetlist(songsDoSetlist(culto.entries));
     const itens = culto.roadmap.reduce((soma, r) => soma + (r.duracao_segundos ?? 0), 0);
     return { segundos: musicas.segundos + itens, semDuracao: musicas.semDuracao };
+  };
+
+  // Abre o calendário do celular já com o evento preenchido. A duração vem do
+  // tempo real do culto quando ele existe; senão, um padrão razoável.
+  const abrirAgenda = (
+    titulo: string, data: string, hora: string, duracaoMin: number, detalhes: string, local: string,
+  ) => {
+    const url = googleAgendaUrl(titulo, data, hora, duracaoMin, detalhes, local);
+    if (!url) { Alert.alert(t('common.erro'), t('banda.erroAbrirLink')); return; }
+    Linking.openURL(url).catch(() => Alert.alert(t('common.erro'), t('banda.erroAbrirLink')));
   };
 
   const abrirNovaMusica = () => { setEditSong(null); setMusicaModal(true); };
@@ -2441,8 +3004,9 @@ function BandaMain() {
                 onPlaylist={() => abrirPlaylist(cultoDoDia.entries)}
               />
               {cultoDoDia.entries.map((entry, idx) => {
-                const song = songs.find(sg => sg.id === entry.song_id);
+                const song = musicaDaEntrada(entry);
                 if (!song) return null;
+                const versaoNome = nomeDaVersao(entry);
                 return (
                   <View key={entry.song_id} style={s.hojeCard}>
                     <View style={s.hojeOrder}><Text style={s.hojeOrderNum}>{idx + 1}</Text></View>
@@ -2455,7 +3019,9 @@ function BandaMain() {
                       })}
                     >
                       <Text style={s.hojeSongTitle} numberOfLines={1}>{song.title}</Text>
-                      <Text style={s.hojeSongArtist} numberOfLines={1}>{song.artist}</Text>
+                      <Text style={s.hojeSongArtist} numberOfLines={1}>
+                        {song.artist}{versaoNome ? ` · ${versaoNome}` : ''}
+                      </Text>
                       {entry.nota ? (
                         <View style={s.notaRow}>
                           <Ionicons name="chatbox-ellipses-outline" size={11} color={C.gold} />
@@ -2467,10 +3033,13 @@ function BandaMain() {
                       <Text style={s.hojeTomLabel}>{t('banda.tom')}</Text>
                       <Text style={s.hojeTomValue}>{entry.song_key}</Text>
                     </View>
-                    <View style={s.hojeBpmBadge}>
+                    <TouchableOpacity
+                      style={s.hojeBpmBadge}
+                      onPress={() => setMetronomo({ bpm: Number(entry.bpm) || song.bpm, titulo: song.title })}
+                    >
                       <Text style={s.hojeBpmLabel}>{t('banda.bpm')}</Text>
-                      <Text style={s.hojeBpmValue}>{entry.bpm}</Text>
-                    </View>
+                      <Text style={[s.hojeBpmValue, { color: C.primary }]}>{entry.bpm}</Text>
+                    </TouchableOpacity>
                     <LinkMiniButtons song={song} openLink={openLink} />
                   </View>
                 );
@@ -2539,11 +3108,33 @@ function BandaMain() {
                     <View style={s.songTitleRow}>
                       <Text style={[s.songTitle, { flexShrink: 1 }]} numberOfLines={1}>{item.title}</Text>
                       <Ionicons name="create-outline" size={13} color={C.textDim} />
+                      {versoes.some(v => v.song_id === item.id) && (
+                        <View style={s.versaoTag}>
+                          <Text style={s.versaoTagText}>
+                            {versoes.filter(v => v.song_id === item.id).length}
+                          </Text>
+                        </View>
+                      )}
                     </View>
                     <Text style={s.songArtist} numberOfLines={1}>{item.artist}</Text>
                     <View style={s.songMeta}>
                       <View style={s.songMetaChip}><Text style={s.songMetaText}>{t('banda.tomLabel')} {item.song_key}</Text></View>
-                      <View style={s.songMetaChip}><Text style={s.songMetaText}>{item.bpm} BPM</Text></View>
+                      {/* Toque no BPM abre o metrônomo já naquele andamento —
+                          era o motivo de o músico largar o app e abrir outro. */}
+                      <TouchableOpacity
+                        style={[s.songMetaChip, s.songMetaChipAcionavel]}
+                        onPress={() => setMetronomo({ bpm: item.bpm, titulo: item.title })}
+                      >
+                        <Ionicons name="pulse-outline" size={10} color={C.primary} />
+                        <Text style={[s.songMetaText, { color: C.primary }]}>{item.bpm} BPM</Text>
+                      </TouchableOpacity>
+                      <TouchableOpacity
+                        style={[s.songMetaChip, s.songMetaChipAcionavel]}
+                        onPress={() => setVersoesSong(item)}
+                      >
+                        <Ionicons name="git-branch-outline" size={10} color={C.primary} />
+                        <Text style={[s.songMetaText, { color: C.primary }]}>{t('banda.versoes')}</Text>
+                      </TouchableOpacity>
                       {!!item.duracao_segundos && (
                         <View style={s.songMetaChip}><Text style={s.songMetaText}>{formatDuracao(item.duracao_segundos)}</Text></View>
                       )}
@@ -2620,6 +3211,25 @@ function BandaMain() {
                     </TouchableOpacity>
                     {isOpen && (
                       <View style={s.cultoSongs}>
+                        <View style={s.acoesRow}>
+                          <TouchableOpacity
+                            style={s.acaoBtn}
+                            onPress={() => abrirAgenda(
+                              culto.label, culto.date, '',
+                              Math.max(60, Math.round(totalDoCulto(culto).segundos / 60) || 90),
+                              songsDoSetlist(culto.entries).map((sg, i) => `${i + 1}. ${sg.title}`).join('\n'),
+                              '',
+                            )}
+                            activeOpacity={0.8}
+                          >
+                            <Ionicons name="calendar-outline" size={15} color={C.textMuted} />
+                            <Text style={s.acaoTexto}>{t('banda.agenda')}</Text>
+                          </TouchableOpacity>
+                          <TouchableOpacity style={s.acaoBtn} onPress={() => setComentariosCulto(culto)} activeOpacity={0.8}>
+                            <Ionicons name="chatbubble-ellipses-outline" size={15} color={C.textMuted} />
+                            <Text style={s.acaoTexto}>{t('banda.conversa')}</Text>
+                          </TouchableOpacity>
+                        </View>
                         <SetlistResumo
                           songs={songsDoSetlist(culto.entries)}
                           onPlaylist={() => abrirPlaylist(culto.entries)}
@@ -2631,8 +3241,9 @@ function BandaMain() {
                           <View style={{ width: 28 }} />
                         </View>
                         {culto.entries.map((entry, idx) => {
-                          const song = songs.find(sg => sg.id === entry.song_id);
+                          const song = musicaDaEntrada(entry);
                           if (!song) return null;
+                          const versaoNome = nomeDaVersao(entry);
                           return (
                             <View key={entry.song_id} style={[s.cultoSongRow, idx === culto.entries.length - 1 && { borderBottomWidth: 0 }]}>
                               <Text style={s.cultoSongNum}>{idx + 1}</Text>
@@ -2646,7 +3257,9 @@ function BandaMain() {
                                 })}
                               >
                                 <Text style={s.cultoSongTitle}>{song.title}</Text>
-                                <Text style={s.cultoSongArtist}>{song.artist}</Text>
+                                <Text style={s.cultoSongArtist}>
+                                  {song.artist}{versaoNome ? ` · ${versaoNome}` : ''}
+                                </Text>
                                 {entry.nota ? (
                                   <View style={s.notaRow}>
                                     <Ionicons name="chatbox-ellipses-outline" size={11} color={C.gold} />
@@ -2654,7 +3267,16 @@ function BandaMain() {
                                   </View>
                                 ) : null}
                               </TouchableOpacity>
-                              <View style={s.cultoBpmChip}><Text style={s.cultoBpmText}>{entry.bpm}</Text></View>
+                              {/* O BPM do setlist é o andamento real da banda
+                                  naquele culto (já com a versão aplicada) —
+                                  é este que o metrônomo tem que abrir, não o
+                                  do repertório. */}
+                              <TouchableOpacity
+                                style={s.cultoBpmChip}
+                                onPress={() => setMetronomo({ bpm: Number(entry.bpm) || song.bpm, titulo: song.title })}
+                              >
+                                <Text style={[s.cultoBpmText, { color: C.primary }]}>{entry.bpm}</Text>
+                              </TouchableOpacity>
                               <LinkMiniButtons song={song} openLink={openLink} />
                             </View>
                           );
@@ -2736,7 +3358,7 @@ function BandaMain() {
               })}
             </ScrollView>
           )}
-          <NovoCultoModal visible={cultosModal} onClose={() => setCultosModal(false)} onSaved={fetchCultos} songs={songs} />
+          <NovoCultoModal visible={cultosModal} onClose={() => setCultosModal(false)} onSaved={fetchCultos} songs={songs} versoes={versoes} />
         </View>
       )}
 
@@ -2819,6 +3441,19 @@ function BandaMain() {
                     </TouchableOpacity>
                     {isOpen && (
                       <View style={s.cultoSongs}>
+                        <View style={s.acoesRow}>
+                          <TouchableOpacity
+                            style={s.acaoBtn}
+                            onPress={() => abrirAgenda(
+                              ensaio.label, ensaio.date, ensaio.time, 120,
+                              ensaio.observacao, ensaio.local,
+                            )}
+                            activeOpacity={0.8}
+                          >
+                            <Ionicons name="calendar-outline" size={15} color={C.textMuted} />
+                            <Text style={s.acaoTexto}>{t('banda.agenda')}</Text>
+                          </TouchableOpacity>
+                        </View>
                         <SetlistResumo
                           songs={songsDoSetlist(ensaio.entries)}
                           onPlaylist={() => abrirPlaylist(ensaio.entries)}
@@ -2832,8 +3467,9 @@ function BandaMain() {
                         {ensaio.entries.length === 0 ? (
                           <Text style={s.emptyDesc}>{t('banda.selecioneUmaMusica')}</Text>
                         ) : ensaio.entries.map((entry, idx) => {
-                          const song = songs.find(sg => sg.id === entry.song_id);
+                          const song = musicaDaEntrada(entry);
                           if (!song) return null;
+                          const versaoNome = nomeDaVersao(entry);
                           return (
                             <View key={entry.song_id} style={[s.cultoSongRow, idx === ensaio.entries.length - 1 && { borderBottomWidth: 0 }]}>
                               <Text style={s.cultoSongNum}>{idx + 1}</Text>
@@ -2847,7 +3483,9 @@ function BandaMain() {
                                 })}
                               >
                                 <Text style={s.cultoSongTitle}>{song.title}</Text>
-                                <Text style={s.cultoSongArtist}>{song.artist}</Text>
+                                <Text style={s.cultoSongArtist}>
+                                  {song.artist}{versaoNome ? ` · ${versaoNome}` : ''}
+                                </Text>
                                 {entry.nota ? (
                                   <View style={s.notaRow}>
                                     <Ionicons name="chatbox-ellipses-outline" size={11} color={C.gold} />
@@ -2855,7 +3493,16 @@ function BandaMain() {
                                   </View>
                                 ) : null}
                               </TouchableOpacity>
-                              <View style={s.cultoBpmChip}><Text style={s.cultoBpmText}>{entry.bpm}</Text></View>
+                              {/* O BPM do setlist é o andamento real da banda
+                                  naquele culto (já com a versão aplicada) —
+                                  é este que o metrônomo tem que abrir, não o
+                                  do repertório. */}
+                              <TouchableOpacity
+                                style={s.cultoBpmChip}
+                                onPress={() => setMetronomo({ bpm: Number(entry.bpm) || song.bpm, titulo: song.title })}
+                              >
+                                <Text style={[s.cultoBpmText, { color: C.primary }]}>{entry.bpm}</Text>
+                              </TouchableOpacity>
                               <LinkMiniButtons song={song} openLink={openLink} />
                             </View>
                           );
@@ -2880,7 +3527,7 @@ function BandaMain() {
               })}
             </ScrollView>
           )}
-          <NovoEnsaioModal visible={ensaioModal} onClose={() => setEnsaioModal(false)} onSaved={fetchEnsaios} songs={songs} />
+          <NovoEnsaioModal visible={ensaioModal} onClose={() => setEnsaioModal(false)} onSaved={fetchEnsaios} songs={songs} versoes={versoes} />
         </View>
       )}
 
@@ -2949,6 +3596,32 @@ function BandaMain() {
         songs={songs}
         membros={membros}
       />
+
+      <VersoesModal
+        song={versoesSong}
+        versoes={versoes}
+        onClose={() => setVersoesSong(null)}
+        onMudou={() => { fetchVersoes(); fetchCultos(); fetchEnsaios(); }}
+      />
+
+      <ComentariosModal
+        culto={comentariosCulto}
+        onClose={() => setComentariosCulto(null)}
+        meuId={user?.id}
+        meuNome={meuNome}
+        souAdmin={!!meuPerfil?.admin}
+        nomePronto={nomePronto}
+      />
+
+      {/* Montado só quando aberto: senão os dois players de áudio e o modo de
+          áudio global do app seriam criados assim que a aba Banda abrisse,
+          mesmo sem ninguém usar o metrônomo. */}
+      {!!metronomo && <MetronomoModal
+        visible={!!metronomo}
+        onClose={() => setMetronomo(null)}
+        bpmInicial={metronomo?.bpm}
+        titulo={metronomo?.titulo}
+      />}
 
       <RoadmapItemModal
         visible={!!roadmapModal}
@@ -3057,6 +3730,12 @@ const s = StyleSheet.create({
   songMetaChip: { backgroundColor: C.surfaceHigh, borderRadius: 6, paddingHorizontal: 7, paddingVertical: 2 },
   songMetaText: { fontSize: 10, color: C.textMuted, fontWeight: '600' },
   songLinks: { flexDirection: 'row', gap: 6, marginLeft: 8 },
+  acoesRow: { flexDirection: 'row', gap: 8, marginBottom: 10 },
+  acaoBtn: { flexDirection: 'row', alignItems: 'center', gap: 6, paddingHorizontal: 11, paddingVertical: 7, borderRadius: 9, backgroundColor: C.surfaceHigh, borderWidth: 1, borderColor: C.border },
+  acaoTexto: { fontSize: 11, fontWeight: '700', color: C.textMuted },
+  songMetaChipAcionavel: { flexDirection: 'row', alignItems: 'center', gap: 4, borderWidth: 1, borderColor: C.primaryDim },
+  versaoTag: { minWidth: 16, height: 16, borderRadius: 8, backgroundColor: C.primaryDim, borderWidth: 1, borderColor: C.primary, alignItems: 'center', justifyContent: 'center', paddingHorizontal: 4 },
+  versaoTagText: { fontSize: 9, fontWeight: '800', color: C.primary },
   notaRow: { flexDirection: 'row', alignItems: 'flex-start', gap: 5, marginTop: 4, paddingRight: 6 },
   roadmapRow: { flexDirection: 'row', alignItems: 'center', gap: 9, paddingVertical: 9, borderBottomWidth: 1, borderBottomColor: C.border },
   roadmapTitulo: { flex: 1, fontSize: 13, color: C.text },
