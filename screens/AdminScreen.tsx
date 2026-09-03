@@ -53,6 +53,7 @@ type AgendaEvento = {
   id: string; nome: string; tipo: string; recorrente: boolean; dia_semana: number | null;
   data: string | null; horario: string; local: string; descricao: string | null;
   link_zoom: string | null; especial: boolean; cor: string | null;
+  destaque_home: boolean; cta_texto: string | null; cta_url: string | null;
 };
 
 type ShortVideo = { id: string; titulo: string; url: string; plataforma: string };
@@ -228,6 +229,7 @@ const mo = StyleSheet.create({
   code: { fontSize: 22, fontWeight: '800', color: C.accent, letterSpacing: 3 },
   fieldWrap: { marginBottom: 16 },
   fieldLabel: { fontSize: 11, color: C.textMuted, fontWeight: '700', letterSpacing: 0.6, textTransform: 'uppercase', marginBottom: 8 },
+  fieldHint: { fontSize: 11, color: C.textDim, marginTop: 6, lineHeight: 15 },
   fieldRow: { flexDirection: 'row', alignItems: 'center', backgroundColor: C.surfaceAlt, borderRadius: 10, borderWidth: 1, borderColor: C.border, paddingHorizontal: 12, height: 46 },
   fieldInput: { flex: 1, fontSize: 15, color: C.text },
   daysRow: { flexDirection: 'row', gap: 8 },
@@ -595,6 +597,9 @@ function NovoEventoModal({ visible, onClose, onSaved }: {
   const [linkZoom, setLinkZoom] = useState('');
   const [mapUrl, setMapUrl] = useState('');
   const [especial, setEspecial] = useState(false);
+  const [destaqueHome, setDestaqueHome] = useState(false);
+  const [ctaTexto, setCtaTexto] = useState('');
+  const [ctaUrl, setCtaUrl] = useState('');
   const [saving, setSaving] = useState(false);
 
   useEffect(() => {
@@ -602,6 +607,7 @@ function NovoEventoModal({ visible, onClose, onSaved }: {
       setNome(''); setTipo('presencial'); setRecorrente(true); setDiaSemana(0);
       setData(''); setHorario(''); setLocal(''); setDescricao('');
       setLinkZoom(''); setMapUrl(''); setEspecial(false);
+      setDestaqueHome(false); setCtaTexto(''); setCtaUrl('');
     }
   }, [visible]);
 
@@ -625,6 +631,12 @@ function NovoEventoModal({ visible, onClose, onSaved }: {
       map_url: tipo === 'presencial' ? (mapUrl.trim() || null) : null,
       especial,
       cor: especial ? '#E84B1A' : null,
+      // Destaque na Home: o banco garante que só um evento fica marcado por
+      // vez (trigger agenda_destaque_home_exclusivo), então marcar este já
+      // desmarca o anterior sozinho.
+      destaque_home: destaqueHome,
+      cta_texto: destaqueHome ? (ctaTexto.trim() || null) : null,
+      cta_url: destaqueHome ? (ctaUrl.trim() || null) : null,
     });
     setSaving(false);
     if (error) { Alert.alert('Erro', error.message); return; }
@@ -748,6 +760,36 @@ function NovoEventoModal({ visible, onClose, onSaved }: {
                 </TouchableOpacity>
               </View>
             </View>
+
+            <View style={mo.fieldWrap}>
+              <Text style={mo.fieldLabel}>Destaque na Home (chamada de ação)</Text>
+              <View style={mo.daysRow}>
+                <TouchableOpacity style={[mo.dayPill, destaqueHome && mo.dayPillActive]} onPress={() => setDestaqueHome(!destaqueHome)}>
+                  <Text style={[mo.dayPillText, destaqueHome && mo.dayPillTextActive]}>
+                    {destaqueHome ? '🏠 Sim, mostrar na Home' : 'Não'}
+                  </Text>
+                </TouchableOpacity>
+              </View>
+              <Text style={mo.fieldHint}>Só um evento fica em destaque por vez — marcar este tira o anterior da Home automaticamente (ele continua na Agenda).</Text>
+            </View>
+
+            {destaqueHome && (
+              <>
+                <View style={mo.fieldWrap}>
+                  <Text style={mo.fieldLabel}>Texto do botão (opcional)</Text>
+                  <View style={mo.fieldRow}>
+                    <TextInput style={mo.fieldInput} placeholder="Ex: Inscreva-se" placeholderTextColor={C.textDim} value={ctaTexto} onChangeText={setCtaTexto} />
+                  </View>
+                </View>
+                <View style={mo.fieldWrap}>
+                  <Text style={mo.fieldLabel}>Link do botão (opcional)</Text>
+                  <View style={mo.fieldRow}>
+                    <TextInput style={mo.fieldInput} placeholder="https://..." placeholderTextColor={C.textDim} value={ctaUrl} onChangeText={setCtaUrl} autoCapitalize="none" />
+                  </View>
+                  <Text style={mo.fieldHint}>Sem link, tocar no card leva pra aba Agenda.</Text>
+                </View>
+              </>
+            )}
 
             <TouchableOpacity style={[mo.saveBtn, saving && { opacity: 0.7 }]} onPress={handleSave} disabled={saving}>
               {saving ? <ActivityIndicator color="#fff" /> : (
@@ -1548,6 +1590,18 @@ export default function AdminScreen() {
     fetchData();
   };
 
+  // Liga/desliga o destaque da Home direto na lista, sem precisar recriar o
+  // evento. Desligar tira só da Home — o evento continua normal na Agenda.
+  // Ligar não exige desligar o anterior: o trigger no banco faz isso sozinho.
+  const toggleDestaqueHome = async (evento: AgendaEvento) => {
+    const { error } = await supabase
+      .from('agenda_eventos')
+      .update({ destaque_home: !evento.destaque_home })
+      .eq('id', evento.id);
+    if (error) { Alert.alert('Erro', error.message); return; }
+    fetchData();
+  };
+
   const deleteEvento = (id: string) => {
     Alert.alert('Remover Evento', 'Deseja remover este evento da agenda?', [
       { text: 'Cancelar', style: 'cancel' },
@@ -2062,6 +2116,11 @@ export default function AdminScreen() {
                             <Text style={[s.statusBadgeText, { color: '#E84B1A' }]}>⭐ Especial</Text>
                           </View>
                         )}
+                        {e.destaque_home && (
+                          <View style={[s.statusBadge, { backgroundColor: C.accent + '30' }]}>
+                            <Text style={[s.statusBadgeText, { color: C.accentDim }]}>🏠 Na Home</Text>
+                          </View>
+                        )}
                       </View>
                       <Text style={[s.inviteEmail, { marginTop: 4 }]}>
                         {e.recorrente ? `Toda ${DIAS_SEMANA_LABELS[e.dia_semana ?? 0]}` : e.data} · {e.horario} · {e.local}
@@ -2079,6 +2138,12 @@ export default function AdminScreen() {
                       </View>
                     </View>
                     <View style={s.inviteActions}>
+                      <TouchableOpacity
+                        style={[s.actionBtn, { borderColor: e.destaque_home ? C.accent : C.textDim + '40' }]}
+                        onPress={() => toggleDestaqueHome(e)}
+                      >
+                        <Ionicons name={e.destaque_home ? 'home' : 'home-outline'} size={16} color={e.destaque_home ? C.accent : C.textMuted} />
+                      </TouchableOpacity>
                       <TouchableOpacity style={[s.actionBtn, { borderColor: C.danger + '40' }]} onPress={() => deleteEvento(e.id)}>
                         <Ionicons name="trash-outline" size={16} color={C.danger} />
                       </TouchableOpacity>

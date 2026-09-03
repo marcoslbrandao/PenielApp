@@ -314,6 +314,69 @@ const eventosRecorrentes = [
   { id: 4, nome: 'Peniel Alive',             diaSemana: 6, horario: '19h', localKey: 'localNasCasas',      tipo: 'jovens'     },
 ];
 
+// ─── Destaque na Home ─────────────────────────────────────────────────────────
+// O card grande de chamada de ação da Home. Antes era um bloco fixo escrito à
+// mão no JSX (Camping Peniel 2026, com data e link no código), o que fazia a
+// Home ignorar completamente a Agenda — apagar o evento no Admin não tirava
+// nada daqui. Agora ele vem da própria tabela `agenda_eventos`: o evento
+// marcado como "Destaque na Home" no Painel Admin aparece neste card, e
+// desmarcar tira da Home sem apagar nada da Agenda.
+type DestaqueHome = {
+  id: string; nome: string; descricao: string | null; cor: string | null;
+  data: string | null; recorrente: boolean; dia_semana: number | null;
+  horario: string; cta_texto: string | null; cta_url: string | null;
+};
+
+function DestaqueHomeCard({ evento, onAbrirAgenda }: { evento: DestaqueHome; onAbrirAgenda: () => void }) {
+  const { t, i18n } = useTranslation();
+  const { isDark } = useTheme();
+  const C = useMemo(() => paletaHome(isDark), [isDark]);
+  const styles = useMemo(() => buildStyles(C), [C]);
+  // Nome e descrição são digitados em português pelo admin — traduzidos aqui
+  // pelo mesmo mecanismo já usado na Agenda e no card de Devocional.
+  const nome = useCampoTraduzido(evento.nome, 'agenda_eventos', evento.id, 'nome');
+  const descricao = useCampoTraduzido(evento.descricao ?? '', 'agenda_eventos', evento.id, 'descricao');
+  const ctaTexto = useCampoTraduzido(evento.cta_texto ?? '', 'agenda_eventos', evento.id, 'cta_texto');
+  const cor = evento.cor ?? '#E84B1A';
+
+  // Evento com data marcada mostra a data cheia; recorrente mostra a próxima
+  // ocorrência (mesma conta da lista de "Próximos eventos" logo acima).
+  const MESES_LONGOS = t('agenda.mesesLongos', { returnObjects: true }) as string[];
+  const DE = t('agenda.dataDe');
+  let dataLabel = evento.horario;
+  if (!evento.recorrente && evento.data) {
+    const d = new Date(`${evento.data}T12:00:00`);
+    const dataStr = `${d.getDate()} ${DE} ${MESES_LONGOS[d.getMonth()]} ${DE} ${d.getFullYear()}`;
+    dataLabel = evento.horario ? `${dataStr} · ${evento.horario}` : dataStr;
+  } else if (evento.recorrente && evento.dia_semana !== null) {
+    const prox = proximaData(evento.dia_semana, i18n.language);
+    dataLabel = `${prox.dia} ${prox.mes} · ${evento.horario}`;
+  }
+
+  // Sem link cadastrado, tocar no card leva pra Agenda em vez de não fazer nada.
+  const abrir = () => { if (evento.cta_url) Linking.openURL(evento.cta_url); else onAbrirAgenda(); };
+
+  return (
+    <TouchableOpacity style={styles.especialCard} activeOpacity={0.85} onPress={abrir}>
+      <View style={[styles.especialCorFaixa, { backgroundColor: cor }]} />
+      <View style={styles.especialCorpo}>
+        <Text style={styles.especialNome}>{nome}</Text>
+        <View style={{ flexDirection: 'row', alignItems: 'center', gap: 5 }}>
+          <Ionicons name="calendar-outline" size={13} color={C.textMuted} />
+          <Text style={styles.eventoMetaTexto}>{dataLabel}</Text>
+        </View>
+        {!!descricao && <Text style={styles.especialDesc}>{descricao}</Text>}
+        {!!ctaTexto && (
+          <View style={[styles.especialCta, { backgroundColor: cor }]}>
+            <Text style={styles.especialCtaTexto}>{ctaTexto}</Text>
+          </View>
+        )}
+      </View>
+      <Ionicons name="chevron-forward" size={18} color={C.textMuted} style={{ marginRight: 12 }} />
+    </TouchableOpacity>
+  );
+}
+
 export default function HomeScreen({ navigation }: { navigation?: any }) {
   const { t, i18n } = useTranslation();
   const { user, isLoggedIn } = useAuth();
@@ -495,6 +558,24 @@ export default function HomeScreen({ navigation }: { navigation?: any }) {
         .limit(1)
         .maybeSingle()
         .then(({ data }) => { setMensagem((data as Mensagem) ?? null); });
+    }, [])
+  );
+
+  // ── Evento em destaque na Home (vindo da Agenda) ──────────────────────────
+  // useFocusEffect (não useEffect) pelo mesmo motivo do Devocional: a Home não
+  // desmonta ao trocar de aba, então sem isso trocar o destaque no Admin só
+  // apareceria depois de fechar e reabrir o app.
+  const [destaque, setDestaque] = useState<DestaqueHome | null>(null);
+
+  useFocusEffect(
+    useCallback(() => {
+      supabase
+        .from('agenda_eventos')
+        .select('id, nome, descricao, cor, data, recorrente, dia_semana, horario, cta_texto, cta_url')
+        .eq('destaque_home', true)
+        .limit(1)
+        .maybeSingle()
+        .then(({ data }) => { setDestaque((data as DestaqueHome) ?? null); });
     }, [])
   );
 
@@ -830,20 +911,13 @@ export default function HomeScreen({ navigation }: { navigation?: any }) {
           })}
         </View>
 
-        {/* ── Evento especial ───────────────────────────────────────────────── */}
-        <TouchableOpacity style={styles.especialCard} activeOpacity={0.85}
-          onPress={() => Linking.openURL('https://www.penielchurch.org.uk/event-details/peniel-camping-2026')}>
-          <View style={[styles.especialCorFaixa, { backgroundColor: '#E84B1A' }]} />
-          <View style={styles.especialCorpo}>
-            <Text style={styles.especialNome}>⛺ Camping Peniel 2026</Text>
-            <View style={{ flexDirection: 'row', alignItems: 'center', gap: 5 }}>
-              <Ionicons name="calendar-outline" size={13} color={C.textMuted} />
-              <Text style={styles.eventoMetaTexto}>28 a 31 de Agosto 2026</Text>
-            </View>
-            <Text style={styles.especialDesc}>Inscrições encerradas,{'\n'}se prepare para 2027.</Text>
-          </View>
-          <Ionicons name="chevron-forward" size={18} color={C.textMuted} style={{ marginRight: 12 }} />
-        </TouchableOpacity>
+        {/* ── Evento em destaque (marcado no Admin, some quando desmarcado) ─ */}
+        {destaque && (
+          <DestaqueHomeCard
+            evento={destaque}
+            onAbrirAgenda={() => navigation?.navigate('Agenda')}
+          />
+        )}
 
         <View style={{ height: 24 }} />
       </ScrollView>
@@ -985,5 +1059,7 @@ function buildStyles(C: PaletaHome) { return StyleSheet.create({
   especialCorpo: { flex: 1, padding: 14, gap: 4 },
   especialNome: { fontSize: 14, fontWeight: '600', color: C.textPrimary },
   especialDesc: { fontSize: 12, color: C.textMuted, marginTop: 2 },
+  especialCta: { alignSelf: 'flex-start', borderRadius: 20, paddingHorizontal: 12, paddingVertical: 5, marginTop: 8 },
+  especialCtaTexto: { fontSize: 12, fontWeight: '700', color: '#fff' },
   eventoMetaTexto: { fontSize: 12, color: C.textMuted },
 }); }
