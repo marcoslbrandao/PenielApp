@@ -7,6 +7,7 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
 import { useTranslation } from 'react-i18next';
 import { supabase } from '../lib/supabase';
+import { extractYoutubeId } from '../lib/youtube';
 import MensagemDetalheModal, { Mensagem } from '../components/MensagemDetalheModal';
 import { useCampoTraduzido } from '../lib/useTraducao';
 
@@ -81,11 +82,6 @@ function timeAgo(dateStr: string, t: (key: string) => string): string {
   if (diff < 86400) return `${Math.floor(diff / 3600)}${t('midia.hAtras')}`;
   if (diff < 604800) return `${Math.floor(diff / 86400)}${t('midia.dAtras')}`;
   return new Date(dateStr).toLocaleDateString('pt-BR');
-}
-
-function extractYoutubeId(url: string): string | null {
-  const m = url.match(/(?:shorts\/|watch\?v=|youtu\.be\/)([a-zA-Z0-9_-]{6,})/);
-  return m ? m[1] : null;
 }
 
 function tipoAvisoCor(tipo: string, t: (key: string) => string) {

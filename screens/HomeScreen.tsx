@@ -15,6 +15,7 @@ import { livrosAT, livrosNT, Livro } from '../lib/bibliaLivros';
 import { getVersiculoDoDia, parseReferencia, getTextoVersiculo, getReferenciaVersiculo, getVersaoVersiculo } from '../lib/versiculoDoDia';
 import { useCampoTraduzido } from '../lib/useTraducao';
 import { useTheme } from '../lib/theme';
+import { extractYoutubeId, youtubeThumbnail } from '../lib/youtube';
 
 // Paleta local — só os elementos "claros" da Home (cards brancos: live,
 // acesso rápido, eventos, especial) precisam trocar no escuro. Os blocos já
@@ -314,6 +315,89 @@ const eventosRecorrentes = [
   { id: 4, nome: 'Peniel Alive',             diaSemana: 6, horario: '19h', localKey: 'localNasCasas',      tipo: 'jovens'     },
 ];
 
+// ─── Aviso em destaque na Home ────────────────────────────────────────────────
+// Avisos sempre existiram, mas só no sininho e na busca — quem não abrisse o
+// sininho nunca via. Marcado como destaque no Admin, o aviso sobe pro topo da
+// Home, antes do versículo, que é o primeiro lugar onde o olho cai ao abrir.
+// Cada pessoa pode fechar no X: usa o MESMO mecanismo do sininho
+// (`dispensarAviso`), então fechar aqui também some de lá, e vice-versa —
+// é o mesmo aviso, não faria sentido ter dois estados de "já vi isso".
+type AvisoDestaque = { id: string; titulo: string; texto: string; tipo: string };
+
+function AvisoDestaqueCard({ aviso, onDispensar }: { aviso: AvisoDestaque; onDispensar: () => void }) {
+  const { t } = useTranslation();
+  const { isDark } = useTheme();
+  const C = useMemo(() => paletaHome(isDark), [isDark]);
+  const styles = useMemo(() => buildStyles(C), [C]);
+  const titulo = useCampoTraduzido(aviso.titulo, 'avisos', aviso.id, 'titulo');
+  const texto = useCampoTraduzido(aviso.texto, 'avisos', aviso.id, 'texto');
+
+  return (
+    <View style={styles.avisoDestaqueCard}>
+      <View style={styles.avisoDestaqueTopo}>
+        <Ionicons name="megaphone" size={15} color="#E84B1A" />
+        <Text style={styles.avisoDestaqueLabel}>{t('home.avisoImportante')}</Text>
+        <TouchableOpacity onPress={onDispensar} hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}>
+          <Ionicons name="close" size={18} color={C.textMuted} />
+        </TouchableOpacity>
+      </View>
+      <Text style={styles.avisoDestaqueTitulo}>{titulo}</Text>
+      {!!texto && <Text style={styles.avisoDestaqueTexto}>{texto}</Text>}
+    </View>
+  );
+}
+
+// ─── Short em destaque na Home ────────────────────────────────────────────────
+// Card largo com a miniatura do vídeo. A miniatura do YouTube é montada só a
+// partir do id (sem API, sem chave, sem cota — ver lib/youtube.ts). Instagram
+// não permite isso, então cai num card sem imagem, com o ícone da plataforma.
+type ShortDestaque = { id: string; titulo: string; url: string; plataforma: string };
+
+function ShortDestaqueCard({ short }: { short: ShortDestaque }) {
+  const { t } = useTranslation();
+  const { isDark } = useTheme();
+  const C = useMemo(() => paletaHome(isDark), [isDark]);
+  const styles = useMemo(() => buildStyles(C), [C]);
+  const titulo = useCampoTraduzido(short.titulo, 'shorts_videos', short.id, 'titulo');
+  const ytId = short.plataforma === 'youtube' ? extractYoutubeId(short.url) : null;
+
+  return (
+    <>
+      <Text style={styles.secaoTitulo}>{t('home.videoEmDestaque')}</Text>
+      <TouchableOpacity style={styles.shortCard} activeOpacity={0.85} onPress={() => Linking.openURL(short.url)}>
+        {ytId ? (
+          <View style={styles.shortThumbWrap}>
+            <Image source={{ uri: youtubeThumbnail(ytId) }} style={styles.shortThumb} resizeMode="cover" />
+            <View style={styles.shortPlay}>
+              <Ionicons name="play" size={22} color="#fff" />
+            </View>
+          </View>
+        ) : (
+          <View style={[styles.shortThumbWrap, styles.shortThumbVazia]}>
+            <Ionicons
+              name={short.plataforma === 'instagram' ? 'logo-instagram' : 'logo-youtube'}
+              size={34}
+              color={short.plataforma === 'instagram' ? '#E1306C' : '#FF0000'}
+            />
+          </View>
+        )}
+        <View style={styles.shortInfo}>
+          <Text style={styles.shortTitulo} numberOfLines={2}>{titulo}</Text>
+          <View style={{ flexDirection: 'row', alignItems: 'center', gap: 5 }}>
+            <Ionicons
+              name={short.plataforma === 'instagram' ? 'logo-instagram' : 'logo-youtube'}
+              size={13}
+              color={C.textMuted}
+            />
+            <Text style={styles.eventoMetaTexto}>{t('home.tocarParaAssistir')}</Text>
+          </View>
+        </View>
+        <Ionicons name="chevron-forward" size={18} color={C.textMuted} style={{ marginRight: 12 }} />
+      </TouchableOpacity>
+    </>
+  );
+}
+
 // ─── Destaque na Home ─────────────────────────────────────────────────────────
 // O card grande de chamada de ação da Home. Antes era um bloco fixo escrito à
 // mão no JSX (Camping Peniel 2026, com data e link no código), o que fazia a
@@ -561,6 +645,53 @@ export default function HomeScreen({ navigation }: { navigation?: any }) {
     }, [])
   );
 
+  // ── Aviso em destaque na Home ─────────────────────────────────────────────
+  // Depois de achar o aviso, ainda filtra pelos dispensados: se a pessoa já
+  // fechou esse aviso (aqui ou no sininho), ele não volta.
+  const [avisoDestaque, setAvisoDestaque] = useState<AvisoDestaque | null>(null);
+
+  useFocusEffect(
+    useCallback(() => {
+      let cancelado = false;
+      (async () => {
+        const { data } = await supabase
+          .from('avisos')
+          .select('id, titulo, texto, tipo')
+          .eq('destaque_home', true)
+          .limit(1)
+          .maybeSingle();
+        if (cancelado) return;
+        if (!data) { setAvisoDestaque(null); return; }
+        const dispensados = await getIdsDispensados(user?.id);
+        if (cancelado) return;
+        setAvisoDestaque(dispensados.includes((data as any).id) ? null : (data as AvisoDestaque));
+      })();
+      return () => { cancelado = true; };
+    }, [user?.id])
+  );
+
+  const dispensarAvisoDestaque = async () => {
+    if (!avisoDestaque) return;
+    const id = avisoDestaque.id;
+    setAvisoDestaque(null); // some na hora; a gravação vai atrás
+    await dispensarAviso(id, user?.id);
+  };
+
+  // ── Short em destaque na Home ─────────────────────────────────────────────
+  const [shortDestaque, setShortDestaque] = useState<ShortDestaque | null>(null);
+
+  useFocusEffect(
+    useCallback(() => {
+      supabase
+        .from('shorts_videos')
+        .select('id, titulo, url, plataforma')
+        .eq('destaque_home', true)
+        .limit(1)
+        .maybeSingle()
+        .then(({ data }) => { setShortDestaque((data as ShortDestaque) ?? null); });
+    }, [])
+  );
+
   // ── Evento em destaque na Home (vindo da Agenda) ──────────────────────────
   // useFocusEffect (não useEffect) pelo mesmo motivo do Devocional: a Home não
   // desmonta ao trocar de aba, então sem isso trocar o destaque no Admin só
@@ -698,6 +829,11 @@ export default function HomeScreen({ navigation }: { navigation?: any }) {
       </View>
 
       <ScrollView showsVerticalScrollIndicator={false} style={styles.scroll}>
+
+        {/* ── Aviso importante (marcado no Admin) ──────────────────────────── */}
+        {avisoDestaque && (
+          <AvisoDestaqueCard aviso={avisoDestaque} onDispensar={dispensarAvisoDestaque} />
+        )}
 
         {/* ── Banner aniversário ───────────────────────────────────────────── */}
         {isLoggedIn && todayBirthdays.length > 0 && (
@@ -838,6 +974,9 @@ export default function HomeScreen({ navigation }: { navigation?: any }) {
           </View>
           <Ionicons name="chevron-forward" size={18} color={C.textMuted} />
         </TouchableOpacity>
+
+        {/* ── Short em destaque (marcado no Admin) ─────────────────────────── */}
+        {shortDestaque && <ShortDestaqueCard short={shortDestaque} />}
 
         {/* ── Acesso rápido ─────────────────────────────────────────────────── */}
         <Text style={styles.secaoTitulo}>{t('home.acessoRapido')}</Text>
@@ -1060,6 +1199,20 @@ function buildStyles(C: PaletaHome) { return StyleSheet.create({
   especialNome: { fontSize: 14, fontWeight: '600', color: C.textPrimary },
   especialDesc: { fontSize: 12, color: C.textMuted, marginTop: 2 },
   especialCta: { alignSelf: 'flex-start', borderRadius: 20, paddingHorizontal: 12, paddingVertical: 5, marginTop: 8 },
+  // Aviso em destaque (topo da Home)
+  avisoDestaqueCard: { backgroundColor: C.cardBg, borderRadius: 16, borderWidth: 1, borderColor: '#E84B1A55', padding: 14, marginBottom: 16 },
+  avisoDestaqueTopo: { flexDirection: 'row', alignItems: 'center', gap: 6, marginBottom: 8 },
+  avisoDestaqueLabel: { flex: 1, fontSize: 10, fontWeight: '800', color: '#E84B1A', textTransform: 'uppercase', letterSpacing: 1 },
+  avisoDestaqueTitulo: { fontSize: 15, fontWeight: '700', color: C.textPrimary },
+  avisoDestaqueTexto: { fontSize: 13, color: C.textMuted, marginTop: 4, lineHeight: 19 },
+  // Short em destaque
+  shortCard: { backgroundColor: C.cardBg, borderRadius: 16, borderWidth: 0.5, borderColor: C.cardBorder, marginBottom: 16, flexDirection: 'row', alignItems: 'center', overflow: 'hidden' },
+  shortThumbWrap: { width: 108, height: 84, backgroundColor: C.eventoDataBg },
+  shortThumb: { width: '100%', height: '100%' },
+  shortThumbVazia: { alignItems: 'center', justifyContent: 'center' },
+  shortPlay: { position: 'absolute', top: 0, left: 0, right: 0, bottom: 0, alignItems: 'center', justifyContent: 'center', backgroundColor: 'rgba(0,0,0,0.32)' },
+  shortInfo: { flex: 1, padding: 12, gap: 4 },
+  shortTitulo: { fontSize: 14, fontWeight: '600', color: C.textPrimary },
   especialCtaTexto: { fontSize: 12, fontWeight: '700', color: '#fff' },
   eventoMetaTexto: { fontSize: 12, color: C.textMuted },
 }); }

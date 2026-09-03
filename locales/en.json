@@ -63,7 +63,9 @@
     "nenhumAvisoEncontrado": "No announcements found.",
     "nadaEncontradoPara": "Nothing found for \"{{query}}\".",
     "verTodosDevocionais": "See all devotionals",
-    "verTraducaoAoVivo": "Live translation available"
+    "verTraducaoAoVivo": "Live translation available",
+    "avisoImportante": "Important notice",
+    "videoEmDestaque": "Featured video"
   },
   "auth": {
     "entrarNaConta": "Sign in to your account",

@@ -42,7 +42,7 @@ type Offering = {
 
 type ProfileLite = { id: string; full_name: string | null };
 
-type Aviso = { id: string; titulo: string; texto: string; data: string; tipo: string };
+type Aviso = { id: string; titulo: string; texto: string; data: string; tipo: string; destaque_home: boolean };
 
 type DevocionalGeral = {
   id: string; titulo: string; versiculo: string; referencia: string;
@@ -56,7 +56,7 @@ type AgendaEvento = {
   destaque_home: boolean; cta_texto: string | null; cta_url: string | null;
 };
 
-type ShortVideo = { id: string; titulo: string; url: string; plataforma: string };
+type ShortVideo = { id: string; titulo: string; url: string; plataforma: string; destaque_home: boolean };
 
 type MensagemBlog = {
   id: string; titulo: string; resumo: string; conteudo: string;
@@ -1602,6 +1602,19 @@ export default function AdminScreen() {
     fetchData();
   };
 
+  // Mesmo mecanismo do destaque de evento, para avisos e shorts. Cada tabela
+  // tem seu próprio destaque (dá pra ter 1 evento + 1 aviso + 1 short na Home
+  // ao mesmo tempo) e seu próprio trigger garantindo um só por tabela.
+  const toggleDestaqueHomeGenerico = async (
+    tabela: 'avisos' | 'shorts_videos',
+    id: string,
+    atual: boolean,
+  ) => {
+    const { error } = await supabase.from(tabela).update({ destaque_home: !atual }).eq('id', id);
+    if (error) { Alert.alert('Erro', error.message); return; }
+    fetchData();
+  };
+
   const deleteEvento = (id: string) => {
     Alert.alert('Remover Evento', 'Deseja remover este evento da agenda?', [
       { text: 'Cancelar', style: 'cancel' },
@@ -1864,9 +1877,20 @@ export default function AdminScreen() {
                             {a.tipo === 'urgente' ? '🚨 Urgente' : a.tipo === 'evento' ? '📅 Evento' : '📢 Geral'}
                           </Text>
                         </View>
+                        {a.destaque_home && (
+                          <View style={[s.statusBadge, { backgroundColor: C.accent + '30' }]}>
+                            <Text style={[s.statusBadgeText, { color: C.accentDim }]}>🏠 Na Home</Text>
+                          </View>
+                        )}
                       </View>
                     </View>
                     <View style={s.inviteActions}>
+                      <TouchableOpacity
+                        style={[s.actionBtn, { borderColor: a.destaque_home ? C.accent : C.textDim + '40' }]}
+                        onPress={() => toggleDestaqueHomeGenerico('avisos', a.id, a.destaque_home)}
+                      >
+                        <Ionicons name={a.destaque_home ? 'home' : 'home-outline'} size={16} color={a.destaque_home ? C.accent : C.textMuted} />
+                      </TouchableOpacity>
                       <TouchableOpacity style={[s.actionBtn, { borderColor: C.danger + '40' }]} onPress={() => deleteAviso(a.id)}>
                         <Ionicons name="trash-outline" size={16} color={C.danger} />
                       </TouchableOpacity>
@@ -2177,9 +2201,20 @@ export default function AdminScreen() {
                             {sh.plataforma === 'youtube' ? '▶️ YouTube' : '📸 Instagram'}
                           </Text>
                         </View>
+                        {sh.destaque_home && (
+                          <View style={[s.statusBadge, { backgroundColor: C.accent + '30' }]}>
+                            <Text style={[s.statusBadgeText, { color: C.accentDim }]}>🏠 Na Home</Text>
+                          </View>
+                        )}
                       </View>
                     </View>
                     <View style={s.inviteActions}>
+                      <TouchableOpacity
+                        style={[s.actionBtn, { borderColor: sh.destaque_home ? C.accent : C.textDim + '40' }]}
+                        onPress={() => toggleDestaqueHomeGenerico('shorts_videos', sh.id, sh.destaque_home)}
+                      >
+                        <Ionicons name={sh.destaque_home ? 'home' : 'home-outline'} size={16} color={sh.destaque_home ? C.accent : C.textMuted} />
+                      </TouchableOpacity>
                       <TouchableOpacity style={[s.actionBtn, { borderColor: C.danger + '40' }]} onPress={() => deleteShort(sh.id)}>
                         <Ionicons name="trash-outline" size={16} color={C.danger} />
                       </TouchableOpacity>

@@ -63,7 +63,9 @@
     "nenhumAvisoEncontrado": "Aucune annonce trouvée.",
     "nadaEncontradoPara": "Aucun résultat pour « {{query}} ».",
     "verTodosDevocionais": "Voir toutes les dévotions",
-    "verTraducaoAoVivo": "Traduction en direct disponible"
+    "verTraducaoAoVivo": "Traduction en direct disponible",
+    "avisoImportante": "Avis important",
+    "videoEmDestaque": "Vidéo à la une"
   },
   "auth": {
     "entrarNaConta": "Connectez-vous à votre compte",

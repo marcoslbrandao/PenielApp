@@ -63,7 +63,9 @@
     "nenhumAvisoEncontrado": "No se encontraron avisos.",
     "nadaEncontradoPara": "No se encontró nada para \"{{query}}\".",
     "verTodosDevocionais": "Ver todos los devocionales",
-    "verTraducaoAoVivo": "Traducción en vivo disponible"
+    "verTraducaoAoVivo": "Traducción en vivo disponible",
+    "avisoImportante": "Aviso importante",
+    "videoEmDestaque": "Vídeo destacado"
   },
   "auth": {
     "entrarNaConta": "Inicia sesión en tu cuenta",
