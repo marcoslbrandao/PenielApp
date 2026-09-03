@@ -1694,6 +1694,18 @@ function IndisponibilidadeModal({ visible, onClose, indisponibilidades, membros,
   const [mes, setMes] = useState(hoje.getMonth());
   const meses = MONTHS_BY_LANG[i18n.language] ?? MONTHS_BY_LANG.pt;
   const celulas = gradeDoMes(ano, mes);
+  // Uma linha por semana, em vez de uma grade única com `flexWrap`. Com
+  // `width: ${100/7}%` a largura de cada célula vira 14.285714285714286%, que
+  // o motor de layout arredonda pra pixel físico — sete arredondamentos pra
+  // cima estouram a largura do container por uma fração, e a 7ª célula
+  // (sábado) cai pra linha de baixo. O efeito visível é a coluna de sábado
+  // vazia e o mês inteiro deslocado. Com uma <View> por semana e `flex: 1`
+  // nas células, cabem sempre exatamente 7, sem depender de arredondamento.
+  const semanas = useMemo(() => {
+    const linhas: (string | null)[][] = [];
+    for (let i = 0; i < celulas.length; i += 7) linhas.push(celulas.slice(i, i + 7));
+    return linhas;
+  }, [celulas]);
   const hojeISO = todayISO();
 
   // O modal fica montado o tempo todo (só o `visible` muda), então sem isto
@@ -1740,8 +1752,10 @@ function IndisponibilidadeModal({ visible, onClose, indisponibilidades, membros,
           </View>
 
           <ScrollView showsVerticalScrollIndicator={false}>
-            <View style={ind.grade}>
-              {celulas.map((dia, i) => {
+            <View>
+              {semanas.map((semana, si) => (
+              <View key={`s${si}`} style={ind.semana}>
+              {semana.map((dia, i) => {
                 if (!dia) return <View key={`v${i}`} style={ind.celulaVazia} />;
                 const marcados = doDia(dia);
                 const meu = souEu(dia);
@@ -1767,6 +1781,8 @@ function IndisponibilidadeModal({ visible, onClose, indisponibilidades, membros,
                   </TouchableOpacity>
                 );
               })}
+              </View>
+              ))}
             </View>
 
             {/* Quem está fora, dia a dia */}
@@ -1805,9 +1821,9 @@ const buildInd = (C: BandaColors) => StyleSheet.create({
   mesTexto: { fontSize: 15, fontWeight: '700', color: C.text },
   semanaRow: { flexDirection: 'row', marginBottom: 6 },
   semanaLabel: { flex: 1, textAlign: 'center', fontSize: 10, color: C.textDim, fontWeight: '700' },
-  grade: { flexDirection: 'row', flexWrap: 'wrap' },
-  celula: { width: `${100 / 7}%`, aspectRatio: 1, alignItems: 'center', justifyContent: 'center', borderRadius: 8 },
-  celulaVazia: { width: `${100 / 7}%`, aspectRatio: 1 },
+  semana: { flexDirection: 'row' },
+  celula: { flex: 1, aspectRatio: 1, alignItems: 'center', justifyContent: 'center', borderRadius: 8 },
+  celulaVazia: { flex: 1, aspectRatio: 1 },
   celulaMinha: { backgroundColor: C.dangerBg, borderWidth: 1, borderColor: C.danger },
   celulaNum: { fontSize: 13, color: C.text },
   celulaNumMinha: { color: C.dangerOn, fontWeight: '700' },
