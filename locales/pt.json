@@ -447,9 +447,7 @@
     "informeValorValido": "Informe um valor válido para continuar.",
     "modalTitulo": "Contribuir com Segurança",
     "modalTexto": "Você será redirecionado para o pagamento seguro via SumUp.\n\nValor: £{{valor}}\nTipo: {{tipo}}\nFrequência: {{freq}}",
-    "irParaPagamento": "💳 Ir para pagamento",
-    "limpar": "Limpar",
-    "toqueParaSomar": "Toque nos valores para somar. Ex.: 3× £10 = £30."
+    "irParaPagamento": "💳 Ir para pagamento"
   },
   "banda": {
     "titulo": "Banda Peniel",
@@ -665,11 +663,7 @@
     "apagarMusica": "Apagar música",
     "apagarMusicaMsg": "Apagar esta música do repertório? Não dá para desfazer.",
     "apagarMusicaEmUso": "Esta música está em {{n}} culto(s) ou ensaio(s). Apagar vai removê-la desses setlists também. Não dá para desfazer.",
-    "apagarMusicaTalvezEmUso": "Não consegui verificar se esta música está em algum culto ou ensaio. Se estiver, apagar vai removê-la desses setlists também. Não dá para desfazer.",
-    "setlistVazio": "Nenhuma música ainda. Escolha abaixo, na ordem em que vão ser tocadas.",
-    "adicionarDoRepertorio": "Adicionar do repertório",
-    "todasNoSetlist": "Todas as músicas do repertório já estão no setlist.",
-    "editarSetlist": "Editar setlist"
+    "apagarMusicaTalvezEmUso": "Não consegui verificar se esta música está em algum culto ou ensaio. Se estiver, apagar vai removê-la desses setlists também. Não dá para desfazer."
   },
   "jovens": {
     "eventos": "eventos",
