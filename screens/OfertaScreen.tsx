@@ -44,7 +44,10 @@ export default function OfertaScreen({ navigation }: { navigation?: any }) {
     { id: 'oferta', nome: t('oferta.ofertaNome'), sub: t('oferta.ofertaSub'), icone: 'heart-outline' },
     // Missões e Construção voltam quando tivermos essas campanhas ativas.
   ];
-  const [valorSelecionado, setValorSelecionado] = useState(25);
+  // Os botões de valor SOMAM em vez de escolher: tocar 3x em £10 dá £30.
+  // Começa em zero porque somar a partir de um valor pré-escolhido faria o
+  // primeiro toque em £10 virar £35, que ninguém espera.
+  const [valorAcumulado, setValorAcumulado] = useState(0);
   const [outroAtivo, setOutroAtivo] = useState(false);
   const [valorCustom, setValorCustom] = useState('');
   const [tipoSelecionado, setTipoSelecionado] = useState('dizimo');
@@ -59,16 +62,24 @@ export default function OfertaScreen({ navigation }: { navigation?: any }) {
   const { initPaymentSheet, presentPaymentSheet } = usePaymentSheet();
   const [processandoPagamento, setProcessandoPagamento] = useState(false);
 
-  const valorFinal = outroAtivo ? Number(valorCustom.replace(',', '.')) || 0 : valorSelecionado;
+  // "Outro" substitui o total em vez de somar: enquanto a pessoa digita, um
+  // valor parcial somado ao acumulado mostraria números que mudam sozinhos.
+  const valorFinal = outroAtivo ? Number(valorCustom.replace(',', '.')) || 0 : valorAcumulado;
 
-  const selecionarPreset = (v: number) => {
-    setOutroAtivo(false);
-    setValorSelecionado(v);
+  const somarPreset = (v: number) => {
+    // Sair do "Outro" descarta o que estava digitado e recomeça a soma dali.
+    if (outroAtivo) { setOutroAtivo(false); setValorCustom(''); setValorAcumulado(v); return; }
+    setValorAcumulado(atual => atual + v);
   };
 
   const selecionarOutro = () => {
     setOutroAtivo(true);
-    setValorSelecionado(0);
+  };
+
+  const limparValor = () => {
+    setValorAcumulado(0);
+    setOutroAtivo(false);
+    setValorCustom('');
   };
 
   // Busca o client_secret na Edge Function, monta a PaymentSheet (cartão +
@@ -142,19 +153,25 @@ export default function OfertaScreen({ navigation }: { navigation?: any }) {
         {/* ── Valor ─────────────────────────────────────────────────────────── */}
         <View style={styles.valorCard}>
           <Text style={styles.valorLabel}>{t('oferta.valorDaOferta')}</Text>
-          <Text style={styles.valorDisplay}>
-            {valorFinal > 0 ? '£ ' + valorFinal : '£ --'}
-          </Text>
+          <View style={styles.valorLinha}>
+            <Text style={styles.valorDisplay}>
+              {valorFinal > 0 ? '£ ' + valorFinal : '£ --'}
+            </Text>
+            {valorFinal > 0 && (
+              <TouchableOpacity style={styles.limparBtn} onPress={limparValor} hitSlop={8}>
+                <Ionicons name="close-circle" size={15} color={C.textMuted} />
+                <Text style={styles.limparTexto}>{t('oferta.limpar')}</Text>
+              </TouchableOpacity>
+            )}
+          </View>
           <View style={styles.presetsGrid}>
             {valores.map((v) => (
               <TouchableOpacity
                 key={v}
-                style={[styles.presetBtn, !outroAtivo && valorSelecionado === v && styles.presetBtnAtivo]}
-                onPress={() => selecionarPreset(v)}
+                style={styles.presetBtn}
+                onPress={() => somarPreset(v)}
               >
-                <Text style={[styles.presetTexto, !outroAtivo && valorSelecionado === v && styles.presetTextoAtivo]}>
-                  £{v}
-                </Text>
+                <Text style={styles.presetTexto}>£{v}</Text>
               </TouchableOpacity>
             ))}
             <TouchableOpacity
@@ -166,6 +183,7 @@ export default function OfertaScreen({ navigation }: { navigation?: any }) {
               </Text>
             </TouchableOpacity>
           </View>
+          {!outroAtivo && <Text style={styles.somaDica}>{t('oferta.toqueParaSomar')}</Text>}
           {outroAtivo && (
             <View style={styles.outroInputWrap}>
               <Text style={styles.outroInputPrefixo}>£</Text>
@@ -308,6 +326,10 @@ function buildStyles(C: PaletaOferta) { return StyleSheet.create({
   presetBtnAtivo: { backgroundColor: '#534AB7', borderColor: '#534AB7' },
   presetTexto: { fontSize: 15, fontWeight: '500', color: 'rgba(255,255,255,0.7)' },
   presetTextoAtivo: { color: '#fff', fontWeight: '700' },
+  valorLinha: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' },
+  limparBtn: { flexDirection: 'row', alignItems: 'center', gap: 4, paddingHorizontal: 10, paddingVertical: 5, borderRadius: 14, backgroundColor: 'rgba(255,255,255,0.08)' },
+  limparTexto: { fontSize: 12, fontWeight: '600', color: C.textMuted },
+  somaDica: { fontSize: 11, color: C.textMuted, marginTop: 10, textAlign: 'center' },
   outroInputWrap: { flexDirection: 'row', alignItems: 'center', backgroundColor: 'rgba(255,255,255,0.1)', borderWidth: 1, borderColor: '#534AB7', borderRadius: 10, paddingHorizontal: 14, height: 46, marginTop: 12 },
   outroInputPrefixo: { fontSize: 16, fontWeight: '700', color: '#F5C842', marginRight: 8 },
   outroInput: { flex: 1, fontSize: 16, color: '#fff', fontWeight: '600' },

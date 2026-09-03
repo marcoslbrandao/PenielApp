@@ -917,10 +917,191 @@ const buildNm = (C: BandaColors) => StyleSheet.create({
 });
 
 // ─── Novo Culto Modal ─────────────────────────────────────────────────────────
+// ─── Editor de setlist ────────────────────────────────────────────────────────
+// Usado nos três lugares onde se mexe nas músicas de um evento: criar culto,
+// criar ensaio e editar o setlist de um que já existe. Antes cada modal tinha
+// sua própria cópia da lista de repertório com checkbox — o que dava pra fazer
+// era marcar e desmarcar, e a ordem era simplesmente a ordem dos toques, sem
+// jeito de mudar depois.
+//
+// Aqui as duas coisas ficam separadas: em cima o setlist na ordem real, que dá
+// pra subir, descer e remover; embaixo o repertório que ainda não entrou, com
+// busca, pra adicionar. O componente não fala com o banco — só devolve as
+// entradas por `setEntries`, e quem chama decide o que fazer com elas.
+function SetlistEditor({ entries, setEntries, songs, versoes }: {
+  entries: CultoSongEntry[];
+  setEntries: React.Dispatch<React.SetStateAction<CultoSongEntry[]>>;
+  songs: Song[];
+  versoes: SongVersao[];
+}) {
+  const { C, md, s } = useBandaTema();
+  const { t } = useTranslation();
+  const [busca, setBusca] = useState('');
+
+  const songById = useMemo(() => {
+    const m = new Map<string, Song>();
+    songs.forEach(sg => m.set(sg.id, sg));
+    return m;
+  }, [songs]);
+
+  // order_index é sempre recalculado a partir da posição na lista. Guardar o
+  // valor antigo depois de mover ou remover é o caminho curto pra uma ordem
+  // que muda sozinha a cada recarga.
+  const reindexar = (lista: CultoSongEntry[]) => lista.map((e, i) => ({ ...e, order_index: i }));
+
+  const mover = (de: number, para: number) => {
+    if (para < 0 || para >= entries.length) return;
+    setEntries(prev => {
+      const lista = [...prev];
+      const [item] = lista.splice(de, 1);
+      lista.splice(para, 0, item);
+      return reindexar(lista);
+    });
+  };
+
+  const remover = (songId: string) => {
+    setEntries(prev => reindexar(prev.filter(e => e.song_id !== songId)));
+  };
+
+  const adicionar = (song: Song) => {
+    setEntries(prev => [...prev, {
+      song_id: song.id, song_key: song.song_key, bpm: String(song.bpm), order_index: prev.length,
+    }]);
+    setBusca('');
+  };
+
+  const updateEntry = (songId: string, field: 'song_key' | 'bpm', value: string) => {
+    setEntries(prev => prev.map(e => e.song_id === songId
+      ? { ...e, [field]: field === 'song_key' ? value.toUpperCase() : value }
+      : e));
+  };
+
+  // Escolher a versão já traz o tom e o BPM dela pro setlist — que é o motivo
+  // de a versão existir. Voltar pro original recupera os valores da música.
+  const escolherVersao = (song: Song, versao: SongVersao | null) => {
+    setEntries(prev => prev.map(e => {
+      if (e.song_id !== song.id) return e;
+      // Uma versão criada só pra mudar o BPM tem tom vazio (`not null default ''`).
+      // Nesse caso o tom que a pessoa digitou pra este evento tem que ficar de
+      // pé — voltar em silêncio pro tom do repertório é perder o trabalho dela.
+      const tom = versao ? (versao.song_key || e.song_key || song.song_key) : song.song_key;
+      return { ...e, versao_id: versao?.id ?? null, song_key: tom ?? '', bpm: String(versao?.bpm ?? song.bpm ?? '') };
+    }));
+  };
+
+  const termo = busca.trim().toLowerCase();
+  const disponiveis = songs.filter(sg =>
+    !entries.some(e => e.song_id === sg.id) &&
+    (termo === '' || `${sg.title} ${sg.artist}`.toLowerCase().includes(termo))
+  );
+
+  return (
+    <>
+      <Text style={[md.label, { marginTop: 16 }]}>{t('banda.musicasSelecionadas', { n: entries.length })}</Text>
+
+      {entries.length === 0 ? (
+        <Text style={md.setlistVazio}>{t('banda.setlistVazio')}</Text>
+      ) : (
+        entries.map((entry, idx) => {
+          const song = songById.get(entry.song_id);
+          if (!song) return null;
+          const versoesDaSong = versoes.filter(v => v.song_id === song.id);
+          return (
+            <View key={entry.song_id} style={{ marginBottom: 8 }}>
+              <View style={md.setlistRow}>
+                <View style={md.setlistOrdem}>
+                  <TouchableOpacity
+                    onPress={() => mover(idx, idx - 1)}
+                    disabled={idx === 0}
+                    hitSlop={6}
+                    style={md.ordemBtn}
+                  >
+                    <Ionicons name="chevron-up" size={15} color={idx === 0 ? C.textDim : C.primary} />
+                  </TouchableOpacity>
+                  <Text style={md.setlistNum}>{idx + 1}</Text>
+                  <TouchableOpacity
+                    onPress={() => mover(idx, idx + 1)}
+                    disabled={idx === entries.length - 1}
+                    hitSlop={6}
+                    style={md.ordemBtn}
+                  >
+                    <Ionicons name="chevron-down" size={15} color={idx === entries.length - 1 ? C.textDim : C.primary} />
+                  </TouchableOpacity>
+                </View>
+                <View style={{ flex: 1 }}>
+                  <Text style={md.setlistTitulo} numberOfLines={1}>{song.title}</Text>
+                  <Text style={md.songArtist} numberOfLines={1}>{song.artist}</Text>
+                </View>
+                <TouchableOpacity onPress={() => remover(entry.song_id)} hitSlop={8} style={md.ordemBtn}>
+                  <Ionicons name="trash-outline" size={16} color={C.danger} />
+                </TouchableOpacity>
+              </View>
+
+              {versoesDaSong.length > 0 && (
+                <View style={md.versaoRow}>
+                  {[null, ...versoesDaSong].map(v => {
+                    const ativa = (entry.versao_id ?? null) === (v?.id ?? null);
+                    return (
+                      <TouchableOpacity key={v?.id ?? 'original'} style={[s.pill, ativa && s.pillActive]} onPress={() => escolherVersao(song, v)}>
+                        <Text style={[s.pillText, ativa && s.pillTextActive]}>{v ? v.nome : t('banda.versaoOriginal')}</Text>
+                      </TouchableOpacity>
+                    );
+                  })}
+                </View>
+              )}
+
+              <View style={md.overrideRow}>
+                <View style={md.overrideField}>
+                  <Text style={md.overrideLabel}>{t('banda.tomLabel')}</Text>
+                  <TextInput style={md.overrideInput} value={entry.song_key} onChangeText={v => updateEntry(entry.song_id, 'song_key', v)} autoCapitalize="characters" maxLength={3} placeholderTextColor={C.textDim} />
+                </View>
+                <View style={md.overrideField}>
+                  <Text style={md.overrideLabel}>{t('banda.bpm')}</Text>
+                  <TextInput style={md.overrideInput} value={entry.bpm} onChangeText={v => updateEntry(entry.song_id, 'bpm', v)} keyboardType="numeric" maxLength={3} placeholderTextColor={C.textDim} />
+                </View>
+                <Text style={md.overrideHint}>{t('banda.ajusteParaEsteCulto')}</Text>
+              </View>
+            </View>
+          );
+        })
+      )}
+
+      <Text style={[md.label, { marginTop: 18 }]}>{t('banda.adicionarDoRepertorio')}</Text>
+      <TextInput
+        style={md.input}
+        placeholder={t('banda.buscarPlaceholder')}
+        placeholderTextColor={C.textDim}
+        value={busca}
+        onChangeText={setBusca}
+      />
+      <View style={md.songList}>
+        {disponiveis.length === 0 ? (
+          <Text style={md.setlistVazio}>
+            {entries.length > 0 && termo === '' ? t('banda.todasNoSetlist') : t('banda.buscaSemResultado')}
+          </Text>
+        ) : (
+          disponiveis.map(song => (
+            <TouchableOpacity key={song.id} style={md.songRow} onPress={() => adicionar(song)} activeOpacity={0.7}>
+              <View style={[md.keyPill, { backgroundColor: C.surfaceHigh }]}>
+                <Text style={[md.keyPillText, { color: C.textMuted }]}>{song.song_key}</Text>
+              </View>
+              <View style={{ flex: 1 }}>
+                <Text style={md.songTitle}>{song.title}</Text>
+                <Text style={md.songArtist}>{song.artist} · {song.bpm} BPM</Text>
+              </View>
+              <Ionicons name="add-circle-outline" size={22} color={C.primary} />
+            </TouchableOpacity>
+          ))
+        )}
+      </View>
+    </>
+  );
+}
+
 function NovoCultoModal({ visible, onClose, onSaved, songs, versoes }: {
   visible: boolean; onClose: () => void; onSaved: () => void; songs: Song[]; versoes: SongVersao[];
 }) {
-  const { C, md, s } = useBandaTema();
+  const { C, md } = useBandaTema();
   const { t, i18n } = useTranslation();
   const [date, setDate] = useState('');
   const [entries, setEntries] = useState<CultoSongEntry[]>([]);
@@ -930,37 +1111,6 @@ function NovoCultoModal({ visible, onClose, onSaved, songs, versoes }: {
   // quiser montar em paz desliga e publica depois.
   const [publicado, setPublicado] = useState(true);
 
-  const isSongSelected = (id: string) => entries.some(e => e.song_id === id);
-  const toggleSong = (song: Song) => {
-    if (isSongSelected(song.id)) {
-      setEntries(prev => prev.filter(e => e.song_id !== song.id));
-    } else {
-      setEntries(prev => [...prev, { song_id: song.id, song_key: song.song_key, bpm: String(song.bpm), order_index: prev.length }]);
-    }
-  };
-  // Escolher a versão já traz o tom e o BPM dela pro setlist — que é o motivo
-  // de a versão existir. Voltar pro original recupera os valores da música.
-  const escolherVersao = (song: Song, versao: SongVersao | null) => {
-    setEntries(prev => prev.map(e => {
-      if (e.song_id !== song.id) return e;
-      // Uma versão criada só pra mudar o BPM tem tom vazio (`not null default ''`).
-      // Nesse caso o tom que a pessoa digitou pra este culto tem que ficar de
-      // pé — voltar em silêncio pro tom do repertório é perder o trabalho dela.
-      const tom = versao
-        ? (versao.song_key || e.song_key || song.song_key)
-        : song.song_key;
-      return {
-        ...e,
-        versao_id: versao?.id ?? null,
-        song_key: tom ?? '',
-        bpm: String(versao?.bpm ?? song.bpm ?? ''),
-      };
-    }));
-  };
-
-  const updateEntry = (songId: string, field: 'song_key' | 'bpm', value: string) => {
-    setEntries(prev => prev.map(e => e.song_id === songId ? { ...e, [field]: field === 'song_key' ? value.toUpperCase() : value } : e));
-  };
   const formatDateInput = (text: string) => {
     const digits = text.replace(/\D/g, '').slice(0, 8);
     let f = digits;
@@ -1011,55 +1161,8 @@ function NovoCultoModal({ visible, onClose, onSaved, songs, versoes }: {
             <Text style={md.label}>{t('banda.dataDoCulto')}</Text>
             <TextInput style={[md.input, !!dateError && md.inputError]} placeholder="DD/MM/AAAA" placeholderTextColor={C.textDim} value={date} onChangeText={formatDateInput} keyboardType="numeric" maxLength={10} />
             {!!dateError && <Text style={md.errorText}>{dateError}</Text>}
-            <Text style={[md.label, { marginTop: 16 }]}>{t('banda.musicasSelecionadas', { n: entries.length })}</Text>
-            <ScrollView style={md.songList} showsVerticalScrollIndicator={false}>
-              {songs.map(song => {
-                const selected = isSongSelected(song.id);
-                const entry = entries.find(e => e.song_id === song.id);
-                return (
-                  <View key={song.id}>
-                    <TouchableOpacity style={[md.songRow, selected && md.songRowSelected]} onPress={() => toggleSong(song)} activeOpacity={0.7}>
-                      <View style={[md.keyPill, { backgroundColor: selected ? C.primaryDim : C.surfaceHigh }]}>
-                        <Text style={[md.keyPillText, { color: selected ? C.onPrimaryDim : C.textMuted }]}>{song.song_key}</Text>
-                      </View>
-                      <View style={{ flex: 1 }}>
-                        <Text style={[md.songTitle, selected && { color: C.text }]}>{song.title}</Text>
-                        <Text style={md.songArtist}>{song.artist} · {song.bpm} BPM</Text>
-                      </View>
-                      <View style={[md.checkbox, selected && md.checkboxSelected]}>
-                        {selected && <Ionicons name="checkmark" size={14} color={C.onPrimary} />}
-                      </View>
-                    </TouchableOpacity>
-                    {selected && entry && (
-                      <>
-                      {versoes.some(v => v.song_id === song.id) && (
-                        <View style={md.versaoRow}>
-                          {[null, ...versoes.filter(v => v.song_id === song.id)].map(v => {
-                            const ativa = (entry.versao_id ?? null) === (v?.id ?? null);
-                            return (
-                              <TouchableOpacity key={v?.id ?? 'original'} style={[s.pill, ativa && s.pillActive]} onPress={() => escolherVersao(song, v)}>
-                                <Text style={[s.pillText, ativa && s.pillTextActive]}>{v ? v.nome : t('banda.versaoOriginal')}</Text>
-                              </TouchableOpacity>
-                            );
-                          })}
-                        </View>
-                      )}
-                      <View style={md.overrideRow}>
-                        <View style={md.overrideField}>
-                          <Text style={md.overrideLabel}>{t('banda.tomLabel')}</Text>
-                          <TextInput style={md.overrideInput} value={entry.song_key} onChangeText={v => updateEntry(song.id, 'song_key', v)} autoCapitalize="characters" maxLength={3} placeholderTextColor={C.textDim} />
-                        </View>
-                        <View style={md.overrideField}>
-                          <Text style={md.overrideLabel}>{t('banda.bpm')}</Text>
-                          <TextInput style={md.overrideInput} value={entry.bpm} onChangeText={v => updateEntry(song.id, 'bpm', v)} keyboardType="numeric" maxLength={3} placeholderTextColor={C.textDim} />
-                        </View>
-                        <Text style={md.overrideHint}>{t('banda.ajusteParaEsteCulto')}</Text>
-                      </View>
-                    </>
-                    )}
-                  </View>
-                );
-              })}
+            <ScrollView style={{ maxHeight: 420 }} showsVerticalScrollIndicator={false} keyboardShouldPersistTaps="handled">
+              <SetlistEditor entries={entries} setEntries={setEntries} songs={songs} versoes={versoes} />
             </ScrollView>
             <TouchableOpacity style={md.publicarRow} onPress={() => setPublicado(v => !v)} activeOpacity={0.7}>
               <Ionicons name={publicado ? 'eye-outline' : 'eye-off-outline'} size={18} color={publicado ? C.accent : C.gold} />
@@ -1103,6 +1206,14 @@ const buildMd = (C: BandaColors) => StyleSheet.create({
   inputError: { borderColor: C.danger },
   errorText: { fontSize: 12, color: C.danger, marginTop: 4 },
   songList: { maxHeight: 320, marginBottom: 16 },
+  // Editor de setlist
+  setlistVazio: { fontSize: 12, color: C.textDim, lineHeight: 17, paddingVertical: 10, paddingHorizontal: 4 },
+  setlistSubtitulo: { fontSize: 13, color: C.textMuted, marginTop: -12, marginBottom: 4 },
+  setlistRow: { flexDirection: 'row', alignItems: 'center', gap: 10, paddingVertical: 8, paddingHorizontal: 10, borderRadius: 10, backgroundColor: C.surfaceHigh, borderWidth: 1, borderColor: C.primary, borderBottomLeftRadius: 0, borderBottomRightRadius: 0 },
+  setlistOrdem: { alignItems: 'center', width: 26 },
+  setlistNum: { fontSize: 12, fontWeight: '800', color: C.primary, paddingVertical: 1 },
+  ordemBtn: { padding: 2 },
+  setlistTitulo: { fontSize: 14, fontWeight: '700', color: C.text },
   songRow: { flexDirection: 'row', alignItems: 'center', gap: 12, paddingVertical: 10, paddingHorizontal: 10, borderRadius: 10, marginBottom: 4, backgroundColor: C.surfaceHigh, borderWidth: 1, borderColor: 'transparent' },
   songRowSelected: { borderColor: C.primary, borderBottomLeftRadius: 0, borderBottomRightRadius: 0, marginBottom: 0 },
   keyPill: { width: 32, height: 32, borderRadius: 6, alignItems: 'center', justifyContent: 'center' },
@@ -1255,7 +1366,7 @@ function PresencaBar({ presencas, meuId, escalados, onResponder }: {
 function NovoEnsaioModal({ visible, onClose, onSaved, songs, versoes }: {
   visible: boolean; onClose: () => void; onSaved: () => void; songs: Song[]; versoes: SongVersao[];
 }) {
-  const { C, md, s } = useBandaTema();
+  const { C, md } = useBandaTema();
   const { t, i18n } = useTranslation();
   const [date, setDate] = useState('');
   const [time, setTime] = useState('');
@@ -1266,37 +1377,6 @@ function NovoEnsaioModal({ visible, onClose, onSaved, songs, versoes }: {
   const [saving, setSaving] = useState(false);
   const [publicado, setPublicado] = useState(true);
 
-  const isSongSelected = (id: string) => entries.some(e => e.song_id === id);
-  const toggleSong = (song: Song) => {
-    if (isSongSelected(song.id)) {
-      setEntries(prev => prev.filter(e => e.song_id !== song.id));
-    } else {
-      setEntries(prev => [...prev, { song_id: song.id, song_key: song.song_key, bpm: String(song.bpm), order_index: prev.length }]);
-    }
-  };
-  // Escolher a versão já traz o tom e o BPM dela pro setlist — que é o motivo
-  // de a versão existir. Voltar pro original recupera os valores da música.
-  const escolherVersao = (song: Song, versao: SongVersao | null) => {
-    setEntries(prev => prev.map(e => {
-      if (e.song_id !== song.id) return e;
-      // Uma versão criada só pra mudar o BPM tem tom vazio (`not null default ''`).
-      // Nesse caso o tom que a pessoa digitou pra este culto tem que ficar de
-      // pé — voltar em silêncio pro tom do repertório é perder o trabalho dela.
-      const tom = versao
-        ? (versao.song_key || e.song_key || song.song_key)
-        : song.song_key;
-      return {
-        ...e,
-        versao_id: versao?.id ?? null,
-        song_key: tom ?? '',
-        bpm: String(versao?.bpm ?? song.bpm ?? ''),
-      };
-    }));
-  };
-
-  const updateEntry = (songId: string, field: 'song_key' | 'bpm', value: string) => {
-    setEntries(prev => prev.map(e => e.song_id === songId ? { ...e, [field]: field === 'song_key' ? value.toUpperCase() : value } : e));
-  };
   const formatDateInput = (text: string) => {
     const digits = text.replace(/\D/g, '').slice(0, 8);
     let f = digits;
@@ -1362,56 +1442,7 @@ function NovoEnsaioModal({ visible, onClose, onSaved, songs, versoes }: {
               <Text style={[md.label, { marginTop: 14 }]}>{t('banda.observacaoOpcional')}</Text>
               <TextInput style={md.input} placeholder={t('banda.observacaoPlaceholder')} placeholderTextColor={C.textDim} value={observacao} onChangeText={setObservacao} />
 
-              <Text style={[md.label, { marginTop: 16 }]}>{t('banda.musicasSelecionadas', { n: entries.length })}</Text>
-              <View style={md.songList}>
-                {songs.map(song => {
-                  const selected = isSongSelected(song.id);
-                  const entry = entries.find(e => e.song_id === song.id);
-                  return (
-                    <View key={song.id}>
-                      <TouchableOpacity style={[md.songRow, selected && md.songRowSelected]} onPress={() => toggleSong(song)} activeOpacity={0.7}>
-                        <View style={[md.keyPill, { backgroundColor: selected ? C.primaryDim : C.surfaceHigh }]}>
-                          <Text style={[md.keyPillText, { color: selected ? C.onPrimaryDim : C.textMuted }]}>{song.song_key}</Text>
-                        </View>
-                        <View style={{ flex: 1 }}>
-                          <Text style={[md.songTitle, selected && { color: C.text }]}>{song.title}</Text>
-                          <Text style={md.songArtist}>{song.artist} · {song.bpm} BPM</Text>
-                        </View>
-                        <View style={[md.checkbox, selected && md.checkboxSelected]}>
-                          {selected && <Ionicons name="checkmark" size={14} color={C.onPrimary} />}
-                        </View>
-                      </TouchableOpacity>
-                      {selected && entry && (
-                        <>
-                        {versoes.some(v => v.song_id === song.id) && (
-                          <View style={md.versaoRow}>
-                            {[null, ...versoes.filter(v => v.song_id === song.id)].map(v => {
-                              const ativa = (entry.versao_id ?? null) === (v?.id ?? null);
-                              return (
-                                <TouchableOpacity key={v?.id ?? 'original'} style={[s.pill, ativa && s.pillActive]} onPress={() => escolherVersao(song, v)}>
-                                  <Text style={[s.pillText, ativa && s.pillTextActive]}>{v ? v.nome : t('banda.versaoOriginal')}</Text>
-                                </TouchableOpacity>
-                              );
-                            })}
-                          </View>
-                        )}
-                        <View style={md.overrideRow}>
-                          <View style={md.overrideField}>
-                            <Text style={md.overrideLabel}>{t('banda.tomLabel')}</Text>
-                            <TextInput style={md.overrideInput} value={entry.song_key} onChangeText={v => updateEntry(song.id, 'song_key', v)} autoCapitalize="characters" maxLength={3} placeholderTextColor={C.textDim} />
-                          </View>
-                          <View style={md.overrideField}>
-                            <Text style={md.overrideLabel}>{t('banda.bpm')}</Text>
-                            <TextInput style={md.overrideInput} value={entry.bpm} onChangeText={v => updateEntry(song.id, 'bpm', v)} keyboardType="numeric" maxLength={3} placeholderTextColor={C.textDim} />
-                          </View>
-                          <Text style={md.overrideHint}>{t('banda.ajusteParaEsteCulto')}</Text>
-                        </View>
-                      </>
-                      )}
-                    </View>
-                  );
-                })}
-              </View>
+              <SetlistEditor entries={entries} setEntries={setEntries} songs={songs} versoes={versoes} />
             </ScrollView>
             <TouchableOpacity style={md.publicarRow} onPress={() => setPublicado(v => !v)} activeOpacity={0.7}>
               <Ionicons name={publicado ? 'eye-outline' : 'eye-off-outline'} size={18} color={publicado ? C.accent : C.gold} />
@@ -1425,6 +1456,87 @@ function NovoEnsaioModal({ visible, onClose, onSaved, songs, versoes }: {
             </TouchableOpacity>
             <TouchableOpacity style={[md.saveBtn, saving && { opacity: 0.7 }]} onPress={handleSave} disabled={saving} activeOpacity={0.85}>
               {saving ? <ActivityIndicator color={C.onPrimary} /> : <><Ionicons name="save-outline" size={18} color={C.onPrimary} /><Text style={md.saveBtnText}>{t('banda.salvarEnsaio')}</Text></>}
+            </TouchableOpacity>
+          </View>
+        </KeyboardAvoidingView>
+      </View>
+    </Modal>
+  );
+}
+
+// ─── Editar setlist de um culto/ensaio que já existe ──────────────────────────
+// Antes só dava pra montar o setlist na criação: depois de salvo, mudar a
+// ordem, tirar ou acrescentar uma música exigia apagar o culto inteiro e
+// refazer — perdendo escala, presenças, comentários e a ordem do culto junto.
+function EditarSetlistModal({ alvo, songs, versoes, onClose, onSalvo }: {
+  alvo: { tipo: 'culto' | 'ensaio'; eventoId: string; label: string; entries: CultoSongEntry[] } | null;
+  songs: Song[]; versoes: SongVersao[];
+  onClose: () => void; onSalvo: () => void;
+}) {
+  const { C, md } = useBandaTema();
+  const { t } = useTranslation();
+  const [entries, setEntries] = useState<CultoSongEntry[]>([]);
+  const [saving, setSaving] = useState(false);
+
+  // Recarrega a cada abertura: o setlist pode ter mudado no banco desde a
+  // última vez que este modal esteve aberto nesta sessão.
+  useEffect(() => { setEntries(alvo ? alvo.entries.map(e => ({ ...e })) : []); }, [alvo]);
+
+  const handleSave = async () => {
+    if (!alvo) return;
+    if (entries.length === 0) { Alert.alert(t('common.atencao'), t('banda.selecioneUmaMusica')); return; }
+    const tabela = alvo.tipo === 'culto' ? 'culto_songs' : 'ensaio_songs';
+    const chave = alvo.tipo === 'culto' ? 'culto_id' : 'ensaio_id';
+
+    // Apaga tudo e reinsere, em vez de calcular o que mudou linha a linha.
+    // Motivo: um UPDATE linha a linha de `order_index` esbarraria numa
+    // restrição de unicidade (evento, posição) caso ela exista — e essas
+    // tabelas foram criadas fora das migrações, então não dá pra confirmar
+    // pelo repositório. Reinserir do zero funciona com ou sem a restrição.
+    // O `nota` de cada música viaja na própria entrada, então sobrevive.
+    setSaving(true);
+    const antigas = alvo.entries.map(e => ({
+      [chave]: alvo.eventoId, song_id: e.song_id, song_key: e.song_key,
+      bpm: Number(e.bpm) || 0, order_index: e.order_index,
+      nota: e.nota ?? null, versao_id: e.versao_id ?? null,
+    }));
+    const novas = entries.map((e, i) => ({
+      [chave]: alvo.eventoId, song_id: e.song_id, song_key: e.song_key,
+      bpm: Number(e.bpm) || 0, order_index: i,
+      nota: e.nota ?? null, versao_id: e.versao_id ?? null,
+    }));
+
+    const { error: delErro } = await supabase.from(tabela).delete().eq(chave, alvo.eventoId);
+    if (delErro) { setSaving(false); Alert.alert(t('common.erro'), delErro.message); return; }
+
+    const { error: insErro } = await supabase.from(tabela).insert(novas);
+    if (insErro) {
+      // Sem transação no cliente: se a reinserção falhar, o setlist teria
+      // sumido. Devolve o que estava antes e conta o que aconteceu.
+      await supabase.from(tabela).insert(antigas);
+      setSaving(false);
+      Alert.alert(t('banda.erroSalvarMusicas'), insErro.message);
+      return;
+    }
+    setSaving(false);
+    onSalvo(); onClose();
+  };
+
+  return (
+    <Modal visible={!!alvo} animationType="slide" transparent onRequestClose={onClose}>
+      <View style={md.overlay}>
+        <KeyboardAvoidingView behavior={Platform.OS === 'ios' ? 'padding' : undefined} style={{ width: '100%' }}>
+          <View style={md.sheet}>
+            <View style={md.header}>
+              <Text style={md.title}>{t('banda.editarSetlist')}</Text>
+              <TouchableOpacity onPress={onClose}><Ionicons name="close" size={22} color={C.textMuted} /></TouchableOpacity>
+            </View>
+            <Text style={md.setlistSubtitulo}>{alvo?.label}</Text>
+            <ScrollView style={{ maxHeight: 440 }} showsVerticalScrollIndicator={false} keyboardShouldPersistTaps="handled">
+              <SetlistEditor entries={entries} setEntries={setEntries} songs={songs} versoes={versoes} />
+            </ScrollView>
+            <TouchableOpacity style={[md.saveBtn, saving && { opacity: 0.7 }]} onPress={handleSave} disabled={saving} activeOpacity={0.85}>
+              {saving ? <ActivityIndicator color={C.onPrimary} /> : <><Ionicons name="save-outline" size={18} color={C.onPrimary} /><Text style={md.saveBtnText}>{t('banda.salvarAlteracoes')}</Text></>}
             </TouchableOpacity>
           </View>
         </KeyboardAvoidingView>
@@ -1695,12 +1807,13 @@ function IndisponibilidadeModal({ visible, onClose, indisponibilidades, membros,
   const meses = MONTHS_BY_LANG[i18n.language] ?? MONTHS_BY_LANG.pt;
   const celulas = gradeDoMes(ano, mes);
   // Uma linha por semana, em vez de uma grade única com `flexWrap`. Com
-  // `width: ${100/7}%` a largura de cada célula vira 14.285714285714286%, que
-  // o motor de layout arredonda pra pixel físico — sete arredondamentos pra
-  // cima estouram a largura do container por uma fração, e a 7ª célula
-  // (sábado) cai pra linha de baixo. O efeito visível é a coluna de sábado
-  // vazia e o mês inteiro deslocado. Com uma <View> por semana e `flex: 1`
-  // nas células, cabem sempre exatamente 7, sem depender de arredondamento.
+  // `width: ${100/7}%` cada célula fica com 14.285714285714286%, que o motor
+  // de layout arredonda pra pixel físico — sete arredondamentos pra cima
+  // estouram a largura do container por uma fração, e a 7ª célula (sábado)
+  // cai pra linha de baixo. O efeito visível era a coluna de sábado vazia.
+  // Com uma <View> por semana e `flex: 1` nas células cabem sempre
+  // exatamente 7, sem depender de arredondamento — e alinham com as letras
+  // do cabeçalho, que já usavam `flex: 1`.
   const semanas = useMemo(() => {
     const linhas: (string | null)[][] = [];
     for (let i = 0; i < celulas.length; i += 7) linhas.push(celulas.slice(i, i + 7));
@@ -2603,6 +2716,9 @@ function BandaMain() {
   const [versoesSong, setVersoesSong] = useState<Song | null>(null);
   // Qual música de qual evento está com a nota aberta pra edição.
   const [roadmapModal, setRoadmapModal] = useState<{ cultoId: string; proximo: number } | null>(null);
+  const [setlistModal, setSetlistModal] = useState<
+    { tipo: 'culto' | 'ensaio'; eventoId: string; label: string; entries: CultoSongEntry[] } | null
+  >(null);
   const [comentariosCulto, setComentariosCulto] = useState<Culto | null>(null);
   const [metronomo, setMetronomo] = useState<{ bpm: number | null; titulo: string } | null>(null);
   const [notaModal, setNotaModal] = useState<
@@ -3364,6 +3480,18 @@ function BandaMain() {
                             <Ionicons name="chatbubble-ellipses-outline" size={15} color={C.textMuted} />
                             <Text style={s.acaoTexto}>{t('banda.conversa')}</Text>
                           </TouchableOpacity>
+                          {podeVerRascunho && (
+                            <TouchableOpacity
+                              style={s.acaoBtn}
+                              onPress={() => setSetlistModal({
+                                tipo: 'culto', eventoId: culto.id, label: culto.label, entries: culto.entries,
+                              })}
+                              activeOpacity={0.8}
+                            >
+                              <Ionicons name="list-outline" size={15} color={C.textMuted} />
+                              <Text style={s.acaoTexto}>{t('banda.editarSetlist')}</Text>
+                            </TouchableOpacity>
+                          )}
                         </View>
                         <SetlistResumo
                           songs={songsDoSetlist(culto.entries)}
@@ -3588,6 +3716,18 @@ function BandaMain() {
                             <Ionicons name="calendar-outline" size={15} color={C.textMuted} />
                             <Text style={s.acaoTexto}>{t('banda.agenda')}</Text>
                           </TouchableOpacity>
+                          {podeVerRascunho && (
+                            <TouchableOpacity
+                              style={s.acaoBtn}
+                              onPress={() => setSetlistModal({
+                                tipo: 'ensaio', eventoId: ensaio.id, label: ensaio.label, entries: ensaio.entries,
+                              })}
+                              activeOpacity={0.8}
+                            >
+                              <Ionicons name="list-outline" size={15} color={C.textMuted} />
+                              <Text style={s.acaoTexto}>{t('banda.editarSetlist')}</Text>
+                            </TouchableOpacity>
+                          )}
                         </View>
                         <SetlistResumo
                           songs={songsDoSetlist(ensaio.entries)}
@@ -3758,6 +3898,13 @@ function BandaMain() {
         titulo={metronomo?.titulo}
       />}
 
+      <EditarSetlistModal
+        alvo={setlistModal}
+        songs={songs}
+        versoes={versoes}
+        onClose={() => setSetlistModal(null)}
+        onSalvo={() => { setlistModal?.tipo === 'culto' ? fetchCultos() : fetchEnsaios(); }}
+      />
       <RoadmapItemModal
         visible={!!roadmapModal}
         cultoId={roadmapModal?.cultoId ?? ''}

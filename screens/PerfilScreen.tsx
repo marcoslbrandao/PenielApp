@@ -379,69 +379,6 @@ function PrayerRequestsModal({ visible, userId, onClose }: {
   );
 }
 
-// ─── Minhas Ofertas ───────────────────────────────────────────────────────────
-function OfferingsModal({ visible, userId, onClose }: {
-  visible: boolean; userId: string | undefined; onClose: () => void;
-}) {
-  const { t } = useTranslation();
-  const { isDark } = useTheme();
-  const C = useMemo(() => paleta(isDark), [isDark]);
-  const lm = useMemo(() => buildLm(C), [C]);
-  const [items, setItems] = useState<any[]>([]);
-  const [loading, setLoading] = useState(false);
-
-  useEffect(() => {
-    if (!visible || !userId) return;
-    setLoading(true);
-    supabase.from('offerings').select('*').eq('user_id', userId).order('data', { ascending: false })
-      .then(({ data }) => { setItems(data ?? []); setLoading(false); });
-  }, [visible, userId]);
-
-  const total = items.reduce((sum, o) => sum + Number(o.valor), 0);
-  const tipoLabel = (tipo: string) => tipo === 'dizimo' ? t('perfil.tipoDizimo') : tipo === 'oferta' ? t('perfil.tipoOferta') : tipo === 'missoes' ? t('perfil.tipoMissoes') : t('perfil.tipoOutro');
-  const metodoLabel = (m: string) => m === 'sumup' ? 'SumUp' : m === 'pix' ? 'PIX' : m === 'dinheiro' ? t('perfil.metodoDinheiro') : m === 'transferencia' ? t('perfil.metodoTransferencia') : '—';
-
-  return (
-    <Modal visible={visible} animationType="slide" transparent>
-      <View style={lm.overlay}>
-        <View style={lm.sheet}>
-          <View style={lm.header}>
-            <Text style={lm.title}>{t('perfil.minhasOfertas')}</Text>
-            <TouchableOpacity onPress={onClose}><Ionicons name="close" size={22} color={C.textMuted} /></TouchableOpacity>
-          </View>
-          {!loading && items.length > 0 && (
-            <View style={lm.totalCard}>
-              <Text style={lm.totalLabel}>{t('perfil.totalRegistrado')}</Text>
-              <Text style={lm.totalValue}>£ {total.toFixed(2)}</Text>
-            </View>
-          )}
-          <ScrollView showsVerticalScrollIndicator={false}>
-            {loading ? (
-              <ActivityIndicator color={C.primary} style={{ marginVertical: 30 }} />
-            ) : items.length === 0 ? (
-              <View style={lm.empty}>
-                <Ionicons name="gift-outline" size={40} color={C.textDim} />
-                <Text style={lm.emptyText}>{t('perfil.nenhumaOfertaRegistrada')}</Text>
-              </View>
-            ) : (
-              items.map(o => (
-                <View key={o.id} style={lm.item}>
-                  <View style={lm.itemTopRow}>
-                    <Text style={[lm.itemText, { fontStyle: 'normal', fontWeight: '700' }]}>{tipoLabel(o.tipo)}</Text>
-                    <Text style={{ fontSize: 14, fontWeight: '800', color: C.primary }}>£ {Number(o.valor).toFixed(2)}</Text>
-                  </View>
-                  <Text style={lm.itemMeta}>{new Date(o.data).toLocaleDateString('pt-BR')} · {metodoLabel(o.metodo)}</Text>
-                </View>
-              ))
-            )}
-            <View style={{ height: 10 }} />
-          </ScrollView>
-        </View>
-      </View>
-    </Modal>
-  );
-}
-
 // ─── Language Picker Modal ──────────────────────────────────────────────────
 function LanguagePickerModal({ visible, onClose }: { visible: boolean; onClose: () => void }) {
   const { t, i18n } = useTranslation();
@@ -649,7 +586,6 @@ export default function ProfileScreen() {
   const [savedVersesVisible, setSavedVersesVisible] = useState(false);
   const [readingHistoryVisible, setReadingHistoryVisible] = useState(false);
   const [prayerVisible, setPrayerVisible] = useState(false);
-  const [offeringsVisible, setOfferingsVisible] = useState(false);
   const [languageModalVisible, setLanguageModalVisible] = useState(false);
   const [themeModalVisible, setThemeModalVisible] = useState(false);
   const [deleteAccountVisible, setDeleteAccountVisible] = useState(false);
@@ -769,7 +705,6 @@ export default function ProfileScreen() {
         { icon: 'bookmark-outline', label: t('perfil.versiculosSalvos'), onPress: () => isLoggedIn ? setSavedVersesVisible(true) : Alert.alert(t('common.atencao'), t('perfil.faceLoginVersiculos')) },
         { icon: 'book-outline', label: t('perfil.historicoDeEstudos'), onPress: () => isLoggedIn ? setReadingHistoryVisible(true) : Alert.alert(t('common.atencao'), t('perfil.faceLoginHistorico')) },
         { icon: 'heart-outline', label: t('perfil.pedidosDeOracao'), onPress: () => isLoggedIn ? setPrayerVisible(true) : Alert.alert(t('common.atencao'), t('perfil.faceLoginOracao')) },
-        { icon: 'gift-outline', label: t('perfil.minhasOfertas'), onPress: () => isLoggedIn ? setOfferingsVisible(true) : Alert.alert(t('common.atencao'), t('perfil.faceLoginOfertas')) },
       ],
     },
     {
@@ -944,11 +879,6 @@ export default function ProfileScreen() {
         visible={prayerVisible}
         userId={user?.id}
         onClose={() => setPrayerVisible(false)}
-      />
-      <OfferingsModal
-        visible={offeringsVisible}
-        userId={user?.id}
-        onClose={() => setOfferingsVisible(false)}
       />
       <LanguagePickerModal
         visible={languageModalVisible}
