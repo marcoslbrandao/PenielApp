@@ -15,6 +15,7 @@ import { livrosAT, livrosNT, Livro } from '../lib/bibliaLivros';
 import { getVersiculoDoDia, parseReferencia, getTextoVersiculo, getReferenciaVersiculo, getVersaoVersiculo } from '../lib/versiculoDoDia';
 import { useCampoTraduzido } from '../lib/useTraducao';
 import { useTheme } from '../lib/theme';
+import { WebView } from 'react-native-webview';
 import { extractYoutubeId, youtubeThumbnail } from '../lib/youtube';
 
 // Paleta local — só os elementos "claros" da Home (cards brancos: live,
@@ -361,39 +362,80 @@ function ShortDestaqueCard({ short }: { short: ShortDestaque }) {
   const titulo = useCampoTraduzido(short.titulo, 'shorts_videos', short.id, 'titulo');
   const ytId = short.plataforma === 'youtube' ? extractYoutubeId(short.url) : null;
 
+  // A WebView só é montada depois do toque. Deixar o iframe do YouTube
+  // carregando toda vez que alguém abre a Home custa rede e bateria de graça
+  // — a esmagadora maioria das aberturas não vai tocar o vídeo.
+  const [tocando, setTocando] = useState(false);
+
+  // playsinline=1 (+ allowsInlineMediaPlayback na WebView) é o que impede o
+  // iOS de sequestrar o vídeo pro player nativo em tela cheia. rel=0 limita
+  // os vídeos sugeridos no fim aos do próprio canal.
+  const embedUrl = ytId
+    ? `https://www.youtube.com/embed/${ytId}?playsinline=1&autoplay=1&rel=0&modestbranding=1`
+    : null;
+
   return (
     <>
       <Text style={styles.secaoTitulo}>{t('home.videoEmDestaque')}</Text>
-      <TouchableOpacity style={styles.shortCard} activeOpacity={0.85} onPress={() => Linking.openURL(short.url)}>
-        {ytId ? (
-          <View style={styles.shortThumbWrap}>
-            <Image source={{ uri: youtubeThumbnail(ytId) }} style={styles.shortThumb} resizeMode="cover" />
-            <View style={styles.shortPlay}>
-              <Ionicons name="play" size={22} color="#fff" />
-            </View>
-          </View>
-        ) : (
-          <View style={[styles.shortThumbWrap, styles.shortThumbVazia]}>
-            <Ionicons
-              name={short.plataforma === 'instagram' ? 'logo-instagram' : 'logo-youtube'}
-              size={34}
-              color={short.plataforma === 'instagram' ? '#E1306C' : '#FF0000'}
+
+      {tocando && embedUrl ? (
+        <View style={styles.shortPlayerCard}>
+          <View style={styles.shortPlayer}>
+            <WebView
+              source={{ uri: embedUrl }}
+              style={{ flex: 1, backgroundColor: '#000' }}
+              javaScriptEnabled
+              domStorageEnabled
+              allowsInlineMediaPlayback
+              mediaPlaybackRequiresUserAction={false}
+              allowsFullscreenVideo
             />
           </View>
-        )}
-        <View style={styles.shortInfo}>
-          <Text style={styles.shortTitulo} numberOfLines={2}>{titulo}</Text>
-          <View style={{ flexDirection: 'row', alignItems: 'center', gap: 5 }}>
-            <Ionicons
-              name={short.plataforma === 'instagram' ? 'logo-instagram' : 'logo-youtube'}
-              size={13}
-              color={C.textMuted}
-            />
-            <Text style={styles.eventoMetaTexto}>{t('home.tocarParaAssistir')}</Text>
+          <View style={styles.shortPlayerRodape}>
+            <Text style={[styles.shortTitulo, { flex: 1 }]} numberOfLines={1}>{titulo}</Text>
+            <TouchableOpacity onPress={() => setTocando(false)} hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}>
+              <Ionicons name="close" size={20} color={C.textMuted} />
+            </TouchableOpacity>
           </View>
         </View>
-        <Ionicons name="chevron-forward" size={18} color={C.textMuted} style={{ marginRight: 12 }} />
-      </TouchableOpacity>
+      ) : (
+        <TouchableOpacity
+          style={styles.shortCard}
+          activeOpacity={0.85}
+          // Sem id do YouTube (short de Instagram, ou link digitado errado) não
+          // há player pra embutir — aí o comportamento antigo, abrir fora.
+          onPress={() => (embedUrl ? setTocando(true) : Linking.openURL(short.url))}
+        >
+          {ytId ? (
+            <View style={styles.shortThumbWrap}>
+              <Image source={{ uri: youtubeThumbnail(ytId) }} style={styles.shortThumb} resizeMode="cover" />
+              <View style={styles.shortPlay}>
+                <Ionicons name="play" size={22} color="#fff" />
+              </View>
+            </View>
+          ) : (
+            <View style={[styles.shortThumbWrap, styles.shortThumbVazia]}>
+              <Ionicons
+                name={short.plataforma === 'instagram' ? 'logo-instagram' : 'logo-youtube'}
+                size={34}
+                color={short.plataforma === 'instagram' ? '#E1306C' : '#FF0000'}
+              />
+            </View>
+          )}
+          <View style={styles.shortInfo}>
+            <Text style={styles.shortTitulo} numberOfLines={2}>{titulo}</Text>
+            <View style={{ flexDirection: 'row', alignItems: 'center', gap: 5 }}>
+              <Ionicons
+                name={short.plataforma === 'instagram' ? 'logo-instagram' : 'logo-youtube'}
+                size={13}
+                color={C.textMuted}
+              />
+              <Text style={styles.eventoMetaTexto}>{t('home.tocarParaAssistir')}</Text>
+            </View>
+          </View>
+          <Ionicons name="chevron-forward" size={18} color={C.textMuted} style={{ marginRight: 12 }} />
+        </TouchableOpacity>
+      )}
     </>
   );
 }
@@ -1213,6 +1255,9 @@ function buildStyles(C: PaletaHome) { return StyleSheet.create({
   shortPlay: { position: 'absolute', top: 0, left: 0, right: 0, bottom: 0, alignItems: 'center', justifyContent: 'center', backgroundColor: 'rgba(0,0,0,0.32)' },
   shortInfo: { flex: 1, padding: 12, gap: 4 },
   shortTitulo: { fontSize: 14, fontWeight: '600', color: C.textPrimary },
+  shortPlayerCard: { backgroundColor: C.cardBg, borderRadius: 16, borderWidth: 0.5, borderColor: C.cardBorder, marginBottom: 16, overflow: 'hidden' },
+  shortPlayer: { width: '100%', aspectRatio: 16 / 9, backgroundColor: '#000' },
+  shortPlayerRodape: { flexDirection: 'row', alignItems: 'center', gap: 10, paddingHorizontal: 14, paddingVertical: 11 },
   especialCtaTexto: { fontSize: 12, fontWeight: '700', color: '#fff' },
   eventoMetaTexto: { fontSize: 12, color: C.textMuted },
 }); }
