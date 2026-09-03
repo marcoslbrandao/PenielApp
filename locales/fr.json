@@ -447,7 +447,9 @@
     "informeValorValido": "Entrez un montant valide pour continuer.",
     "modalTitulo": "Contribuer en toute sécurité",
     "modalTexto": "Vous serez redirigé vers le paiement sécurisé via SumUp.\n\nMontant : £{{valor}}\nType : {{tipo}}\nFréquence : {{freq}}",
-    "irParaPagamento": "💳 Aller au paiement"
+    "irParaPagamento": "💳 Aller au paiement",
+    "limpar": "Effacer",
+    "toqueParaSomar": "Touchez les montants pour les additionner. Ex. : 3× £10 = £30."
   },
   "banda": {
     "titulo": "Banda Peniel",
