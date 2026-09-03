@@ -3193,32 +3193,41 @@ function BandaMain() {
               ItemSeparatorComponent={() => <View style={{ height: 8 }} />}
               refreshControl={<RefreshControl refreshing={refreshing} onRefresh={handleRefresh} tintColor={C.primary} colors={[C.primary]} progressBackgroundColor={C.surface} />}
               renderItem={({ item }) => (
+                // O cartão é em DUAS linhas de propósito: com os botões de link
+                // à direita do texto, o título perdia ~140pt de largura e as
+                // fichas de tom/BPM passavam POR BAIXO dos ícones (não há clip
+                // no RN). Em cima o título ocupa o cartão inteiro; embaixo as
+                // fichas e os links dividem a linha, sem se cruzar.
                 <View style={s.songCard}>
-                  {item.capa_url ? (
-                    // A borda roxa faz o papel que o selo de tom fazia: dizer
-                    // de relance se a música está no repertório da banda.
-                    <Image
-                      source={{ uri: item.capa_url }}
-                      style={[s.songCapa, item.in_repertoire && s.songCapaNoRepertorio]}
-                    />
-                  ) : (
-                    <View style={[s.keyBadge, { backgroundColor: item.in_repertoire ? C.primaryDim : C.surfaceHigh }]}>
-                      <Text style={[s.keyText, { color: item.in_repertoire ? C.onPrimaryDim : C.textMuted }]}>{item.song_key}</Text>
+                  <TouchableOpacity style={s.songCardTopo} onPress={() => abrirEditarMusica(item)} activeOpacity={0.7}>
+                    {item.capa_url ? (
+                      // A borda roxa faz o papel que o selo de tom fazia: dizer
+                      // de relance se a música está no repertório da banda.
+                      <Image
+                        source={{ uri: item.capa_url }}
+                        style={[s.songCapa, item.in_repertoire && s.songCapaNoRepertorio]}
+                      />
+                    ) : (
+                      <View style={[s.keyBadge, { backgroundColor: item.in_repertoire ? C.primaryDim : C.surfaceHigh }]}>
+                        <Text style={[s.keyText, { color: item.in_repertoire ? C.onPrimaryDim : C.textMuted }]}>{item.song_key}</Text>
+                      </View>
+                    )}
+                    <View style={{ flex: 1, marginLeft: 10 }}>
+                      <View style={s.songTitleRow}>
+                        <Text style={[s.songTitle, { flexShrink: 1 }]} numberOfLines={2}>{item.title}</Text>
+                        <Ionicons name="create-outline" size={13} color={C.textDim} style={{ marginTop: 3 }} />
+                        {versoes.some(v => v.song_id === item.id) && (
+                          <View style={[s.versaoTag, { marginTop: 1 }]}>
+                            <Text style={s.versaoTagText}>
+                              {versoes.filter(v => v.song_id === item.id).length}
+                            </Text>
+                          </View>
+                        )}
+                      </View>
+                      <Text style={s.songArtist} numberOfLines={1}>{item.artist}</Text>
                     </View>
-                  )}
-                  <TouchableOpacity style={{ flex: 1, marginLeft: 10 }} onPress={() => abrirEditarMusica(item)} activeOpacity={0.7}>
-                    <View style={s.songTitleRow}>
-                      <Text style={[s.songTitle, { flexShrink: 1 }]} numberOfLines={1}>{item.title}</Text>
-                      <Ionicons name="create-outline" size={13} color={C.textDim} />
-                      {versoes.some(v => v.song_id === item.id) && (
-                        <View style={s.versaoTag}>
-                          <Text style={s.versaoTagText}>
-                            {versoes.filter(v => v.song_id === item.id).length}
-                          </Text>
-                        </View>
-                      )}
-                    </View>
-                    <Text style={s.songArtist} numberOfLines={1}>{item.artist}</Text>
+                  </TouchableOpacity>
+                  <View style={s.songRodape}>
                     <View style={s.songMeta}>
                       <View style={s.songMetaChip}><Text style={s.songMetaText}>{t('banda.tomLabel')} {item.song_key}</Text></View>
                       {/* Toque no BPM abre o metrônomo já naquele andamento —
@@ -3241,9 +3250,9 @@ function BandaMain() {
                         <View style={s.songMetaChip}><Text style={s.songMetaText}>{formatDuracao(item.duracao_segundos)}</Text></View>
                       )}
                     </View>
-                  </TouchableOpacity>
-                  <View style={s.songLinks}>
-                    <LinkMiniButtons song={item} openLink={openLink} />
+                    <View style={s.songLinks}>
+                      <LinkMiniButtons song={item} openLink={openLink} />
+                    </View>
                   </View>
                 </View>
               )}
@@ -3828,15 +3837,17 @@ const buildS = (C: BandaColors) => StyleSheet.create({
   pillText: { fontSize: 13, color: C.textMuted, fontWeight: '500' },
   pillTextActive: { color: C.onPrimaryDim, fontWeight: '700' },
   addSongBtn: { width: 36, height: 36, borderRadius: 18, backgroundColor: C.primary, alignItems: 'center', justifyContent: 'center' },
-  songCard: { backgroundColor: C.surface, borderRadius: 12, padding: 12, borderWidth: 1, borderColor: C.border, flexDirection: 'row', alignItems: 'center' },
+  songCard: { backgroundColor: C.surface, borderRadius: 12, padding: 12, borderWidth: 1, borderColor: C.border },
+  songCardTopo: { flexDirection: 'row', alignItems: 'center' },
+  songRodape: { flexDirection: 'row', alignItems: 'center', gap: 8, marginTop: 10 },
   keyBadge: { width: 40, height: 40, borderRadius: 10, alignItems: 'center', justifyContent: 'center' },
   keyText: { fontSize: 14, fontWeight: '800', color: C.text },
-  songTitle: { fontSize: 14, fontWeight: '700', color: C.text },
+  songTitle: { fontSize: 14, fontWeight: '700', color: C.text, lineHeight: 19 },
   songArtist: { fontSize: 12, color: C.textMuted, marginTop: 1 },
-  songMeta: { flexDirection: 'row', gap: 6, marginTop: 5 },
+  songMeta: { flex: 1, flexDirection: 'row', flexWrap: 'wrap', gap: 6 },
   songMetaChip: { backgroundColor: C.surfaceHigh, borderRadius: 6, paddingHorizontal: 7, paddingVertical: 2 },
   songMetaText: { fontSize: 10, color: C.textMuted, fontWeight: '600' },
-  songLinks: { flexDirection: 'row', gap: 6, marginLeft: 8 },
+  songLinks: { flexDirection: 'row', gap: 6 },
   acoesRow: { flexDirection: 'row', gap: 8, marginBottom: 10 },
   acaoBtn: { flexDirection: 'row', alignItems: 'center', gap: 6, paddingHorizontal: 11, paddingVertical: 7, borderRadius: 9, backgroundColor: C.surface, borderWidth: 1, borderColor: C.chipBorder },
   acaoTexto: { fontSize: 11, fontWeight: '700', color: C.textMuted },
@@ -3855,7 +3866,7 @@ const buildS = (C: BandaColors) => StyleSheet.create({
   songCapaNoRepertorio: { borderColor: C.primary },
   linkBtn: { width: 30, height: 30, borderRadius: 8, backgroundColor: C.surface, alignItems: 'center', justifyContent: 'center', borderWidth: 1, borderColor: C.chipBorder },
   linkBtnMini: { width: 28, height: 28, borderRadius: 7 },
-  songTitleRow: { flexDirection: 'row', alignItems: 'center', gap: 6 },
+  songTitleRow: { flexDirection: 'row', alignItems: 'flex-start', gap: 6 },
   linkBtnLabel: { fontSize: 9, fontWeight: '800', color: C.textMuted },
   linkBtnYt: { backgroundColor: C.ytBg },
   linkBtnDisabled: { opacity: 0.4 },
