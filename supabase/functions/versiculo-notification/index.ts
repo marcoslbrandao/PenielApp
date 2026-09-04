@@ -33,6 +33,10 @@ Deno.serve(async (req) => {
     const url = new URL(req.url);
     // `?force=1` ignora a checagem de horário — só para teste manual.
     const forcar = url.searchParams.get('force') === '1';
+    // `?dry=1` faz tudo MENOS enviar: devolve o versículo do dia e quantos
+    // aparelhos receberiam. É assim que se confere a configuração sem mandar
+    // push pra congregação inteira sem querer.
+    const ensaio = url.searchParams.get('dry') === '1';
 
     const supabase = createClient(SUPABASE_URL, SUPABASE_SERVICE_KEY);
 
@@ -75,6 +79,16 @@ Deno.serve(async (req) => {
         sound: 'default',
         data: { type: 'versiculo' },
       });
+    }
+
+    if (ensaio) {
+      return new Response(JSON.stringify({
+        dry_run: true,
+        ref: (versiculo as any).ref,
+        pt: (versiculo as any).pt,
+        enviaria_para: mensagens.length,
+        exemplo: mensagens[0] ?? null,
+      }), { status: 200 });
     }
 
     // Expo aceita no máximo 100 mensagens por request — quebra em lotes.
