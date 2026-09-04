@@ -6,7 +6,7 @@ import { useRoute, useNavigation } from '@react-navigation/native';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { supabase } from '../lib/supabase';
 import { useAuth } from '../lib/useAuth';
-import { getVersiculoDoDia, parseReferencia, getTextoVersiculo, getReferenciaVersiculo, getVersaoVersiculo } from '../lib/versiculoDoDia';
+import { useVersiculoDoDia, parseReferencia, getTextoVersiculo, getReferenciaVersiculo, getVersaoVersiculo } from '../lib/versiculoDoDia';
 import { linhaCompartilharApp } from '../lib/appLinks';
 import { livrosAT, livrosNT, Livro } from '../lib/bibliaLivros';
 import { useTheme } from '../lib/theme';
@@ -41,17 +41,15 @@ const versoes = [
   { sigla: 'LSG', nome: 'Louis Segond',                 idioma: '🇫🇷 Français',  apiId: 'FRLSG' },
 ];
 
-const VERSICULO_DIA_RAW = getVersiculoDoDia();
 
 // Resolve o livro e capítulo do versículo do dia, para o botão "Ler capítulo inteiro".
-function resolverLivroDoVersiculo(): { livro: Livro; capitulo: number } | null {
-  const parsed = parseReferencia(VERSICULO_DIA_RAW.ref);
+function resolverLivroDoVersiculo(ref: string): { livro: Livro; capitulo: number } | null {
+  const parsed = parseReferencia(ref);
   if (!parsed) return null;
   const livro = [...livrosAT, ...livrosNT].find(l => l.pt === parsed.livroNome);
   if (!livro) return null;
   return { livro, capitulo: parsed.capitulo };
 }
-const LIVRO_VERSICULO_DIA = resolverLivroDoVersiculo();
 
 // ─── Plano de leitura: 30 dias com os Salmos ─────────────────────────────────
 // Cada posição é o número do Salmo lido naquele dia do plano.
@@ -427,6 +425,12 @@ export default function BibleScreen() {
     }
     navigation.setParams({ livroSlug: undefined, capitulo: undefined });
   }, [route.params]);
+
+  // Hook, não constante de módulo: a tela monta uma vez só e o app fica dias
+  // aberto em segundo plano — como constante, quem não fecha o app
+  // continuaria vendo o versículo de ontem.
+  const VERSICULO_DIA_RAW = useVersiculoDoDia();
+  const LIVRO_VERSICULO_DIA = useMemo(() => resolverLivroDoVersiculo(VERSICULO_DIA_RAW.ref), [VERSICULO_DIA_RAW.ref]);
 
   const abrirCapituloDoVersiculoDoDia = () => {
     if (!LIVRO_VERSICULO_DIA) return;

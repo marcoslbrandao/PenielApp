@@ -5,6 +5,7 @@ import * as Device from 'expo-device';
 import Constants from 'expo-constants';
 import { Platform } from 'react-native';
 import { supabase } from './supabase';
+import i18n from 'i18next';
 
 // Configura como as notificações aparecem quando o app está aberto.
 // No SDK 54 o `shouldShowAlert` foi depreciado e substituído por dois campos
@@ -99,8 +100,10 @@ async function registerForPushNotifications(userId: string) {
     // de criar uma linha nova (o que causava notificação duplicada: um
     // aparelho registrado em várias contas recebia o mesmo push várias
     // vezes). Ver migração 20260823120000_push_tokens_unico_por_token.sql.
+    // O idioma vai junto pra que a notificação do versículo do dia (mandada
+    // pelo servidor às 7h do Reino Unido) saia na língua de cada aparelho.
     await supabase.from('push_tokens').upsert(
-      { user_id: userId, token },
+      { user_id: userId, token, idioma: i18n.language?.slice(0, 2) ?? 'pt' },
       { onConflict: 'token' }
     );
 
