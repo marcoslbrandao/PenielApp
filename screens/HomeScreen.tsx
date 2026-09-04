@@ -12,7 +12,7 @@ import { linhaCompartilharApp } from '../lib/appLinks';
 import BirthdayBanner from '../components/BirthdayBanner';
 import MensagemDetalheModal, { Mensagem } from '../components/MensagemDetalheModal';
 import { livrosAT, livrosNT, Livro } from '../lib/bibliaLivros';
-import { getVersiculoDoDia, parseReferencia, getTextoVersiculo, getReferenciaVersiculo, getVersaoVersiculo } from '../lib/versiculoDoDia';
+import { useVersiculoDoDia, parseReferencia, getTextoVersiculo, getReferenciaVersiculo, getVersaoVersiculo } from '../lib/versiculoDoDia';
 import { useCampoTraduzido } from '../lib/useTraducao';
 import { useTheme } from '../lib/theme';
 import { WebView } from 'react-native-webview';
@@ -50,18 +50,16 @@ const WHATSAPP_NUMBER  = '447540880456';
 const YOUTUBE_API_KEY  = process.env.EXPO_PUBLIC_YOUTUBE_API_KEY;
 const CHANNEL_ID       = 'UCeipicy-AS_b66Asu65TBQQ';
 
-const VERSICULO_DIA_RAW = getVersiculoDoDia();
 
 // Resolve o livro (com slug) e capítulo do versículo do dia, para permitir
 // abrir o capítulo inteiro na Bíblia a partir da Home.
-function resolverLivroDoVersiculo(): { slug: string; capitulo: number } | null {
-  const parsed = parseReferencia(VERSICULO_DIA_RAW.ref);
+function resolverLivroDoVersiculo(ref: string): { slug: string; capitulo: number } | null {
+  const parsed = parseReferencia(ref);
   if (!parsed) return null;
   const livro = [...livrosAT, ...livrosNT].find(l => l.pt === parsed.livroNome);
   if (!livro) return null;
   return { slug: livro.slug, capitulo: parsed.capitulo };
 }
-const LIVRO_VERSICULO_DIA = resolverLivroDoVersiculo();
 
 // ─── Busca ────────────────────────────────────────────────────────────────────
 type AvisoResult = { id: string; titulo: string; texto: string; data: string; tipo: string };
@@ -811,6 +809,11 @@ export default function HomeScreen({ navigation }: { navigation?: any }) {
   };
 
   // Versículo do dia no idioma atual do app (Perfil > Idioma).
+  // Hook, não constante de módulo: a tela monta uma vez só e o app fica
+  // dias aberto em segundo plano — como constante, quem não fecha o app
+  // continuaria vendo o versículo de ontem.
+  const VERSICULO_DIA_RAW = useVersiculoDoDia();
+  const LIVRO_VERSICULO_DIA = useMemo(() => resolverLivroDoVersiculo(VERSICULO_DIA_RAW.ref), [VERSICULO_DIA_RAW.ref]);
   const versiculoTexto = getTextoVersiculo(VERSICULO_DIA_RAW, i18n.language);
   const versiculoRef = getReferenciaVersiculo(VERSICULO_DIA_RAW, i18n.language);
   const versiculoVersaoIdioma = getVersaoVersiculo(i18n.language);

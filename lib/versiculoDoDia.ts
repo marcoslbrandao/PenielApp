@@ -8,6 +8,9 @@
 // textos em EN/ES/FR usam traduções de domínio público (KJV, Reina-Valera e
 // Louis Segond), coerentes com as versões já oferecidas na Bíblia completa.
 
+import { useEffect, useState } from 'react';
+import AsyncStorage from '@react-native-async-storage/async-storage';
+import { supabase } from './supabase';
 import { livrosAT, livrosNT } from './bibliaLivros';
 
 export type LangKey = 'pt' | 'en' | 'es' | 'fr';
@@ -78,25 +81,101 @@ export const VERSICULOS: VersiculoDia[] = [
 ];
 
 /**
- * Retorna o "dia do ano" (0–365) a partir da data local do aparelho.
- * Evita Intl/toLocaleString com fuso horário — o motor Hermes usado em
- * produção não suporta bem essa API e retornava "Invalid Date" (o que
- * deixava o versículo do dia em branco). Como o app é majoritariamente
- * usado no Reino Unido, a data local do aparelho já é uma proxy confiável
- * o suficiente para "muda todo dia à meia-noite".
+ * Deslocamento do horário britânico em relação ao UTC, em minutos: 60 no
+ * horário de verão (BST), 0 no inverno (GMT).
+ *
+ * Feito à mão de propósito. O motor Hermes usado em produção não lida bem
+ * com `Intl`/`toLocaleString` com fuso horário — já devolveu "Invalid Date"
+ * e deixou o versículo do dia em branco. As regras britânicas, por outro
+ * lado, são simples e fixas: BST começa no último domingo de março às 01:00
+ * UTC e termina no último domingo de outubro às 01:00 UTC.
  */
-function diaDoAno(): number {
-  const agora = new Date();
-  const inicioAno = new Date(agora.getFullYear(), 0, 0);
-  const diffMs = agora.getTime() - inicioAno.getTime();
-  return Math.floor(diffMs / 86400000);
+function offsetReinoUnidoMinutos(agora: Date): number {
+  const ano = agora.getUTCFullYear();
+  const ultimoDomingoAs1h = (mes: number) => {
+    const ultimoDia = new Date(Date.UTC(ano, mes + 1, 0));
+    const dia = ultimoDia.getUTCDate() - ultimoDia.getUTCDay();
+    return Date.UTC(ano, mes, dia, 1, 0, 0);
+  };
+  const t = agora.getTime();
+  return t >= ultimoDomingoAs1h(2) && t < ultimoDomingoAs1h(9) ? 60 : 0;
 }
 
-/** Versículo do dia — muda automaticamente à meia-noite (horário local). */
+/**
+ * Índice do versículo do dia. Ancorado nas 5h do Reino Unido, para todo
+ * mundo: a igreja inteira vê o mesmo versículo ao mesmo tempo, esteja onde
+ * estiver, e a notificação das 7h (mandada pelo servidor) nunca fala de um
+ * versículo que o app ainda não trocou.
+ *
+ * A conta é idêntica à da função `versiculo_indice_do_dia()` no Postgres —
+ * se mexer aqui, mexer lá também, senão app e notificação divergem.
+ */
+export function indiceDoDia(total: number): number {
+  if (total <= 0) return 0;
+  const agora = new Date();
+  const segundosUK = agora.getTime() / 1000 + offsetReinoUnidoMinutos(agora) * 60;
+  const dia = Math.floor((segundosUK - 5 * 3600) / 86400);
+  return ((dia % total) + total) % total;
+}
+
+/**
+ * Versículo do dia a partir da lista embutida no app. É a rede de segurança:
+ * vale para quem abre o app pela primeira vez sem internet, antes de haver
+ * cache da tabela `versiculos`.
+ */
 export function getVersiculoDoDia(): VersiculoDia {
-  const dia = diaDoAno();
-  const indice = ((dia % VERSICULOS.length) + VERSICULOS.length) % VERSICULOS.length;
-  return VERSICULOS[indice] ?? VERSICULOS[0];
+  return VERSICULOS[indiceDoDia(VERSICULOS.length)] ?? VERSICULOS[0];
+}
+
+const CACHE_KEY = '@peniel_versiculos_cache';
+
+/**
+ * Versículo do dia vindo da tabela `versiculos` do Supabase — a mesma fonte
+ * que o servidor usa para mandar a notificação das 7h, então os dois nunca
+ * discordam. A lista fica em cache no aparelho, e a lista embutida no app
+ * cobre o primeiro uso sem internet.
+ *
+ * Recalcula ao montar e a cada minuto: as telas montam o versículo uma vez
+ * só, e o app costuma ficar dias aberto em segundo plano — sem isso, quem
+ * não fecha o app continuaria vendo o versículo de ontem.
+ */
+export function useVersiculoDoDia(): VersiculoDia {
+  const [lista, setLista] = useState<VersiculoDia[]>(VERSICULOS);
+  const [versiculo, setVersiculo] = useState<VersiculoDia>(() => getVersiculoDoDia());
+
+  useEffect(() => {
+    let cancelado = false;
+    (async () => {
+      try {
+        const cru = await AsyncStorage.getItem(CACHE_KEY);
+        if (cru && !cancelado) {
+          const doCache = JSON.parse(cru) as VersiculoDia[];
+          if (Array.isArray(doCache) && doCache.length > 0) setLista(doCache);
+        }
+      } catch {
+        // Cache ilegível não é motivo pra ficar sem versículo — segue com a
+        // lista embutida e tenta o banco em seguida.
+      }
+      const { data } = await supabase
+        .from('versiculos')
+        .select('ref, pt, en, es, fr')
+        .eq('ativo', true)
+        .order('ordem', { ascending: true });
+      if (cancelado || !data || data.length === 0) return;
+      setLista(data as VersiculoDia[]);
+      AsyncStorage.setItem(CACHE_KEY, JSON.stringify(data)).catch(() => {});
+    })();
+    return () => { cancelado = true; };
+  }, []);
+
+  useEffect(() => {
+    const recalcular = () => setVersiculo(lista[indiceDoDia(lista.length)] ?? lista[0]);
+    recalcular();
+    const timer = setInterval(recalcular, 60000);
+    return () => clearInterval(timer);
+  }, [lista]);
+
+  return versiculo;
 }
 
 /**
