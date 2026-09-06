@@ -3254,15 +3254,7 @@ function BandaMain() {
                         titulo: song.title, nota: entry.nota ?? '',
                       })}
                     >
-                      {/* Número em cima, tom logo abaixo — mesmo selo do
-                          Repertório (só a letra, sem a palavra "Tom"), que lê
-                          de longe muito melhor que a ficha cinza. */}
-                      <View style={s.hojeOrderCol}>
-                        <View style={s.hojeOrder}><Text style={s.hojeOrderNum}>{idx + 1}</Text></View>
-                        <View style={[s.keyBadge, { backgroundColor: C.primaryDim }]}>
-                          <Text style={[s.keyText, { color: C.onPrimaryDim }]}>{entry.song_key}</Text>
-                        </View>
-                      </View>
+                      <View style={s.hojeOrder}><Text style={s.hojeOrderNum}>{idx + 1}</Text></View>
                       <View style={{ flex: 1, marginLeft: 10 }}>
                         <Text style={s.hojeSongTitle} numberOfLines={2}>{song.title}</Text>
                         <Text style={s.hojeSongArtist} numberOfLines={1}>
@@ -3278,6 +3270,11 @@ function BandaMain() {
                     </TouchableOpacity>
                     <View style={s.songRodape}>
                       <View style={s.songMeta}>
+                        {/* Só a letra do tom, no roxo do Repertório — a ficha
+                            cinza sumia no cartão. BPM logo ao lado. */}
+                        <View style={s.hojeTomSelo}>
+                          <Text style={s.hojeTomSeloText}>{entry.song_key}</Text>
+                        </View>
                         <TouchableOpacity
                           style={[s.songMetaChip, s.songMetaChipAcionavel]}
                           onPress={() => setMetronomo({ bpm: Number(entry.bpm) || song.bpm, titulo: song.title })}
@@ -3990,8 +3987,9 @@ const buildS = (C: BandaColors) => StyleSheet.create({
   hojeSongCountNum: { fontSize: 22, fontWeight: '800', color: C.primary },
   hojeSongCountLabel: { fontSize: 10, color: C.textMuted },
   hojeCard: { backgroundColor: C.surface, borderRadius: 12, padding: 12, marginBottom: 8, borderWidth: 1, borderColor: C.border },
-  hojeCardTopo: { flexDirection: 'row', alignItems: 'center' },
-  hojeOrderCol: { alignItems: 'center', gap: 6 },
+  hojeCardTopo: { flexDirection: 'row', alignItems: 'flex-start' },
+  hojeTomSelo: { minWidth: 34, paddingHorizontal: 8, paddingVertical: 2, borderRadius: 8, backgroundColor: C.primaryDim, alignItems: 'center', justifyContent: 'center' },
+  hojeTomSeloText: { fontSize: 14, fontWeight: '800', color: C.onPrimaryDim },
   hojeOrder: { width: 32, height: 32, borderRadius: 16, backgroundColor: C.primaryDim, alignItems: 'center', justifyContent: 'center' },
   hojeOrderNum: { fontSize: 15, fontWeight: '800', color: C.onPrimaryDim },
   hojeSongTitle: { fontSize: 14, fontWeight: '700', color: C.text, lineHeight: 19 },
