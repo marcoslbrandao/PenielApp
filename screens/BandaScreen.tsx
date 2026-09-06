@@ -3547,7 +3547,6 @@ function BandaMain() {
     { id: 'cultos', icon: 'mic-outline', label: t('banda.tabCultos') },
     { id: 'ensaios', icon: 'calendar-outline', label: t('banda.tabEnsaios') },
     { id: 'equipe', icon: 'people-outline', label: t('banda.tabEquipe') },
-    { id: 'chat', icon: 'chatbubbles-outline', label: t('banda.tabChat') },
   ];
 
   return (
@@ -3570,6 +3569,17 @@ function BandaMain() {
           <TouchableOpacity style={s.headerIconBtn} onPress={() => setRelatorioModal(true)} hitSlop={6}>
             <Ionicons name="bar-chart-outline" size={18} color={C.textMuted} />
           </TouchableOpacity>
+          {/* O Chat saiu das abas pro cabeçalho: com seis abas os ícones
+              ficavam miúdos demais, e o chat é o único que não é "uma visão do
+              domingo" — é conversa, entra e sai. Fica aceso quando é a tela
+              ativa, já que a barra de abas não tem mais como indicar isso. */}
+          <TouchableOpacity
+            style={[s.headerIconBtn, activeTab === 'chat' && s.headerIconBtnAtivo]}
+            onPress={() => setActiveTab(activeTab === 'chat' ? 'hoje' : 'chat')}
+            hitSlop={6}
+          >
+            <Ionicons name="chatbubbles-outline" size={18} color={activeTab === 'chat' ? C.onPrimaryDim : C.textMuted} />
+          </TouchableOpacity>
         </View>
       </View>
 
@@ -3577,7 +3587,7 @@ function BandaMain() {
       <View style={s.tabBar}>
         {TABS.map(tab => (
           <TouchableOpacity key={tab.id} style={[s.tabItem, activeTab === tab.id && s.tabItemActive]} onPress={() => setActiveTab(tab.id)}>
-            <Ionicons name={tab.icon as any} size={17} color={activeTab === tab.id ? C.primary : C.textMuted} />
+            <Ionicons name={tab.icon as any} size={20} color={activeTab === tab.id ? C.primary : C.textMuted} />
             <Text style={[s.tabLabel, activeTab === tab.id && s.tabLabelActive]} numberOfLines={1}>{tab.label}</Text>
           </TouchableOpacity>
         ))}
@@ -4480,12 +4490,13 @@ const buildS = (C: BandaColors) => StyleSheet.create({
   headerSub: { fontSize: 11, color: C.primary, fontWeight: '600', letterSpacing: 2, textTransform: 'uppercase', marginTop: 2 },
   headerRight: { flexDirection: 'row', alignItems: 'center', gap: 6 },
   headerIconBtn: { width: 34, height: 34, borderRadius: 10, backgroundColor: C.surfaceHigh, borderWidth: 1, borderColor: C.border, alignItems: 'center', justifyContent: 'center' },
+  headerIconBtnAtivo: { backgroundColor: C.primaryDim, borderColor: C.primary },
   headerBadge: { position: 'absolute', top: -4, right: -4, minWidth: 16, height: 16, borderRadius: 8, backgroundColor: C.goldFill, borderWidth: 1, borderColor: C.gold, alignItems: 'center', justifyContent: 'center', paddingHorizontal: 4 },
   headerBadgeText: { fontSize: 9, fontWeight: '800', color: '#000' },
   tabBar: { flexDirection: 'row', borderBottomWidth: 1, borderBottomColor: C.border, backgroundColor: C.surface },
   tabItem: { flex: 1, alignItems: 'center', paddingVertical: 10, gap: 3 },
   tabItemActive: { borderBottomWidth: 2, borderBottomColor: C.primary },
-  tabLabel: { fontSize: 9, color: C.textMuted, fontWeight: '500' },
+  tabLabel: { fontSize: 10, color: C.textMuted, fontWeight: '500' },
   tabLabelActive: { color: C.primary, fontWeight: '700' },
   tabContent: { padding: 16, paddingBottom: 32 },
   sectionLabel: { fontSize: 11, color: C.textMuted, fontWeight: '700', letterSpacing: 1, textTransform: 'uppercase', marginBottom: 12 },
