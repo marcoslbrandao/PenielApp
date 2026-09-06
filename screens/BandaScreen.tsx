@@ -112,7 +112,13 @@ type Presenca = {
   id: string; tipo: 'culto' | 'ensaio'; evento_id: string;
   profile_id: string; status: 'confirmado' | 'ausente';
 };
-type BandaMembro = { id: string; profile_id: string; nome: string };
+type BandaMembro = { id: string; profile_id: string; nome: string; avatar_url?: string | null };
+
+// Catálogo de funções do ministério (tabela `banda_funcoes`) e o N:N com as
+// pessoas. Substituiu a lista fixa de 8 instrumentos que vivia no código: dava
+// pra escalar alguém no Sax, mas não pra dizer que ele toca Sax.
+type BandaFuncao = { id: string; nome: string; emoji: string; ordem: number; ativo: boolean };
+type MembroFuncao = { membro_id: string; funcao_id: string; principal: boolean };
 
 type Ensaio = {
   id: string; label: string; date: string; time: string; local: string; observacao: string;
@@ -148,7 +154,7 @@ type BandaTime = {
 // propósito: a policy de SELECT de `profiles` só libera cada um ver a própria
 // linha, então não há como descobrir por join quem mandou a mensagem.
 type ChatMsg = { id: string; autor_id: string; autor_nome: string; texto: string; created_at: string };
-type Tab = 'hoje' | 'repertorio' | 'cultos' | 'ensaios' | 'chat';
+type Tab = 'hoje' | 'repertorio' | 'cultos' | 'ensaios' | 'equipe' | 'chat';
 
 // ─── Link helpers ───────────────────────────────────────────────────
 // Regra: o link salvo pela banda SEMPRE ganha. Só quando não existe link salvo
@@ -326,6 +332,16 @@ function googleAgendaUrl(
   if (detalhes) q.set('details', detalhes);
   if (local) q.set('location', local);
   return `https://calendar.google.com/calendar/render?${q.toString()}`;
+}
+
+// Iniciais pra quem ainda não subiu foto — "Karin Lediane Camargo" vira "KL",
+// não "K" nem "KLC".
+function iniciaisDoNome(nome: string): string {
+  const partes = nome.trim().split(/\s+/).filter(Boolean);
+  if (partes.length === 0) return '?';
+  const primeira = partes[0][0] ?? '';
+  const segunda = partes.length > 1 ? (partes[1][0] ?? '') : '';
+  return (primeira + segunda).toUpperCase();
 }
 
 // ─── Playlist do YouTube com o setlist inteiro ───────────────────────────────
@@ -1189,6 +1205,14 @@ const buildMd = (C: BandaColors) => StyleSheet.create({
   avisoIndispText: { flex: 1, fontSize: 12, color: C.gold, lineHeight: 16 },
   salvarTimeRow: { flexDirection: 'row', gap: 8, alignItems: 'center', marginBottom: 16 },
   salvarTimeBtn: { width: 46, height: 46, borderRadius: 10, backgroundColor: C.primary, alignItems: 'center', justifyContent: 'center' },
+  funcaoGrupo: { fontSize: 10, fontWeight: '800', color: C.textDim, letterSpacing: 0.6, textTransform: 'uppercase', marginTop: 10, marginBottom: 6 },
+  funcaoLinhaToque: { flex: 1, flexDirection: 'row', alignItems: 'center', gap: 10 },
+  funcaoEmoji: { fontSize: 20 },
+  novaFuncaoRow: { flexDirection: 'row', alignItems: 'center', gap: 8, marginBottom: 12 },
+  emojiInput: { width: 52, height: 46, borderRadius: 10, backgroundColor: C.surfaceHigh, borderWidth: 1, borderColor: C.border, fontSize: 20, color: C.text },
+  funcaoWrap: { flexDirection: 'row', flexWrap: 'wrap', gap: 8 },
+  avisoFuncaoRow: { flexDirection: 'row', alignItems: 'flex-start', gap: 6, marginTop: 10 },
+  avisoFuncaoTexto: { flex: 1, fontSize: 11, color: C.gold, lineHeight: 15 },
   timesDica: { fontSize: 11, color: C.textDim, marginTop: -8, marginBottom: 10, lineHeight: 15 },
   publicarRow: { flexDirection: 'row', alignItems: 'center', gap: 12, backgroundColor: C.surfaceHigh, borderWidth: 1, borderColor: C.border, borderRadius: 12, padding: 12, marginTop: 12 },
   publicarTitulo: { fontSize: 14, fontWeight: '700', color: C.text },
@@ -1553,26 +1577,39 @@ function EditarSetlistModal({ alvo, songs, versoes, onClose, onSalvo }: {
 // Usado tanto em Cultos quanto em Ensaios (props `tipo`/`eventoId` decidem a
 // tabela certa) — escolhe uma pessoa do diretório da banda e o instrumento
 // que ela vai tocar naquele culto/ensaio específico.
-const INSTRUMENTOS = ['vocal', 'violao', 'guitarra', 'baixo', 'bateria', 'teclado', 'ministro', 'outro'] as const;
-
-function EscalaModal({ visible, onClose, onSaved, membros, tipo, eventoId, times, escalaAtual, indisponiveis, onTimesMudaram }: {
+function EscalaModal({ visible, onClose, onSaved, membros, tipo, eventoId, times, escalaAtual, indisponiveis, onTimesMudaram, funcoes, membroFuncoes }: {
   visible: boolean; onClose: () => void; onSaved: () => void;
   membros: BandaMembro[]; tipo: 'culto' | 'ensaio'; eventoId: string;
   times: BandaTime[]; escalaAtual: EscalaEntry[]; indisponiveis: string[];
   onTimesMudaram: () => void;
+  funcoes: BandaFuncao[]; membroFuncoes: MembroFuncao[];
 }) {
   const { C, md, s } = useBandaTema();
   const { t } = useTranslation();
   const [membroId, setMembroId] = useState('');
-  const [instrumento, setInstrumento] = useState<typeof INSTRUMENTOS[number] | ''>('');
+  const [funcaoSel, setFuncaoSel] = useState('');
+  const [outroAberto, setOutroAberto] = useState(false);
   const [outroTexto, setOutroTexto] = useState('');
   const [saving, setSaving] = useState(false);
   const [aplicando, setAplicando] = useState(false);
   const [nomeNovoTime, setNomeNovoTime] = useState('');
 
   useEffect(() => {
-    if (!visible) { setMembroId(''); setInstrumento(''); setOutroTexto(''); setNomeNovoTime(''); }
+    if (!visible) { setMembroId(''); setFuncaoSel(''); setOutroAberto(false); setOutroTexto(''); setNomeNovoTime(''); }
   }, [visible]);
+
+  // As funções que a pessoa realmente exerce vêm primeiro e separadas do resto:
+  // escalar o baterista no violino continua possível (banda pequena improvisa),
+  // mas deixa de ser o caminho de menor esforço.
+  const funcoesDoMembro = useMemo(() => {
+    if (!membroId) return [] as BandaFuncao[];
+    const meus = new Set(membroFuncoes.filter(mf => mf.membro_id === membroId).map(mf => mf.funcao_id));
+    return funcoes.filter(f => meus.has(f.id));
+  }, [membroId, membroFuncoes, funcoes]);
+  const temFuncoesProprias = funcoesDoMembro.length > 0;
+  const outrasFuncoes = funcoes.filter(f => !funcoesDoMembro.some(x => x.id === f.id));
+  const foraDasFuncoes = temFuncoesProprias && !!funcaoSel && !funcoesDoMembro.some(f => f.nome === funcaoSel);
+  const nomeDoMembro = membros.find(m => m.id === membroId)?.nome ?? '';
 
   const tabelaEscala = tipo === 'culto' ? 'culto_escala' : 'ensaio_escala';
   const campoEvento = tipo === 'culto' ? 'culto_id' : 'ensaio_id';
@@ -1634,14 +1671,8 @@ function EscalaModal({ visible, onClose, onSaved, membros, tipo, eventoId, times
     ]);
   };
 
-  const labelDoInstrumento: Record<typeof INSTRUMENTOS[number], string> = {
-    vocal: t('banda.instVocal'), violao: t('banda.instViolao'), guitarra: t('banda.instGuitarra'),
-    baixo: t('banda.instBaixo'), bateria: t('banda.instBateria'), teclado: t('banda.instTeclado'),
-    ministro: t('banda.instMinistro'), outro: t('banda.instOutro'),
-  };
-
   const handleSave = async () => {
-    const instrumentoFinal = instrumento === 'outro' ? outroTexto.trim() : (instrumento ? labelDoInstrumento[instrumento] : '');
+    const instrumentoFinal = outroAberto ? outroTexto.trim() : funcaoSel;
     if (!membroId || !instrumentoFinal) { Alert.alert(t('common.atencao'), t('banda.selecioneMembro')); return; }
     setSaving(true);
     const table = tipo === 'culto' ? 'culto_escala' : 'ensaio_escala';
@@ -1738,15 +1769,48 @@ function EscalaModal({ visible, onClose, onSaved, membros, tipo, eventoId, times
                 </View>
               )}
 
-              <Text style={md.label}>{t('banda.escolherInstrumento')}</Text>
-              <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 8, marginBottom: 8 }}>
-                {INSTRUMENTOS.map(inst => (
-                  <TouchableOpacity key={inst} style={[s.pill, instrumento === inst && s.pillActive]} onPress={() => setInstrumento(inst)}>
-                    <Text style={[s.pillText, instrumento === inst && s.pillTextActive]}>{labelDoInstrumento[inst]}</Text>
+              <Text style={md.label}>{t('banda.escolherFuncao')}</Text>
+              {temFuncoesProprias && (
+                <>
+                  <Text style={md.funcaoGrupo}>{t('banda.funcoesDe', { nome: nomeDoMembro })}</Text>
+                  <View style={md.funcaoWrap}>
+                    {funcoesDoMembro.map(f => (
+                      <TouchableOpacity
+                        key={f.id}
+                        style={[s.pill, funcaoSel === f.nome && !outroAberto && s.pillActive]}
+                        onPress={() => { setFuncaoSel(f.nome); setOutroAberto(false); }}
+                      >
+                        <Text style={[s.pillText, funcaoSel === f.nome && !outroAberto && s.pillTextActive]}>{f.emoji} {f.nome}</Text>
+                      </TouchableOpacity>
+                    ))}
+                  </View>
+                </>
+              )}
+              <Text style={md.funcaoGrupo}>{temFuncoesProprias ? t('banda.outrasFuncoes') : t('banda.todasAsFuncoes')}</Text>
+              <View style={md.funcaoWrap}>
+                {(temFuncoesProprias ? outrasFuncoes : funcoes).map(f => (
+                  <TouchableOpacity
+                    key={f.id}
+                    style={[s.pill, funcaoSel === f.nome && !outroAberto && s.pillActive]}
+                    onPress={() => { setFuncaoSel(f.nome); setOutroAberto(false); }}
+                  >
+                    <Text style={[s.pillText, funcaoSel === f.nome && !outroAberto && s.pillTextActive]}>{f.emoji} {f.nome}</Text>
                   </TouchableOpacity>
                 ))}
+                <TouchableOpacity
+                  style={[s.pill, outroAberto && s.pillActive]}
+                  onPress={() => { setOutroAberto(true); setFuncaoSel(''); }}
+                >
+                  <Text style={[s.pillText, outroAberto && s.pillTextActive]}>＋ {t('banda.outraFuncao')}</Text>
+                </TouchableOpacity>
               </View>
-              {instrumento === 'outro' && (
+              {foraDasFuncoes && (
+                <View style={md.avisoFuncaoRow}>
+                  <Ionicons name="alert-circle-outline" size={14} color={C.gold} />
+                  <Text style={md.avisoFuncaoTexto}>{t('banda.avisoForaDaFuncao', { nome: nomeDoMembro })}</Text>
+                </View>
+              )}
+              {outroAberto && (
                 <TextInput style={md.input} placeholder={t('banda.instrumentoPlaceholder')} placeholderTextColor={C.textDim} value={outroTexto} onChangeText={setOutroTexto} />
               )}
               <View style={{ height: 8 }} />
@@ -1763,8 +1827,9 @@ function EscalaModal({ visible, onClose, onSaved, membros, tipo, eventoId, times
 
 // ─── Escala (lista de pessoas + instrumento) ─────────────────────────────────
 // Reaproveitado em Hoje (só leitura), Cultos e Ensaios (com botão de remover).
-function EscalaLista({ escala, membros, onRemover }: {
+function EscalaLista({ escala, membros, onRemover, funcoes }: {
   escala: EscalaEntry[]; membros: BandaMembro[]; onRemover?: (id: string) => void;
+  funcoes?: BandaFuncao[];
 }) {
   const { C, s } = useBandaTema();
   const { t } = useTranslation();
@@ -1775,11 +1840,16 @@ function EscalaLista({ escala, membros, onRemover }: {
     <>
       {escala.map(e => {
         const membro = membros.find(m => m.id === e.membro_id);
+        // O emoji é procurado pelo NOME da função — linhas antigas de uma função
+        // já renomeada simplesmente ficam sem emoji, em vez de sumirem.
+        const emoji = funcoes?.find(f => f.nome === e.instrumento)?.emoji;
         return (
           <View key={e.id} style={s.escalaRow}>
-            <Ionicons name="person-circle-outline" size={18} color={C.textMuted} />
+            {membro?.avatar_url
+              ? <Image source={{ uri: membro.avatar_url }} style={s.escalaAvatar} />
+              : <Ionicons name="person-circle-outline" size={18} color={C.textMuted} />}
             <Text style={s.escalaNome} numberOfLines={1}>{membro?.nome ?? '—'}</Text>
-            <View style={s.escalaInstChip}><Text style={s.escalaInstText}>{e.instrumento}</Text></View>
+            <View style={s.escalaInstChip}><Text style={s.escalaInstText}>{emoji ? `${emoji} ` : ''}{e.instrumento}</Text></View>
             {!!onRemover && (
               <TouchableOpacity onPress={() => onRemover(e.id)} hitSlop={6}>
                 <Ionicons name="close-circle-outline" size={17} color={C.danger} />
@@ -1789,6 +1859,260 @@ function EscalaLista({ escala, membros, onRemover }: {
         );
       })}
     </>
+  );
+}
+
+// ─── Funções de um integrante ────────────────────────────────────────────────
+// Um toque no cartão da Equipe abre isto. Guardar quem toca o quê é o que
+// permite a escala oferecer as funções certas primeiro — e o líder saber, sem
+// abrir culto por culto, que só duas pessoas cobrem o baixo.
+function MembroFuncoesModal({ membro, funcoes, membroFuncoes, onClose, onSaved }: {
+  membro: BandaMembro | null; funcoes: BandaFuncao[]; membroFuncoes: MembroFuncao[];
+  onClose: () => void; onSaved: () => void;
+}) {
+  const { C, md, s } = useBandaTema();
+  const { t } = useTranslation();
+  const [sel, setSel] = useState<string[]>([]);
+  const [principal, setPrincipal] = useState<string | null>(null);
+  const [saving, setSaving] = useState(false);
+
+  useEffect(() => {
+    if (!membro) return;
+    const meus = membroFuncoes.filter(mf => mf.membro_id === membro.id);
+    setSel(meus.map(mf => mf.funcao_id));
+    setPrincipal(meus.find(mf => mf.principal)?.funcao_id ?? null);
+  }, [membro, membroFuncoes]);
+
+  const alternar = (id: string) => {
+    setSel(prev => {
+      const tem = prev.includes(id);
+      if (tem && principal === id) setPrincipal(null);
+      return tem ? prev.filter(x => x !== id) : [...prev, id];
+    });
+  };
+
+  const handleSave = async () => {
+    if (!membro) return;
+    setSaving(true);
+    // Apaga e reescreve em vez de calcular o diff: são poucas linhas por pessoa
+    // e o diff seria três consultas pra economizar uma.
+    await supabase.from('banda_membro_funcoes').delete().eq('membro_id', membro.id);
+    if (sel.length) {
+      const { error } = await supabase.from('banda_membro_funcoes').insert(
+        sel.map(funcao_id => ({ membro_id: membro.id, funcao_id, principal: funcao_id === principal })));
+      if (error) { setSaving(false); Alert.alert(t('common.erro'), error.message); return; }
+    }
+    setSaving(false);
+    onSaved(); onClose();
+  };
+
+  return (
+    <Modal visible={!!membro} animationType="slide" transparent onRequestClose={onClose}>
+      <View style={md.overlay}>
+        <View style={md.sheet}>
+          <View style={md.header}>
+            <Text style={md.title} numberOfLines={1}>{membro?.nome ?? ''}</Text>
+            <TouchableOpacity onPress={onClose}><Ionicons name="close" size={22} color={C.textMuted} /></TouchableOpacity>
+          </View>
+          <Text style={md.setlistSubtitulo}>{t('banda.marqueAsFuncoes')}</Text>
+          <ScrollView style={{ maxHeight: 420 }} showsVerticalScrollIndicator={false}>
+            {funcoes.length === 0 ? (
+              <Text style={md.setlistVazio}>{t('banda.semFuncoesCadastradas')}</Text>
+            ) : funcoes.map(f => {
+              const marcada = sel.includes(f.id);
+              const ehPrincipal = principal === f.id;
+              return (
+                <View key={f.id} style={[md.songRow, marcada && { borderColor: C.primary }]}>
+                  <TouchableOpacity style={md.funcaoLinhaToque} onPress={() => alternar(f.id)} activeOpacity={0.7}>
+                    <Text style={md.funcaoEmoji}>{f.emoji}</Text>
+                    <Text style={[md.songTitle, marcada && { color: C.text }]}>{f.nome}</Text>
+                  </TouchableOpacity>
+                  {/* A estrela só aparece no que está marcado: eleger como
+                      principal algo que a pessoa nem exerce não quer dizer nada. */}
+                  {marcada && (
+                    <TouchableOpacity onPress={() => setPrincipal(ehPrincipal ? null : f.id)} hitSlop={8}>
+                      <Ionicons name={ehPrincipal ? 'star' : 'star-outline'} size={18} color={ehPrincipal ? C.gold : C.textDim} />
+                    </TouchableOpacity>
+                  )}
+                  <TouchableOpacity style={[md.checkbox, marcada && md.checkboxSelected]} onPress={() => alternar(f.id)}>
+                    {marcada && <Ionicons name="checkmark" size={14} color={C.onPrimary} />}
+                  </TouchableOpacity>
+                </View>
+              );
+            })}
+          </ScrollView>
+          <Text style={s.hojeTipText}>{t('banda.dicaPrincipal')}</Text>
+          <TouchableOpacity style={[md.saveBtn, saving && { opacity: 0.7 }]} onPress={handleSave} disabled={saving} activeOpacity={0.85}>
+            {saving ? <ActivityIndicator color={C.onPrimary} /> : <><Ionicons name="save-outline" size={18} color={C.onPrimary} /><Text style={md.saveBtnText}>{t('banda.salvarAlteracoes')}</Text></>}
+          </TouchableOpacity>
+        </View>
+      </View>
+    </Modal>
+  );
+}
+
+// ─── Catálogo de funções do ministério ───────────────────────────────────────
+// Antes disto os instrumentos eram oito valores fixos no código: acrescentar
+// "Mesa de som" exigia publicar uma versão do app.
+function FuncoesModal({ visible, funcoes, onClose, onSaved }: {
+  visible: boolean; funcoes: BandaFuncao[]; onClose: () => void; onSaved: () => void;
+}) {
+  const { C, md, s } = useBandaTema();
+  const { t } = useTranslation();
+  const [novoNome, setNovoNome] = useState('');
+  const [novoEmoji, setNovoEmoji] = useState('🎵');
+  const [editando, setEditando] = useState<string | null>(null);
+  const [editNome, setEditNome] = useState('');
+  const [editEmoji, setEditEmoji] = useState('');
+  const [salvando, setSalvando] = useState(false);
+
+  useEffect(() => {
+    if (!visible) { setNovoNome(''); setNovoEmoji('🎵'); setEditando(null); }
+  }, [visible]);
+
+  const adicionar = async () => {
+    const nome = novoNome.trim();
+    if (!nome) return;
+    setSalvando(true);
+    // `ordem` vai pro fim da fila em passos de 10 pra sobrar espaço entre os
+    // vizinhos quando alguém reordenar depois.
+    const proxima = (funcoes[funcoes.length - 1]?.ordem ?? 0) + 10;
+    const { error } = await supabase.from('banda_funcoes')
+      .insert({ nome, emoji: novoEmoji.trim() || '🎵', ordem: proxima });
+    setSalvando(false);
+    if (error) {
+      // O índice único é por nome minúsculo — vale avisar em vez de mostrar o
+      // erro cru do Postgres.
+      Alert.alert(t('common.erro'), error.code === '23505' ? t('banda.funcaoJaExiste') : error.message);
+      return;
+    }
+    setNovoNome(''); setNovoEmoji('🎵');
+    onSaved();
+  };
+
+  const salvarEdicao = async (f: BandaFuncao) => {
+    const nome = editNome.trim();
+    if (!nome) { setEditando(null); return; }
+    const { error } = await supabase.from('banda_funcoes')
+      .update({ nome, emoji: editEmoji.trim() || f.emoji }).eq('id', f.id);
+    setEditando(null);
+    if (error) { Alert.alert(t('common.erro'), error.code === '23505' ? t('banda.funcaoJaExiste') : error.message); return; }
+    onSaved();
+  };
+
+  // Troca a `ordem` com o vizinho. Duas linhas alteradas, sem reindexar a lista
+  // toda — o que também evita brigar com outro admin mexendo ao mesmo tempo.
+  const mover = async (idx: number, delta: number) => {
+    const alvo = funcoes[idx + delta];
+    const atual = funcoes[idx];
+    if (!alvo || !atual) return;
+    await Promise.all([
+      supabase.from('banda_funcoes').update({ ordem: alvo.ordem }).eq('id', atual.id),
+      supabase.from('banda_funcoes').update({ ordem: atual.ordem }).eq('id', alvo.id),
+    ]);
+    onSaved();
+  };
+
+  const remover = (f: BandaFuncao) => {
+    Alert.alert(t('banda.removerFuncao'), t('banda.removerFuncaoAviso', { nome: f.nome }), [
+      { text: t('common.cancelar'), style: 'cancel' },
+      { text: t('common.remover'), style: 'destructive', onPress: async () => {
+        const { error } = await supabase.from('banda_funcoes').delete().eq('id', f.id);
+        if (error) { Alert.alert(t('common.erro'), error.message); return; }
+        onSaved();
+      }},
+    ]);
+  };
+
+  return (
+    <Modal visible={visible} animationType="slide" transparent onRequestClose={onClose}>
+      <View style={md.overlay}>
+        <KeyboardAvoidingView behavior={Platform.OS === 'ios' ? 'padding' : undefined} style={{ width: '100%' }}>
+          <View style={md.sheet}>
+            <View style={md.header}>
+              <Text style={md.title}>{t('banda.funcoes')}</Text>
+              <TouchableOpacity onPress={onClose}><Ionicons name="close" size={22} color={C.textMuted} /></TouchableOpacity>
+            </View>
+            <Text style={md.setlistSubtitulo}>{t('banda.funcoesExplicacao')}</Text>
+
+            <View style={md.novaFuncaoRow}>
+              <TextInput
+                style={md.emojiInput}
+                value={novoEmoji}
+                onChangeText={setNovoEmoji}
+                maxLength={4}
+                textAlign="center"
+              />
+              <TextInput
+                style={[md.input, { flex: 1 }]}
+                placeholder={t('banda.nomeDaFuncao')}
+                placeholderTextColor={C.textDim}
+                value={novoNome}
+                onChangeText={setNovoNome}
+                maxLength={40}
+                returnKeyType="done"
+                onSubmitEditing={adicionar}
+              />
+              <TouchableOpacity
+                style={[md.salvarTimeBtn, (!novoNome.trim() || salvando) && { opacity: 0.45 }]}
+                onPress={adicionar}
+                disabled={!novoNome.trim() || salvando}
+              >
+                {salvando ? <ActivityIndicator color={C.onPrimary} size="small" /> : <Ionicons name="add" size={20} color={C.onPrimary} />}
+              </TouchableOpacity>
+            </View>
+
+            <ScrollView style={{ maxHeight: 380 }} showsVerticalScrollIndicator={false} keyboardShouldPersistTaps="handled">
+              {funcoes.length === 0 ? (
+                <Text style={md.setlistVazio}>{t('banda.semFuncoesCadastradas')}</Text>
+              ) : funcoes.map((f, idx) => (
+                <View key={f.id} style={md.songRow}>
+                  {editando === f.id ? (
+                    <>
+                      <TextInput style={md.emojiInput} value={editEmoji} onChangeText={setEditEmoji} maxLength={4} textAlign="center" />
+                      <TextInput
+                        style={[md.input, { flex: 1 }]}
+                        value={editNome}
+                        onChangeText={setEditNome}
+                        maxLength={40}
+                        autoFocus
+                        returnKeyType="done"
+                        onSubmitEditing={() => salvarEdicao(f)}
+                      />
+                      <TouchableOpacity onPress={() => salvarEdicao(f)} hitSlop={8}>
+                        <Ionicons name="checkmark-circle" size={22} color={C.primary} />
+                      </TouchableOpacity>
+                    </>
+                  ) : (
+                    <>
+                      <TouchableOpacity
+                        style={md.funcaoLinhaToque}
+                        onPress={() => { setEditando(f.id); setEditNome(f.nome); setEditEmoji(f.emoji); }}
+                        activeOpacity={0.7}
+                      >
+                        <Text style={md.funcaoEmoji}>{f.emoji}</Text>
+                        <Text style={md.songTitle}>{f.nome}</Text>
+                        <Ionicons name="create-outline" size={13} color={C.textDim} />
+                      </TouchableOpacity>
+                      <TouchableOpacity onPress={() => mover(idx, -1)} disabled={idx === 0} hitSlop={6}>
+                        <Ionicons name="chevron-up" size={16} color={idx === 0 ? C.textDim : C.primary} />
+                      </TouchableOpacity>
+                      <TouchableOpacity onPress={() => mover(idx, 1)} disabled={idx === funcoes.length - 1} hitSlop={6}>
+                        <Ionicons name="chevron-down" size={16} color={idx === funcoes.length - 1 ? C.textDim : C.primary} />
+                      </TouchableOpacity>
+                      <TouchableOpacity onPress={() => remover(f)} hitSlop={6}>
+                        <Ionicons name="trash-outline" size={16} color={C.danger} />
+                      </TouchableOpacity>
+                    </>
+                  )}
+                </View>
+              ))}
+            </ScrollView>
+            <Text style={s.hojeTipText}>{t('banda.dicaFuncaoEmEscalas')}</Text>
+          </View>
+        </KeyboardAvoidingView>
+      </View>
+    </Modal>
   );
 }
 
@@ -2701,6 +3025,10 @@ function BandaMain() {
   const [cultos, setCultos] = useState<Culto[]>([]);
   const [ensaios, setEnsaios] = useState<Ensaio[]>([]);
   const [membros, setMembros] = useState<BandaMembro[]>([]);
+  const [funcoes, setFuncoes] = useState<BandaFuncao[]>([]);
+  const [membroFuncoes, setMembroFuncoes] = useState<MembroFuncao[]>([]);
+  const [funcoesModal, setFuncoesModal] = useState(false);
+  const [membroEditando, setMembroEditando] = useState<BandaMembro | null>(null);
   const [loadingSongs, setLoadingSongs] = useState(true);
   const [loadingCultos, setLoadingCultos] = useState(true);
   const [loadingEnsaios, setLoadingEnsaios] = useState(true);
@@ -2759,6 +3087,19 @@ function BandaMain() {
   }, []);
 
   // ── Fetch diretório da banda (pra montar a escala) ───────────────────────────
+  // Catálogo de funções + quem exerce o quê. Duas consultas pequenas: a tabela
+  // de ligação é minúscula (uma linha por pessoa/função), então trazer tudo de
+  // uma vez sai mais barato do que consultar por integrante na hora de montar
+  // cada cartão da Equipe.
+  const fetchFuncoes = useCallback(async () => {
+    const [{ data: cat }, { data: liga }] = await Promise.all([
+      supabase.from('banda_funcoes').select('*').eq('ativo', true).order('ordem').order('nome'),
+      supabase.from('banda_membro_funcoes').select('membro_id, funcao_id, principal'),
+    ]);
+    setFuncoes((cat ?? []) as BandaFuncao[]);
+    setMembroFuncoes((liga ?? []) as MembroFuncao[]);
+  }, []);
+
   const fetchMembros = useCallback(async () => {
     const { data } = await supabase.from('banda_membros').select('*').order('nome');
     if (data) setMembros(data as BandaMembro[]);
@@ -3004,9 +3345,9 @@ function BandaMain() {
     setLoadingEnsaios(false);
   }, []);
 
-  useEffect(() => { fetchSongs(); fetchCultos(); fetchEnsaios(); fetchMembros(); }, [fetchSongs, fetchCultos, fetchEnsaios, fetchMembros]);
+  useEffect(() => { fetchSongs(); fetchCultos(); fetchEnsaios(); fetchMembros(); fetchFuncoes(); }, [fetchSongs, fetchCultos, fetchEnsaios, fetchMembros, fetchFuncoes]);
 
-  const handleRefresh = () => { setRefreshing(true); fetchSongs(); fetchCultos(); fetchEnsaios(); fetchMembros(); fetchPresencas(); fetchIndisponibilidades(); fetchTimes(); fetchVersoes(); };
+  const handleRefresh = () => { setRefreshing(true); fetchSongs(); fetchCultos(); fetchEnsaios(); fetchMembros(); fetchFuncoes(); fetchPresencas(); fetchIndisponibilidades(); fetchTimes(); fetchVersoes(); };
 
   const removerDaEscala = (tipo: 'culto' | 'ensaio', id: string) => {
     Alert.alert(t('banda.removerDaEscala'), t('banda.desejaRemoverDaEscala'), [
@@ -3155,6 +3496,37 @@ function BandaMain() {
   // Rascunho fica escondido de quem não é admin. Vale repetir o que a migração
   // já diz: é filtro de tela, não barreira de segurança — serve pra ninguém ver
   // escala pela metade, não pra guardar segredo.
+  // Quantas vezes cada um serviu nos últimos 90 dias, e em que função mais
+  // aparece. Sai de graça do que já está na memória: cultos e ensaios chegam
+  // com a escala junto, então não custa nenhuma consulta a mais.
+  const escalasPorMembro = useMemo(() => {
+    const limite = new Date();
+    limite.setDate(limite.getDate() - 90);
+    const limiteISO = limite.toISOString().slice(0, 10);
+    const mapa = new Map<string, { total: number; maisFrequente: string }>();
+    const contagem = new Map<string, Map<string, number>>();
+
+    const somar = (escala: EscalaEntry[], date: string) => {
+      if (date < limiteISO) return;
+      escala.forEach(e => {
+        const atual = mapa.get(e.membro_id) ?? { total: 0, maisFrequente: '' };
+        mapa.set(e.membro_id, { ...atual, total: atual.total + 1 });
+        const porFuncao = contagem.get(e.membro_id) ?? new Map<string, number>();
+        porFuncao.set(e.instrumento, (porFuncao.get(e.instrumento) ?? 0) + 1);
+        contagem.set(e.membro_id, porFuncao);
+      });
+    };
+    cultos.forEach(c => somar(c.escala, c.date));
+    ensaios.forEach(e => somar(e.escala, e.date));
+
+    contagem.forEach((porFuncao, membroId) => {
+      const top = [...porFuncao.entries()].sort((a, b) => b[1] - a[1])[0];
+      const atual = mapa.get(membroId);
+      if (atual && top) mapa.set(membroId, { ...atual, maisFrequente: top[0] });
+    });
+    return mapa;
+  }, [cultos, ensaios]);
+
   const podeVerRascunho = !!meuPerfil?.admin;
   const cultosVisiveis = cultos.filter(c => c.publicado || podeVerRascunho);
   const ensaiosVisiveis = ensaios.filter(e => e.publicado || podeVerRascunho);
@@ -3174,6 +3546,7 @@ function BandaMain() {
     { id: 'repertorio', icon: 'musical-notes-outline', label: t('banda.tabRepertorio') },
     { id: 'cultos', icon: 'mic-outline', label: t('banda.tabCultos') },
     { id: 'ensaios', icon: 'calendar-outline', label: t('banda.tabEnsaios') },
+    { id: 'equipe', icon: 'people-outline', label: t('banda.tabEquipe') },
     { id: 'chat', icon: 'chatbubbles-outline', label: t('banda.tabChat') },
   ];
 
@@ -3205,7 +3578,7 @@ function BandaMain() {
         {TABS.map(tab => (
           <TouchableOpacity key={tab.id} style={[s.tabItem, activeTab === tab.id && s.tabItemActive]} onPress={() => setActiveTab(tab.id)}>
             <Ionicons name={tab.icon as any} size={17} color={activeTab === tab.id ? C.primary : C.textMuted} />
-            <Text style={[s.tabLabel, activeTab === tab.id && s.tabLabelActive]}>{tab.label}</Text>
+            <Text style={[s.tabLabel, activeTab === tab.id && s.tabLabelActive]} numberOfLines={1}>{tab.label}</Text>
           </TouchableOpacity>
         ))}
       </View>
@@ -3300,7 +3673,7 @@ function BandaMain() {
               </View>
               <Text style={[s.sectionLabel, { marginTop: 20 }]}>{t('banda.escalaDeHoje')}</Text>
               <View style={s.escalaCard}>
-                <EscalaLista escala={cultoDoDia.escala} membros={membros} />
+                <EscalaLista escala={cultoDoDia.escala} membros={membros} funcoes={funcoes} />
               </View>
             </>
           ) : (
@@ -3623,7 +3996,7 @@ function BandaMain() {
                             <Ionicons name="person-add-outline" size={16} color={C.primary} />
                           </TouchableOpacity>
                         </View>
-                        <EscalaLista escala={culto.escala} membros={membros} onRemover={id => removerDaEscala('culto', id)} />
+                        <EscalaLista escala={culto.escala} membros={membros} funcoes={funcoes} onRemover={id => removerDaEscala('culto', id)} />
                         <PresencaBar
                           presencas={presencasDo('culto', culto.id)}
                           meuId={user?.id}
@@ -3804,7 +4177,7 @@ function BandaMain() {
                             <Ionicons name="person-add-outline" size={16} color={C.primary} />
                           </TouchableOpacity>
                         </View>
-                        <EscalaLista escala={ensaio.escala} membros={membros} onRemover={id => removerDaEscala('ensaio', id)} />
+                        <EscalaLista escala={ensaio.escala} membros={membros} funcoes={funcoes} onRemover={id => removerDaEscala('ensaio', id)} />
                         <PresencaBar
                           presencas={presencasDo('ensaio', ensaio.id)}
                           meuId={user?.id}
@@ -3819,6 +4192,140 @@ function BandaMain() {
             </ScrollView>
           )}
           <NovoEnsaioModal visible={ensaioModal} onClose={() => setEnsaioModal(false)} onSaved={fetchEnsaios} songs={songs} versoes={versoes} />
+        </View>
+      )}
+
+      {/* ══ EQUIPE ════════════════════════════════════════════════════════════ */}
+      {activeTab === 'equipe' && (
+        <View style={{ flex: 1 }}>
+          <View style={s.cultosToolbar}>
+            <Text style={s.cultosCount}>
+              {membros.length} {membros.length !== 1 ? t('banda.integrantes') : t('banda.integranteSingular')}
+            </Text>
+            {podeVerRascunho && (
+              <TouchableOpacity style={s.acaoBtn} onPress={() => setFuncoesModal(true)} activeOpacity={0.85}>
+                <Ionicons name="options-outline" size={15} color={C.textMuted} />
+                <Text style={s.acaoTexto}>{t('banda.funcoes')}</Text>
+              </TouchableOpacity>
+            )}
+          </View>
+          {membros.length === 0 ? (
+            <View style={s.emptyState}>
+              <Ionicons name="people-outline" size={48} color={C.textDim} />
+              <Text style={s.emptyTitle}>{t('banda.equipeVaziaTitulo')}</Text>
+              <Text style={s.emptyDesc}>{t('banda.equipeVaziaDesc')}</Text>
+            </View>
+          ) : (
+            <ScrollView
+              contentContainerStyle={{ padding: 16, paddingBottom: 32 }}
+              refreshControl={<RefreshControl refreshing={refreshing} onRefresh={handleRefresh} tintColor={C.primary} colors={[C.primary]} progressBackgroundColor={C.surface} />}
+            >
+              {/* Quem cobre cada função: a pergunta que o líder faz antes de
+                  montar a escala e que hoje só se responde de cabeça. */}
+              {funcoes.length > 0 && (
+                <View style={s.coberturaCard}>
+                  <Text style={s.cultoColLabel}>{t('banda.quemCobreCadaFuncao')}</Text>
+                  <View style={s.coberturaWrap}>
+                    {funcoes.map(f => {
+                      const quantos = membroFuncoes.filter(mf => mf.funcao_id === f.id).length;
+                      const descoberta = quantos === 0;
+                      return (
+                        <View key={f.id} style={[s.coberturaChip, descoberta && s.coberturaChipVazia]}>
+                          <Text style={s.coberturaEmoji}>{f.emoji}</Text>
+                          <Text style={[s.coberturaNome, descoberta && { color: C.danger }]}>{f.nome}</Text>
+                          <Text style={[s.coberturaNum, descoberta && { color: C.danger }]}>{quantos}</Text>
+                        </View>
+                      );
+                    })}
+                  </View>
+                </View>
+              )}
+
+              {membros.map(m => {
+                const minhas = membroFuncoes.filter(mf => mf.membro_id === m.id);
+                const listaFuncoes = funcoes
+                  .filter(f => minhas.some(mf => mf.funcao_id === f.id))
+                  .sort((a, b) => {
+                    const pa = minhas.find(mf => mf.funcao_id === a.id)?.principal ? 0 : 1;
+                    const pb = minhas.find(mf => mf.funcao_id === b.id)?.principal ? 0 : 1;
+                    return pa - pb;
+                  });
+                const stats = escalasPorMembro.get(m.id);
+                const souEu = !!user?.id && user.id === m.profile_id;
+                const podeEditar = podeVerRascunho || souEu;
+                return (
+                  <TouchableOpacity
+                    key={m.id}
+                    style={s.equipeCard}
+                    activeOpacity={podeEditar ? 0.7 : 1}
+                    onPress={() => { if (podeEditar) setMembroEditando(m); }}
+                  >
+                    <View style={s.equipeTopo}>
+                      {m.avatar_url ? (
+                        <Image source={{ uri: m.avatar_url }} style={s.equipeAvatar} />
+                      ) : (
+                        <View style={[s.equipeAvatar, s.equipeIniciaisWrap]}>
+                          <Text style={s.equipeIniciais}>{iniciaisDoNome(m.nome)}</Text>
+                        </View>
+                      )}
+                      <View style={{ flex: 1, marginLeft: 12 }}>
+                        <View style={s.equipeNomeRow}>
+                          <Text style={s.equipeNome} numberOfLines={1}>{m.nome}</Text>
+                          {souEu && <View style={s.euTag}><Text style={s.euTagText}>{t('banda.voce')}</Text></View>}
+                        </View>
+                        {/* Sem função marcada é um estado a resolver, não um
+                            detalhe: essa pessoa nunca vai ser sugerida na escala. */}
+                        {listaFuncoes.length === 0 ? (
+                          <Text style={s.equipeSemFuncao}>{t('banda.semFuncaoDefinida')}</Text>
+                        ) : (
+                          <View style={s.equipeFuncoesWrap}>
+                            {listaFuncoes.map(f => {
+                              const ehPrincipal = minhas.find(mf => mf.funcao_id === f.id)?.principal;
+                              return (
+                                <View key={f.id} style={[s.equipeFuncaoChip, ehPrincipal && s.equipeFuncaoChipPrincipal]}>
+                                  <Text style={s.equipeFuncaoTexto}>{f.emoji} {f.nome}</Text>
+                                  {ehPrincipal && <Ionicons name="star" size={9} color={C.gold} />}
+                                </View>
+                              );
+                            })}
+                          </View>
+                        )}
+                      </View>
+                      {podeEditar && <Ionicons name="chevron-forward" size={18} color={C.textDim} />}
+                    </View>
+                    <View style={s.equipeRodape}>
+                      <Ionicons name="calendar-outline" size={12} color={C.textDim} />
+                      <Text style={s.equipeStat}>
+                        {stats?.total
+                          ? t('banda.escaladoNVezes', { n: stats.total })
+                          : t('banda.naoEscaladoNoPeriodo')}
+                      </Text>
+                      {!!stats?.maisFrequente && (
+                        <Text style={s.equipeStatDim}>· {stats.maisFrequente}</Text>
+                      )}
+                    </View>
+                  </TouchableOpacity>
+                );
+              })}
+              <View style={s.hojeTip}>
+                <Ionicons name="information-circle-outline" size={14} color={C.textDim} />
+                <Text style={s.hojeTipText}>{t('banda.dicaEquipe')}</Text>
+              </View>
+            </ScrollView>
+          )}
+          <FuncoesModal
+            visible={funcoesModal}
+            funcoes={funcoes}
+            onClose={() => setFuncoesModal(false)}
+            onSaved={fetchFuncoes}
+          />
+          <MembroFuncoesModal
+            membro={membroEditando}
+            funcoes={funcoes}
+            membroFuncoes={membroFuncoes}
+            onClose={() => setMembroEditando(null)}
+            onSaved={fetchFuncoes}
+          />
         </View>
       )}
 
@@ -3944,6 +4451,8 @@ function BandaMain() {
           tipo={escalaModal.tipo}
           eventoId={escalaModal.eventoId}
           times={times}
+          funcoes={funcoes}
+          membroFuncoes={membroFuncoes}
           escalaAtual={
             (escalaModal.tipo === 'culto'
               ? cultos.find(c => c.id === escalaModal.eventoId)
@@ -4087,6 +4596,33 @@ const buildS = (C: BandaColors) => StyleSheet.create({
   escalaCard: { backgroundColor: C.surface, borderRadius: 12, padding: 12, borderWidth: 1, borderColor: C.border },
   escalaHeader: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginTop: 10, marginBottom: 6 },
   escalaRow: { flexDirection: 'row', alignItems: 'center', gap: 8, paddingVertical: 6 },
+  escalaAvatar: { width: 20, height: 20, borderRadius: 10, backgroundColor: C.surfaceHigh },
+
+  // ── Aba Equipe ────────────────────────────────────────────────────────────
+  coberturaCard: { backgroundColor: C.surface, borderRadius: 12, borderWidth: 1, borderColor: C.border, padding: 12, marginBottom: 14 },
+  coberturaWrap: { flexDirection: 'row', flexWrap: 'wrap', gap: 6, marginTop: 8 },
+  coberturaChip: { flexDirection: 'row', alignItems: 'center', gap: 5, backgroundColor: C.surfaceHigh, borderRadius: 8, paddingHorizontal: 8, paddingVertical: 4 },
+  coberturaChipVazia: { borderWidth: 1, borderColor: C.danger, backgroundColor: 'transparent' },
+  coberturaEmoji: { fontSize: 12 },
+  coberturaNome: { fontSize: 11, color: C.textMuted, fontWeight: '600' },
+  coberturaNum: { fontSize: 11, color: C.primary, fontWeight: '800' },
+  equipeCard: { backgroundColor: C.surface, borderRadius: 12, borderWidth: 1, borderColor: C.border, padding: 12, marginBottom: 10 },
+  equipeTopo: { flexDirection: 'row', alignItems: 'center' },
+  equipeAvatar: { width: 46, height: 46, borderRadius: 23, backgroundColor: C.surfaceHigh },
+  equipeIniciaisWrap: { alignItems: 'center', justifyContent: 'center', backgroundColor: C.primaryDim },
+  equipeIniciais: { fontSize: 16, fontWeight: '800', color: C.onPrimaryDim },
+  equipeNomeRow: { flexDirection: 'row', alignItems: 'center', gap: 6 },
+  equipeNome: { flexShrink: 1, fontSize: 15, fontWeight: '700', color: C.text },
+  euTag: { backgroundColor: C.primaryDim, borderRadius: 6, paddingHorizontal: 6, paddingVertical: 1 },
+  euTagText: { fontSize: 9, fontWeight: '800', color: C.onPrimaryDim, letterSpacing: 0.4 },
+  equipeSemFuncao: { fontSize: 12, color: C.gold, fontStyle: 'italic', marginTop: 3 },
+  equipeFuncoesWrap: { flexDirection: 'row', flexWrap: 'wrap', gap: 5, marginTop: 5 },
+  equipeFuncaoChip: { flexDirection: 'row', alignItems: 'center', gap: 4, backgroundColor: C.surfaceHigh, borderRadius: 7, paddingHorizontal: 7, paddingVertical: 3 },
+  equipeFuncaoChipPrincipal: { backgroundColor: C.primaryDim },
+  equipeFuncaoTexto: { fontSize: 11, color: C.textMuted, fontWeight: '600' },
+  equipeRodape: { flexDirection: 'row', alignItems: 'center', gap: 5, marginTop: 10, paddingTop: 8, borderTopWidth: 1, borderTopColor: C.border },
+  equipeStat: { fontSize: 11, color: C.textMuted, fontWeight: '600' },
+  equipeStatDim: { flex: 1, fontSize: 11, color: C.textDim },
   escalaNome: { flex: 1, fontSize: 13, fontWeight: '600', color: C.text },
   escalaInstChip: { backgroundColor: C.primaryDim, borderRadius: 8, paddingHorizontal: 8, paddingVertical: 3 },
   escalaInstText: { fontSize: 11, fontWeight: '700', color: C.onPrimaryDim },
