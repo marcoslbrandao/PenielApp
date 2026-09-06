@@ -771,6 +771,15 @@
     "salvo": "Registration saved successfully!",
     "erroSalvar": "Couldn't save. Please try again.",
     "sim": "Yes",
-    "nao": "No"
+    "nao": "No",
+    "sexo": "Gender",
+    "profissao": "Occupation",
+    "profissaoPlaceholder": "e.g. Teacher",
+    "talentos": "Talents / Hobbies",
+    "talentosPlaceholder": "e.g. Guitar, cooking, football",
+    "dataBatismo": "Baptism date",
+    "estadoRegiao": "County / Region",
+    "estadoRegiaoPlaceholder": "e.g. Berkshire",
+    "ministerioAtual": "Do you already serve in a ministry at Peniel?"
   }
 }

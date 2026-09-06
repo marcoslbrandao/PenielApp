@@ -771,6 +771,15 @@
     "salvo": "Inscription enregistrée avec succès !",
     "erroSalvar": "Impossible d'enregistrer. Veuillez réessayer.",
     "sim": "Oui",
-    "nao": "Non"
+    "nao": "Non",
+    "sexo": "Sexe",
+    "profissao": "Profession",
+    "profissaoPlaceholder": "Ex : Enseignant",
+    "talentos": "Talents / Loisirs",
+    "talentosPlaceholder": "Ex : Guitare, cuisine, football",
+    "dataBatismo": "Date du baptême",
+    "estadoRegiao": "Comté / Région",
+    "estadoRegiaoPlaceholder": "Ex : Berkshire",
+    "ministerioAtual": "Servez-vous déjà dans un ministère à Peniel ?"
   }
 }

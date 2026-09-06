@@ -19,7 +19,17 @@ import { useTheme } from '../lib/theme';
 const GOOGLE_PLACES_KEY = process.env.EXPO_PUBLIC_GOOGLE_PLACES_API_KEY as string | undefined;
 
 const PAISES = ['Reino Unido', 'Brasil', 'Portugal', 'Outro'];
+// Mesma lista do Admin (`MINISTERIOS` em MembrosScreen) — se uma mudar sem a
+// outra, os dois formulários passam a gravar valores diferentes na mesma coluna.
+const MINISTERIOS = ['Louvor', 'Infantil', 'Jovens', 'Intercessão', 'Mídia', 'Recepção', 'Outro'];
 const ESTADO_CIVIL_OPCOES = ['Solteiro(a)', 'Casado(a)', 'Divorciado(a)', 'Viúvo(a)', 'União estável'];
+// Mesmos valores gravados pelo Admin (`SEXO_OPCOES` em MembrosScreen): o banco
+// guarda o slug, a tela mostra o rótulo.
+const SEXO_OPCOES: { valor: string; label: string }[] = [
+  { valor: 'masculino', label: 'Masculino' },
+  { valor: 'feminino', label: 'Feminino' },
+  { valor: 'prefiro_nao_informar', label: 'Prefiro não informar' },
+];
 
 function paleta(isDark: boolean) {
   return isDark ? {
@@ -41,26 +51,30 @@ type Estilos = ReturnType<typeof buildStyles>;
 
 type FormState = {
   nome: string; sobrenome: string;
-  data_nascimento: string; estado_civil: string; nacionalidade: string; cidade: string;
+  data_nascimento: string; sexo: string; estado_civil: string; nacionalidade: string; cidade: string;
+  profissao: string; talentos_hobbies: string;
   email: string; telefone: string; instagram: string;
   pais: string; cep: string; endereco: string; complemento: string; estado: string;
   igreja_anterior: boolean; igreja_anterior_nome: string;
-  batizado: boolean; deseja_batizar: boolean;
+  batizado: boolean; data_batismo: string; deseja_batizar: boolean;
   membro_desde: string;
   ministerio_anterior: boolean; ministerio_anterior_qual: string;
+  ministerio: string;
   deseja_servir: boolean; deseja_servir_area: string;
   compartilhar_mais: string;
 };
 
 const EMPTY: FormState = {
   nome: '', sobrenome: '',
-  data_nascimento: '', estado_civil: '', nacionalidade: '', cidade: '',
+  data_nascimento: '', sexo: '', estado_civil: '', nacionalidade: '', cidade: '',
+  profissao: '', talentos_hobbies: '',
   email: '', telefone: '', instagram: '',
   pais: 'Reino Unido', cep: '', endereco: '', complemento: '', estado: '',
   igreja_anterior: false, igreja_anterior_nome: '',
-  batizado: false, deseja_batizar: false,
+  batizado: false, data_batismo: '', deseja_batizar: false,
   membro_desde: '',
   ministerio_anterior: false, ministerio_anterior_qual: '',
+  ministerio: '',
   deseja_servir: false, deseja_servir_area: '',
   compartilhar_mais: '',
 };
@@ -248,6 +262,7 @@ export default function MeuCadastroScreen() {
           ...EMPTY,
           ...data,
           data_nascimento: formatDateBR(data.data_nascimento ?? ''),
+          data_batismo: formatDateBR(data.data_batismo ?? ''),
           membro_desde: formatMesAnoFromISO(data.membro_desde ?? ''),
         });
         if (data.endereco) setEnderecoConfirmado(true);
@@ -265,7 +280,7 @@ export default function MeuCadastroScreen() {
     setErrors(prev => (prev[field] ? { ...prev, [field]: false } : prev));
   };
 
-  const formatDate = (text: string, field: 'data_nascimento') => {
+  const formatDate = (text: string, field: 'data_nascimento' | 'data_batismo') => {
     const digits = text.replace(/\D/g, '').slice(0, 8);
     let f = digits;
     if (digits.length > 2) f = digits.slice(0, 2) + '/' + digits.slice(2);
@@ -351,6 +366,7 @@ export default function MeuCadastroScreen() {
       ...form,
       profile_id: user!.id,
       data_nascimento: parseDateISO(form.data_nascimento) || null,
+      data_batismo: parseDateISO(form.data_batismo) || null,
       membro_desde: parseMesAnoToISO(form.membro_desde) || null,
     };
 
@@ -404,9 +420,19 @@ export default function MeuCadastroScreen() {
               <View style={{ flex: 1.5 }}><Field label="Sobrenome *" value={form.sobrenome} onChangeText={set('sobrenome')} placeholder="Sobrenome" error={errors.sobrenome} C={C} s={s} /></View>
             </View>
             <Field label={`${t('cadastroMembro.dataNascimento')} *`} value={form.data_nascimento} onChangeText={t2 => formatDate(t2, 'data_nascimento')} placeholder="DD/MM/AAAA" keyboardType="numeric" maxLength={10} error={errors.data_nascimento} C={C} s={s} />
+            <SelectPill
+              label={t('cadastroMembro.sexo')}
+              options={SEXO_OPCOES.map(o => o.label)}
+              value={SEXO_OPCOES.find(o => o.valor === form.sexo)?.label ?? ''}
+              onChange={label => set('sexo')(SEXO_OPCOES.find(o => o.label === label)?.valor ?? '')}
+              s={s}
+            />
             <SelectPill label={`${t('cadastroMembro.estadoCivil')} *`} options={ESTADO_CIVIL_OPCOES} value={form.estado_civil} onChange={set('estado_civil')} error={errors.estado_civil} s={s} />
             <Field label={`${t('cadastroMembro.nacionalidade')} *`} value={form.nacionalidade} onChangeText={set('nacionalidade')} placeholder="Ex: Brasileira" error={errors.nacionalidade} C={C} s={s} />
-            <Field label={`${t('cadastroMembro.cidade')} *`} value={form.cidade} onChangeText={set('cidade')} placeholder="Cidade" error={errors.cidade} C={C} s={s} />
+            <Field label={t('cadastroMembro.profissao')} value={form.profissao} onChangeText={set('profissao')} placeholder={t('cadastroMembro.profissaoPlaceholder')} C={C} s={s} />
+            {/* Fica ao lado do "deseja servir" na prática: é por aqui que a
+                liderança descobre quem toca, canta, cozinha ou filma. */}
+            <Field label={t('cadastroMembro.talentos')} value={form.talentos_hobbies} onChangeText={set('talentos_hobbies')} placeholder={t('cadastroMembro.talentosPlaceholder')} C={C} s={s} />
           </View>
 
           <SectionTitle s={s}>{t('cadastroMembro.secaoContato')}</SectionTitle>
@@ -452,6 +478,8 @@ export default function MeuCadastroScreen() {
 
             <Field label={`${t('cadastroMembro.enderecoManual')} *`} value={form.endereco} onChangeText={set('endereco')} placeholder="Ex: 45 Abbey Square" error={errors.endereco} C={C} s={s} />
             <Field label={t('cadastroMembro.complemento')} value={form.complemento} onChangeText={set('complemento')} placeholder="Ex: Apto 3B, próximo ao mercado" C={C} s={s} />
+            <Field label={`${t('cadastroMembro.cidade')} *`} value={form.cidade} onChangeText={set('cidade')} placeholder="Cidade" error={errors.cidade} C={C} s={s} />
+            <Field label={t('cadastroMembro.estadoRegiao')} value={form.estado} onChangeText={set('estado')} placeholder={t('cadastroMembro.estadoRegiaoPlaceholder')} maxLength={40} C={C} s={s} />
           </View>
 
           <SectionTitle s={s}>{t('cadastroMembro.secaoIgreja')}</SectionTitle>
@@ -462,6 +490,9 @@ export default function MeuCadastroScreen() {
             )}
 
             <ToggleRow label={t('cadastroMembro.ehBatizado')} value={form.batizado} onToggle={() => set('batizado')(!form.batizado)} icon={form.batizado ? 'water' : 'water-outline'} simTexto={t('cadastroMembro.sim')} naoTexto={t('cadastroMembro.nao')} C={C} s={s} />
+            {form.batizado && (
+              <Field label={t('cadastroMembro.dataBatismo')} value={form.data_batismo} onChangeText={t2 => formatDate(t2, 'data_batismo')} placeholder="DD/MM/AAAA" keyboardType="numeric" maxLength={10} C={C} s={s} />
+            )}
             {!form.batizado && (
               <ToggleRow label={t('cadastroMembro.desejaBatizar')} value={form.deseja_batizar} onToggle={() => set('deseja_batizar')(!form.deseja_batizar)} icon={form.deseja_batizar ? 'heart' : 'heart-outline'} simTexto={t('cadastroMembro.sim')} naoTexto={t('cadastroMembro.nao')} C={C} s={s} />
             )}
@@ -472,6 +503,8 @@ export default function MeuCadastroScreen() {
             {form.ministerio_anterior && (
               <Field label={t('cadastroMembro.qualArea')} value={form.ministerio_anterior_qual} onChangeText={set('ministerio_anterior_qual')} placeholder={t('cadastroMembro.qualArea')} C={C} s={s} />
             )}
+
+            <SelectPill label={t('cadastroMembro.ministerioAtual')} options={MINISTERIOS} value={form.ministerio} onChange={set('ministerio')} s={s} />
 
             <ToggleRow label={t('cadastroMembro.desejaServir')} value={form.deseja_servir} onToggle={() => set('deseja_servir')(!form.deseja_servir)} icon={form.deseja_servir ? 'hand-right' : 'hand-right-outline'} simTexto={t('cadastroMembro.sim')} naoTexto={t('cadastroMembro.nao')} C={C} s={s} />
             {form.deseja_servir && (

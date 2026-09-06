@@ -771,6 +771,15 @@
     "salvo": "Cadastro salvo com sucesso!",
     "erroSalvar": "Não foi possível salvar. Tente novamente.",
     "sim": "Sim",
-    "nao": "Não"
+    "nao": "Não",
+    "sexo": "Sexo",
+    "profissao": "Profissão",
+    "profissaoPlaceholder": "Ex: Professor",
+    "talentos": "Talentos / Hobbies",
+    "talentosPlaceholder": "Ex: Violão, culinária, futebol",
+    "dataBatismo": "Data do batismo",
+    "estadoRegiao": "Estado / Região",
+    "estadoRegiaoPlaceholder": "Ex: Berkshire",
+    "ministerioAtual": "Já serve em algum ministério na Peniel?"
   }
 }

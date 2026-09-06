@@ -771,6 +771,15 @@
     "salvo": "¡Registro guardado con éxito!",
     "erroSalvar": "No se pudo guardar. Inténtalo de nuevo.",
     "sim": "Sí",
-    "nao": "No"
+    "nao": "No",
+    "sexo": "Sexo",
+    "profissao": "Profesión",
+    "profissaoPlaceholder": "Ej: Profesor",
+    "talentos": "Talentos / Hobbies",
+    "talentosPlaceholder": "Ej: Guitarra, cocina, fútbol",
+    "dataBatismo": "Fecha del bautismo",
+    "estadoRegiao": "Estado / Región",
+    "estadoRegiaoPlaceholder": "Ej: Berkshire",
+    "ministerioAtual": "¿Ya sirves en algún ministerio en Peniel?"
   }
 }
