@@ -3988,7 +3988,8 @@ const buildS = (C: BandaColors) => StyleSheet.create({
   hojeSongCountLabel: { fontSize: 10, color: C.textMuted },
   hojeCard: { backgroundColor: C.surface, borderRadius: 12, padding: 12, marginBottom: 8, borderWidth: 1, borderColor: C.border },
   hojeCardTopo: { flexDirection: 'row', alignItems: 'flex-start' },
-  hojeTomSelo: { minWidth: 34, paddingHorizontal: 8, paddingVertical: 2, borderRadius: 8, backgroundColor: C.primaryDim, alignItems: 'center', justifyContent: 'center' },
+  // Mesmas medidas do selo de tom do Repertório (s.keyBadge): 40×40, raio 10.
+  hojeTomSelo: { width: 40, height: 40, borderRadius: 10, backgroundColor: C.primaryDim, alignItems: 'center', justifyContent: 'center' },
   hojeTomSeloText: { fontSize: 14, fontWeight: '800', color: C.onPrimaryDim },
   hojeOrder: { width: 32, height: 32, borderRadius: 16, backgroundColor: C.primaryDim, alignItems: 'center', justifyContent: 'center' },
   hojeOrderNum: { fontSize: 15, fontWeight: '800', color: C.onPrimaryDim },
