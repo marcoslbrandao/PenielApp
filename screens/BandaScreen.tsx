@@ -3242,39 +3242,49 @@ function BandaMain() {
                 if (!song) return null;
                 const versaoNome = nomeDaVersao(entry);
                 return (
+                  // Mesmo desenho do cartão do Repertório: título e artista em
+                  // linhas inteiras em cima (antes vinham cortados, disputando a
+                  // linha com tom/BPM/links), e as fichas + links embaixo.
                   <View key={entry.song_id} style={s.hojeCard}>
-                    <View style={s.hojeOrder}><Text style={s.hojeOrderNum}>{idx + 1}</Text></View>
                     <TouchableOpacity
-                      style={{ flex: 1 }}
+                      style={s.hojeCardTopo}
                       activeOpacity={0.7}
                       onPress={() => setNotaModal({
                         tipo: 'culto', eventoId: cultoDoDia.id, songId: entry.song_id,
                         titulo: song.title, nota: entry.nota ?? '',
                       })}
                     >
-                      <Text style={s.hojeSongTitle} numberOfLines={1}>{song.title}</Text>
-                      <Text style={s.hojeSongArtist} numberOfLines={1}>
-                        {song.artist}{versaoNome ? ` · ${versaoNome}` : ''}
-                      </Text>
-                      {entry.nota ? (
-                        <View style={s.notaRow}>
-                          <Ionicons name="chatbox-ellipses-outline" size={11} color={C.gold} />
-                          <Text style={s.notaTexto} numberOfLines={2}>{entry.nota}</Text>
+                      <View style={s.hojeOrder}><Text style={s.hojeOrderNum}>{idx + 1}</Text></View>
+                      <View style={{ flex: 1, marginLeft: 10 }}>
+                        <Text style={s.hojeSongTitle} numberOfLines={2}>{song.title}</Text>
+                        <Text style={s.hojeSongArtist} numberOfLines={1}>
+                          {song.artist}{versaoNome ? ` · ${versaoNome}` : ''}
+                        </Text>
+                        {entry.nota ? (
+                          <View style={s.notaRow}>
+                            <Ionicons name="chatbox-ellipses-outline" size={11} color={C.gold} />
+                            <Text style={s.notaTexto} numberOfLines={2}>{entry.nota}</Text>
+                          </View>
+                        ) : null}
+                      </View>
+                    </TouchableOpacity>
+                    <View style={s.songRodape}>
+                      <View style={s.songMeta}>
+                        <View style={s.songMetaChip}>
+                          <Text style={s.songMetaText}>{t('banda.tomLabel')} {entry.song_key}</Text>
                         </View>
-                      ) : null}
-                    </TouchableOpacity>
-                    <View style={s.hojeTomBadge}>
-                      <Text style={s.hojeTomLabel}>{t('banda.tom')}</Text>
-                      <Text style={s.hojeTomValue}>{entry.song_key}</Text>
+                        <TouchableOpacity
+                          style={[s.songMetaChip, s.songMetaChipAcionavel]}
+                          onPress={() => setMetronomo({ bpm: Number(entry.bpm) || song.bpm, titulo: song.title })}
+                        >
+                          <Ionicons name="pulse-outline" size={10} color={C.primary} />
+                          <Text style={[s.songMetaText, { color: C.primary }]}>{entry.bpm} BPM</Text>
+                        </TouchableOpacity>
+                      </View>
+                      <View style={s.songLinks}>
+                        <LinkMiniButtons song={song} openLink={openLink} />
+                      </View>
                     </View>
-                    <TouchableOpacity
-                      style={s.hojeBpmBadge}
-                      onPress={() => setMetronomo({ bpm: Number(entry.bpm) || song.bpm, titulo: song.title })}
-                    >
-                      <Text style={s.hojeBpmLabel}>{t('banda.bpm')}</Text>
-                      <Text style={[s.hojeBpmValue, { color: C.primary }]}>{entry.bpm}</Text>
-                    </TouchableOpacity>
-                    <LinkMiniButtons song={song} openLink={openLink} />
                   </View>
                 );
               })}
@@ -3974,11 +3984,12 @@ const buildS = (C: BandaColors) => StyleSheet.create({
   hojeSongCount: { alignItems: 'center', backgroundColor: C.surfaceHigh, borderRadius: 10, paddingHorizontal: 12, paddingVertical: 8 },
   hojeSongCountNum: { fontSize: 22, fontWeight: '800', color: C.primary },
   hojeSongCountLabel: { fontSize: 10, color: C.textMuted },
-  hojeCard: { flexDirection: 'row', alignItems: 'center', gap: 10, backgroundColor: C.surface, borderRadius: 12, padding: 12, marginBottom: 8, borderWidth: 1, borderColor: C.border },
-  hojeOrder: { width: 24, height: 24, borderRadius: 12, backgroundColor: C.primaryDim, alignItems: 'center', justifyContent: 'center' },
-  hojeOrderNum: { fontSize: 12, fontWeight: '800', color: C.onPrimaryDim },
-  hojeSongTitle: { fontSize: 14, fontWeight: '700', color: C.text },
-  hojeSongArtist: { fontSize: 11, color: C.textMuted, marginTop: 1 },
+  hojeCard: { backgroundColor: C.surface, borderRadius: 12, padding: 12, marginBottom: 8, borderWidth: 1, borderColor: C.border },
+  hojeCardTopo: { flexDirection: 'row', alignItems: 'center' },
+  hojeOrder: { width: 32, height: 32, borderRadius: 16, backgroundColor: C.primaryDim, alignItems: 'center', justifyContent: 'center' },
+  hojeOrderNum: { fontSize: 15, fontWeight: '800', color: C.onPrimaryDim },
+  hojeSongTitle: { fontSize: 14, fontWeight: '700', color: C.text, lineHeight: 19 },
+  hojeSongArtist: { fontSize: 12, color: C.textMuted, marginTop: 1 },
   hojeTomBadge: { alignItems: 'center', backgroundColor: C.primaryDim, borderRadius: 8, paddingHorizontal: 8, paddingVertical: 5, minWidth: 40 },
   hojeTomLabel: { fontSize: 8, color: C.onPrimaryDim, fontWeight: '700', letterSpacing: 0.5 },
   hojeTomValue: { fontSize: 14, fontWeight: '800', color: C.onPrimaryDim },
