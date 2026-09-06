@@ -32,6 +32,9 @@ type Membro = {
   ministerio: string; funcao: string;
   status: 'membro' | 'visitante' | 'lider';
   observacoes: string;
+  // Preenchidos pela própria pessoa em "Meu Cadastro" — existiam no banco desde
+  // agosto, mas não apareciam em lugar nenhum do Admin.
+  instagram: string; deseja_batizar: boolean; compartilhar_mais: string;
   conjuge_id: string | null; pai_id: string | null; mae_id: string | null;
   profile_id: string | null;
 };
@@ -49,6 +52,7 @@ const EMPTY: Omit<Membro, 'id'> = {
   deseja_servir: false, deseja_servir_area: '',
   ministerio: '',
   funcao: '', status: 'membro', observacoes: '',
+  instagram: '', deseja_batizar: false, compartilhar_mais: '',
   conjuge_id: null, pai_id: null, mae_id: null, profile_id: null,
 };
 
@@ -113,17 +117,20 @@ function parseMesAnoToISO(mmAAAA: string): string {
 // o teclado. Mesma causa e mesmo fix já aplicados no MeuCadastroScreen (8ª
 // rodada) e nos modais do Admin (13ª rodada): mover pra fora, escopo do
 // módulo, com o que antes vinha "de graça" via closure agora como prop.
-function Field({ label, value, onChangeText, placeholder = '', keyboardType = 'default', maxLength }: {
+function Field({ label, value, onChangeText, placeholder = '', keyboardType = 'default', maxLength, multiline = false, autoCapitalize }: {
   label: string; value: string; onChangeText: (v: string) => void;
   placeholder?: string; keyboardType?: any; maxLength?: number;
+  multiline?: boolean; autoCapitalize?: 'none' | 'sentences' | 'words' | 'characters';
 }) {
   return (
     <View style={fm.fieldWrap}>
       <Text style={fm.fieldLabel}>{label}</Text>
       <TextInput
-        style={fm.fieldInput} value={value} onChangeText={onChangeText}
+        style={[fm.fieldInput, multiline && fm.fieldInputMultilinha]} value={value} onChangeText={onChangeText}
         placeholder={placeholder} placeholderTextColor={C.textDim}
         keyboardType={keyboardType} maxLength={maxLength}
+        multiline={multiline} textAlignVertical={multiline ? 'top' : 'center'}
+        autoCapitalize={autoCapitalize}
       />
     </View>
   );
@@ -596,16 +603,17 @@ function MembroFormModal({ visible, membro, membros, isAdmin, onClose, onSaved }
               </TouchableOpacity>
             </View>
 
-            {/* Rolagem horizontal em vez de `flex:1` espremendo as 6 abas na
-                largura da tela — era isso que fazia "Endereço" quebrar
-                linha (e qualquer rótulo maior no futuro faria o mesmo). */}
-            <ScrollView horizontal showsHorizontalScrollIndicator={false} style={fm.sectionTabsScroll} contentContainerStyle={fm.sectionTabs}>
+            {/* As abas quebram linha em vez de rolar na horizontal: com rolagem,
+                a última ("Família", ou "Conta" pro admin) ficava cortada na
+                borda do cartão e parecia defeito — ninguém adivinha que aquilo
+                arrasta. Duas fileiras mostram todas de uma vez. */}
+            <View style={fm.sectionTabs}>
               {SECTIONS.map((sec, idx) => (
                 <TouchableOpacity key={sec} style={[fm.sectionTab, section === idx && fm.sectionTabActive]} onPress={() => setSection(idx)}>
                   <Text allowFontScaling={false} numberOfLines={1} style={[fm.sectionTabText, section === idx && fm.sectionTabTextActive]}>{sec}</Text>
                 </TouchableOpacity>
               ))}
-            </ScrollView>
+            </View>
 
             {/* Sem `flex: 1` aqui de propósito: o `fm.sheet` só tem `maxHeight`
                 (não `height`/`flex`), e nesse caso o Yoga não tem uma altura
@@ -613,8 +621,14 @@ function MembroFormModal({ visible, membro, membros, isAdmin, onClose, onSaved }
                 colapsando pra 0 (o conteúdo das abas sumia por causa disso).
                 Sem `flex:1`, a ScrollView cresce pelo conteúdo normalmente e
                 fica limitada pelo `maxHeight` do `sheet`, exatamente como já
-                funciona nos outros modais do Admin (`AdminScreen.tsx`). */}
-            <ScrollView showsVerticalScrollIndicator={false} keyboardShouldPersistTaps="handled">
+                funciona nos outros modais do Admin (`AdminScreen.tsx`).
+
+                O `flexShrink: 1` é o que faltava: sem ele, uma aba comprida
+                (a de Igreja) fazia a ScrollView estourar o `maxHeight` e
+                empurrar cabeçalho e abas pra fora da tela — em vez de rolar
+                por dentro. Com ele, a ScrollView encolhe até caber e o
+                conteúdo passa a rolar, mantendo o topo sempre visível. */}
+            <ScrollView style={{ flexShrink: 1 }} showsVerticalScrollIndicator={false} keyboardShouldPersistTaps="handled">
               {section === 0 && (
                 <View style={fm.sectionContent}>
                   <View style={{ flexDirection: 'row', gap: 12 }}>
@@ -635,6 +649,7 @@ function MembroFormModal({ visible, membro, membros, isAdmin, onClose, onSaved }
                 <View style={fm.sectionContent}>
                   <TelefoneField label="Telefone / WhatsApp *" value={form.telefone} onChange={set('telefone')} paisPadrao={paisPadraoDdi(form.pais)} />
                   <Field label="E-mail" value={form.email} onChangeText={set('email')} placeholder="email@exemplo.com" keyboardType="email-address" />
+                  <Field label="Instagram" value={form.instagram} onChangeText={set('instagram')} placeholder="@usuario" autoCapitalize="none" />
                 </View>
               )}
               {section === 2 && (
@@ -696,6 +711,19 @@ function MembroFormModal({ visible, membro, membros, isAdmin, onClose, onSaved }
                   {form.batizado && (
                     <Field label="Data do Batismo" value={form.data_batismo} onChangeText={t => formatDate(t, 'data_batismo')} placeholder="DD/MM/AAAA" keyboardType="numeric" maxLength={10} />
                   )}
+                  {!form.batizado && (
+                    <View style={fm.toggleRow}>
+                      <View style={{ flex: 1 }}>
+                        <Text style={fm.fieldLabel}>Deseja se batizar?</Text>
+                        <Text style={[fm.toggleStatus, { color: form.deseja_batizar ? C.success : C.textMuted }]}>
+                          {form.deseja_batizar ? 'Sim' : 'Não'}
+                        </Text>
+                      </View>
+                      <TouchableOpacity style={[fm.toggleBtn, form.deseja_batizar && fm.toggleBtnActive]} onPress={() => set('deseja_batizar')(!form.deseja_batizar)}>
+                        <Ionicons name={form.deseja_batizar ? 'heart' : 'heart-outline'} size={20} color={form.deseja_batizar ? '#fff' : C.textMuted} />
+                      </TouchableOpacity>
+                    </View>
+                  )}
                   <Field label="Chegou na Peniel em (mês/ano)" value={form.membro_desde} onChangeText={formatMesAno} placeholder="MM/AAAA" keyboardType="numeric" maxLength={7} />
 
                   <View style={fm.toggleRow}>
@@ -756,6 +784,9 @@ function MembroFormModal({ visible, membro, membros, isAdmin, onClose, onSaved }
                       ))}
                     </View>
                   </View>
+                  {/* Escrito pela própria pessoa no cadastro dela — fica antes
+                      das observações, que são notas internas da liderança. */}
+                  <Field label="O que a pessoa quis compartilhar" value={form.compartilhar_mais} onChangeText={set('compartilhar_mais')} placeholder="Preenchido pelo próprio membro no cadastro" multiline />
                   <Field label="Observações" value={form.observacoes} onChangeText={set('observacoes')} placeholder="Notas internas..." />
                 </View>
               )}
@@ -794,8 +825,7 @@ const fm = StyleSheet.create({
   sheet: { backgroundColor: C.surface, borderTopLeftRadius: 24, borderTopRightRadius: 24, maxHeight: '95%', paddingBottom: 24 },
   header: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', padding: 20, paddingBottom: 12 },
   title: { fontSize: 18, fontWeight: '800', color: C.text },
-  sectionTabsScroll: { marginBottom: 4 },
-  sectionTabs: { flexDirection: 'row', paddingHorizontal: 16, gap: 6 },
+  sectionTabs: { flexDirection: 'row', flexWrap: 'wrap', paddingHorizontal: 16, gap: 6, marginBottom: 4 },
   sectionTab: { paddingHorizontal: 14, paddingVertical: 8, borderRadius: 8, backgroundColor: C.surfaceAlt, alignItems: 'center' },
   sectionTabActive: { backgroundColor: C.primary },
   sectionTabText: { fontSize: 12, fontWeight: '600', color: C.textMuted },
@@ -804,6 +834,7 @@ const fm = StyleSheet.create({
   fieldWrap: { marginBottom: 12 },
   fieldLabel: { fontSize: 11, color: C.textMuted, fontWeight: '700', letterSpacing: 0.6, textTransform: 'uppercase', marginBottom: 6 },
   fieldInput: { backgroundColor: C.surfaceAlt, borderWidth: 1, borderColor: C.border, borderRadius: 10, paddingHorizontal: 14, height: 46, fontSize: 15, color: C.text },
+  fieldInputMultilinha: { height: 96, paddingTop: 12, paddingBottom: 12 },
   pill: { paddingHorizontal: 12, paddingVertical: 6, borderRadius: 20, backgroundColor: C.surfaceAlt, borderWidth: 1, borderColor: C.border },
   pillActive: { backgroundColor: C.primary + '18', borderColor: C.primary },
   pillText: { fontSize: 12, color: C.textMuted, fontWeight: '500' },
@@ -912,6 +943,7 @@ function MembroDetailModal({ membro, membros, onClose, onEdit, onDelete }: {
             <View style={dd.card}>
               <Row icon="call-outline" label="Telefone" value={membro.telefone} />
               <Row icon="mail-outline" label="E-mail" value={membro.email} />
+              <Row icon="logo-instagram" label="Instagram" value={membro.instagram} />
             </View>
             <Text style={dd.sectionTitle}>Endereço</Text>
             <View style={dd.card}>
@@ -933,13 +965,14 @@ function MembroDetailModal({ membro, membros, onClose, onEdit, onDelete }: {
             )}
             <Text style={dd.sectionTitle}>Igreja</Text>
             <View style={dd.card}>
-              <Row icon="water-outline" label="Batismo" value={membro.data_batismo ? `Sim · ${formatDateBR(membro.data_batismo)}` : 'Não'} />
+              <Row icon="water-outline" label="Batismo" value={membro.batizado ? (membro.data_batismo ? `Sim · ${formatDateBR(membro.data_batismo)}` : 'Sim') : (membro.deseja_batizar ? 'Não — deseja se batizar' : 'Não')} />
               <Row icon="calendar-outline" label="Chegou na Peniel" value={formatMesAnoFromISO(membro.membro_desde)} />
               <Row icon="business-outline" label="Outra igreja antes" value={membro.igreja_anterior ? `Sim · ${membro.igreja_anterior_nome || '—'}` : 'Não'} />
               <Row icon="people-outline" label="Já serviu em ministério" value={membro.ministerio_anterior ? `Sim · ${membro.ministerio_anterior_qual || '—'}` : 'Não'} />
               <Row icon="hand-right-outline" label="Quer servir" value={membro.deseja_servir ? `Sim · ${membro.deseja_servir_area || '—'}` : 'Não'} />
               <Row icon="people-circle-outline" label="Ministério em Peniel" value={membro.ministerio} />
               <Row icon="star-outline" label="Função" value={membro.funcao} />
+              {!!membro.compartilhar_mais && <Row icon="chatbubble-ellipses-outline" label="Compartilhou" value={membro.compartilhar_mais} />}
               {!!membro.observacoes && <Row icon="document-text-outline" label="Obs." value={membro.observacoes} />}
             </View>
           </ScrollView>
