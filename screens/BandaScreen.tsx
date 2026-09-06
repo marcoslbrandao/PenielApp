@@ -1205,7 +1205,11 @@ const buildMd = (C: BandaColors) => StyleSheet.create({
   input: { backgroundColor: C.surfaceHigh, borderWidth: 1, borderColor: C.border, borderRadius: 10, paddingHorizontal: 14, height: 46, fontSize: 16, color: C.text },
   inputError: { borderColor: C.danger },
   errorText: { fontSize: 12, color: C.danger, marginTop: 4 },
-  songList: { maxHeight: 320, marginBottom: 16 },
+  // Sem maxHeight de propósito: isto é uma View, não uma ScrollView, então um
+  // teto de altura só cortava a lista — quem tinha muitas músicas via as
+  // primeiras e não conseguia rolar até o resto. Agora a lista inteira flui
+  // dentro da ScrollView do modal, que é quem rola.
+  songList: { marginBottom: 16 },
   // Editor de setlist
   setlistVazio: { fontSize: 12, color: C.textDim, lineHeight: 17, paddingVertical: 10, paddingHorizontal: 4 },
   setlistSubtitulo: { fontSize: 13, color: C.textMuted, marginTop: -12, marginBottom: 4 },
