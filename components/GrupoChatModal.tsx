@@ -1,9 +1,9 @@
 import React, { useState, useEffect, useRef, useCallback, useMemo } from 'react';
 import {
   View, Text, StyleSheet, FlatList, TextInput, TouchableOpacity,
-  KeyboardAvoidingView, Platform, Modal, ActivityIndicator, Alert,
+  KeyboardAvoidingView, Platform, Modal, ActivityIndicator, Alert, StatusBar, Keyboard,
 } from 'react-native';
-import { SafeAreaView } from 'react-native-safe-area-context';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
 import { supabase } from '../lib/supabase';
 import { useTheme } from '../lib/theme';
@@ -66,6 +66,32 @@ export default function GrupoChatModal({
   const listRef = useRef<FlatList>(null);
 
   const { isDark } = useTheme();
+  // Dentro de um <Modal> do React Native, o <SafeAreaView> mede a view NATIVA
+  // do modal e volta com inset 0 no iOS — era por isso que o cabeçalho ficava
+  // atrás do relógio e a barra de digitar sumia sob a faixa inferior. O hook
+  // useSafeAreaInsets() vem do contexto React, que atravessa o modal, então é
+  // confiável aqui: aplicamos o respiro à mão.
+  //
+  // No Android o modal já começa abaixo da barra de status, então somar o
+  // inset ali criaria um vão; o padding fixo basta.
+  const insets = useSafeAreaInsets();
+  const padTop = Platform.OS === 'ios' ? Math.max(insets.top, 20) : 12;
+
+  // Com o teclado aberto, o KeyboardAvoidingView já empurra a barra pra cima —
+  // manter o respiro da faixa inferior aí deixaria um vão vazio de uns 34px
+  // entre a barra e o teclado. Só aplicamos esse respiro com o teclado fechado.
+  const [tecladoAberto, setTecladoAberto] = useState(false);
+  useEffect(() => {
+    const mostrar = Platform.OS === 'ios' ? 'keyboardWillShow' : 'keyboardDidShow';
+    const esconder = Platform.OS === 'ios' ? 'keyboardWillHide' : 'keyboardDidHide';
+    const s1 = Keyboard.addListener(mostrar, () => setTecladoAberto(true));
+    const s2 = Keyboard.addListener(esconder, () => setTecladoAberto(false));
+    return () => { s1.remove(); s2.remove(); };
+  }, []);
+
+  const padBottom = tecladoAberto
+    ? 0
+    : (Platform.OS === 'ios' ? Math.max(insets.bottom, 10) : 10);
   const C = useMemo(() => paletaChat(isDark), [isDark]);
   const cs = useMemo(() => buildStyles(C), [C]);
 
@@ -138,8 +164,9 @@ export default function GrupoChatModal({
 
   return (
     <Modal visible={visible} animationType="slide" onRequestClose={onClose}>
-      <SafeAreaView style={cs.safe} edges={['top', 'bottom']}>
-        <View style={[cs.header, { backgroundColor: cor }]}>
+      <View style={cs.safe}>
+        <StatusBar barStyle="light-content" />
+        <View style={[cs.header, { backgroundColor: cor, paddingTop: padTop + 10 }]}>
           <TouchableOpacity onPress={onClose} style={cs.headerBtn} hitSlop={10}>
             <Ionicons name="chevron-back" size={24} color="#fff" />
           </TouchableOpacity>
@@ -153,7 +180,7 @@ export default function GrupoChatModal({
         <KeyboardAvoidingView
           style={{ flex: 1 }}
           behavior={Platform.OS === 'ios' ? 'padding' : undefined}
-          keyboardVerticalOffset={Platform.OS === 'ios' ? 90 : 0}
+          keyboardVerticalOffset={0}
         >
           {loading ? (
             <ActivityIndicator color={cor} style={{ marginTop: 30 }} />
@@ -189,7 +216,7 @@ export default function GrupoChatModal({
             />
           )}
 
-          <View style={cs.inputRow}>
+          <View style={[cs.inputRow, { paddingBottom: 10 + padBottom }]}>
             <TextInput
               style={cs.input}
               placeholder="Escreva uma mensagem..."
@@ -208,14 +235,15 @@ export default function GrupoChatModal({
             </TouchableOpacity>
           </View>
         </KeyboardAvoidingView>
-      </SafeAreaView>
+      </View>
     </Modal>
   );
 }
 
 function buildStyles(C: PaletaChat) { return StyleSheet.create({
   safe: { flex: 1, backgroundColor: C.bg },
-  header: { flexDirection: 'row', alignItems: 'center', gap: 10, paddingHorizontal: 12, paddingTop: 22, paddingBottom: 14 },
+  // paddingTop é aplicado em linha, a partir do inset real do aparelho.
+  header: { flexDirection: 'row', alignItems: 'center', gap: 10, paddingHorizontal: 12, paddingBottom: 14 },
   headerBtn: { padding: 8, minWidth: 44, minHeight: 44, alignItems: 'center', justifyContent: 'center', marginLeft: -8 },
   headerTitle: { fontSize: 16, fontWeight: '800', color: '#fff' },
   headerSub: { fontSize: 11, color: 'rgba(255,255,255,0.7)', marginTop: 1 },
