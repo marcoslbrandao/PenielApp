@@ -657,11 +657,11 @@ export default function GruposScreen() {
           )}
           {temAcessoConteudo && (
             <TouchableOpacity
-              style={[s.chatBtn, { backgroundColor: grupo.cor + '26', borderColor: grupo.cor + '59' }]}
+              style={[s.chatBtn, { backgroundColor: grupo.cor, borderColor: grupo.cor }]}
               onPress={() => setChatModalVisible(true)}
             >
-              <Ionicons name="chatbubbles" size={20} color={grupo.cor} />
-              <Text style={[s.chatBtnText, { color: grupo.cor }]}>{t('grupos.chat')}</Text>
+              <Ionicons name="chatbubbles" size={20} color="#fff" />
+              <Text style={[s.chatBtnText, { color: '#fff' }]}>{t('grupos.chat')}</Text>
             </TouchableOpacity>
           )}
         </View>
@@ -692,7 +692,7 @@ export default function GruposScreen() {
         <View style={[s.heroCard, { backgroundColor: grupo.cor }]}>
           {activeTab === 'jovens' ? (
             <Image
-              source={require('../assets/PenielAlive-Logo.jpg')}
+              source={require('../assets/PenielAlive-Logo.png')}
               style={s.heroLogo}
               resizeMode="cover"
             />
@@ -902,7 +902,10 @@ function buildS(C: Paleta) { return StyleSheet.create({
   waBtn: { flexDirection: 'row', alignItems: 'center', gap: 6, paddingVertical: 7, paddingHorizontal: 12, borderRadius: 20, borderWidth: 1 },
   waBtnText: { fontSize: 12, fontWeight: '700' },
   // Chat: um pouco maior que os ícones de gestão ao lado — é a ação principal
-  // do grupo, não uma ferramenta de liderança.
+  // do grupo, não uma ferramenta de liderança. Fundo na cor cheia do grupo e
+  // ícone branco: na primeira versão era o contrário (cor do grupo sobre fundo
+  // translúcido), e o roxo do Peniel Alive (#4A1AA8) sumia contra o cabeçalho
+  // navy (#1A1740). Branco sobre a cor cheia funciona nos quatro grupos.
   chatBtn: { flexDirection: 'row', alignItems: 'center', gap: 7, paddingVertical: 9, paddingHorizontal: 14, borderRadius: 22, borderWidth: 1 },
   chatBtnText: { fontSize: 13.5, fontWeight: '700' },
   tabBar: { flexDirection: 'row', backgroundColor: C.surface, borderBottomWidth: 1, borderBottomColor: C.border },

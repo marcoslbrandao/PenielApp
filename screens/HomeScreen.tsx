@@ -1062,7 +1062,7 @@ export default function HomeScreen({ navigation }: { navigation?: any }) {
           onPress={() => abrirAreaMembro({ screen: 'Grupos', params: { grupoInicial: 'jovens' } })}
         >
           <Image
-            source={require('../assets/PenielAlive-Logo.jpg')}
+            source={require('../assets/PenielAlive-Logo.png')}
             style={styles.aliveImage}
             resizeMode="cover"
           />

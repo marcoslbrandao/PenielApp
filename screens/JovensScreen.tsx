@@ -173,7 +173,7 @@ export default function JovensScreen() {
       <View style={s.header}>
         <View style={{ flexDirection: 'row', alignItems: 'center', gap: 10 }}>
           <Image
-            source={require('../assets/PenielAlive-Logo.jpg')}
+            source={require('../assets/PenielAlive-Logo.png')}
             style={{ width: 42, height: 42, borderRadius: 21 }}
             resizeMode="cover"
           />
