@@ -38,7 +38,12 @@ Deno.serve(async (req) => {
     let tipo = '';
 
     if (table === 'avisos') {
-      const tag = record.tipo === 'urgente' ? '🚨' : record.tipo === 'evento' ? '📅' : '📢';
+      const tag = record.origem === 'material' ? '📎'
+        : record.origem === 'evento' ? '📅'
+        : record.origem === 'chat' ? '💬'
+        : record.tipo === 'urgente' ? '🚨'
+        : record.tipo === 'evento' ? '📅'
+        : '📢';
       titulo = `${tag} ${record.titulo}`;
       corpo = String(record.texto ?? '').slice(0, 140);
       tipo = 'aviso';
@@ -56,6 +61,20 @@ Deno.serve(async (req) => {
       tipo = 'mensagem';
     } else {
       return new Response(JSON.stringify({ message: `Tabela ${table} não é tratada por esta função.` }), { status: 200 });
+    }
+
+    // Avisos "espelho": desde a migração 20260908230000, um devocional, short,
+    // material, evento ou conversa no chat de um grupo cria automaticamente uma
+    // linha em `avisos` — é assim que esse conteúdo aparece no sininho da Home
+    // de quem é do grupo. Devocionais e shorts JÁ têm webhook próprio e já
+    // mandaram o push; empurrar o espelho deles também faria a mesma coisa
+    // chegar duas vezes no celular. Material, evento e chat não têm webhook
+    // próprio, então nesses o espelho é justamente quem manda o push.
+    if (table === 'avisos' && (record.origem === 'devocional' || record.origem === 'short')) {
+      return new Response(
+        JSON.stringify({ message: `Espelho de ${record.origem} — push já enviado pelo webhook da tabela de origem.` }),
+        { status: 200 },
+      );
     }
 
     const supabase = createClient(SUPABASE_URL, SUPABASE_SERVICE_KEY);

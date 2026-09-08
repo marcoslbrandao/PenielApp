@@ -916,7 +916,10 @@ function buildS(C: Paleta) { return StyleSheet.create({
   // Hero
   heroCard: { flexDirection: 'row', alignItems: 'center', gap: 14, borderRadius: 16, padding: 18, marginBottom: 0 },
   heroIcon: { width: 56, height: 56, borderRadius: 14, alignItems: 'center', justifyContent: 'center' },
-  heroLogo: { width: 56, height: 56, borderRadius: 14 },
+  // Maior que o heroIcon (56) dos outros grupos de propósito: o logo do Alive
+  // é um círculo com os cantos transparentes, então a arte visível é menor que
+  // a caixa. Com 56 ele parecia encolhido ao lado dos ícones dos outros grupos.
+  heroLogo: { width: 76, height: 76, borderRadius: 38 },
   heroNome: { fontSize: 18, fontWeight: '800', color: '#fff' },
   heroSub: { fontSize: 12, color: 'rgba(255,255,255,0.7)', marginTop: 2 },
   descricaoCard: { backgroundColor: C.surface, borderRadius: 0, borderBottomLeftRadius: 14, borderBottomRightRadius: 14, padding: 14, marginBottom: 20, borderLeftWidth: 3, borderWidth: 1, borderColor: C.border },

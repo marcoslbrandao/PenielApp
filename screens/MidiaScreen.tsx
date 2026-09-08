@@ -157,9 +157,14 @@ export default function MidiaScreen() {
   // parte. Quem não é membro de nenhum grupo só recebe os gerais mesmo,
   // automaticamente — não precisa filtrar aqui.
   const fetchAvisos = useCallback(async () => {
+    // `.is('origem', null)`: fora os avisos escritos por uma pessoa, a tabela
+    // agora também guarda os espelhos automáticos do conteúdo de grupo (novo
+    // material, nova conversa no chat…). Esses pertencem ao sininho da Home,
+    // não a este mural — aqui virariam ruído.
     const { data } = await supabase
       .from('avisos')
       .select('*')
+      .is('origem', null)
       .order('created_at', { ascending: false })
       .limit(20);
     if (data) setAvisos(data as Aviso[]);
