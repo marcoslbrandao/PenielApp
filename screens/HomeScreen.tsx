@@ -15,6 +15,7 @@ import { livrosAT, livrosNT, Livro } from '../lib/bibliaLivros';
 import { useVersiculoDoDia, parseReferencia, getTextoVersiculo, getReferenciaVersiculo, getVersaoVersiculo } from '../lib/versiculoDoDia';
 import { useCampoTraduzido } from '../lib/useTraducao';
 import { useTheme } from '../lib/theme';
+import { useAcesso } from '../lib/acesso';
 import { WebView } from 'react-native-webview';
 import { extractYoutubeId, youtubeThumbnail } from '../lib/youtube';
 
@@ -504,9 +505,19 @@ function DestaqueHomeCard({ evento, onAbrirAgenda }: { evento: DestaqueHome; onA
 export default function HomeScreen({ navigation }: { navigation?: any }) {
   const { t, i18n } = useTranslation();
   const { user, isLoggedIn } = useAuth();
+  const { ehMembro } = useAcesso();
   const { isDark } = useTheme();
   const C = useMemo(() => paletaHome(isDark), [isDark]);
   const styles = useMemo(() => buildStyles(C), [C]);
+
+  // A aba "Membros" só existe pra quem é membro (ver App.tsx). Os atalhos da
+  // Home que apontavam direto pra ela ficariam mortos para todo mundo — agora
+  // levam ao caminho certo: login pra quem não tem conta, ativação de membro
+  // pra quem tem conta mas ainda não é membro.
+  const abrirAreaMembro = (params?: any) => {
+    if (ehMembro) { navigation?.navigate('Membros', params); return; }
+    navigation?.navigate(isLoggedIn ? 'AtivarMembro' : 'Auth');
+  };
   const { todayBirthdays } = useBirthdays();
   useNotifications(user?.id);
 
@@ -1038,7 +1049,7 @@ export default function HomeScreen({ navigation }: { navigation?: any }) {
             <Ionicons name="heart-outline" size={22} color={C.accentText} />
             <Text style={styles.quickTexto}>{t('home.quickOferta')}</Text>
           </TouchableOpacity>
-          <TouchableOpacity style={styles.quickBtn} onPress={() => navigation?.navigate('Membros', { screen: 'Grupos' })}>
+          <TouchableOpacity style={styles.quickBtn} onPress={() => abrirAreaMembro({ screen: 'Grupos' })}>
             <Ionicons name="people-outline" size={22} color={C.accentText} />
             <Text style={styles.quickTexto}>{t('home.quickGrupos')}</Text>
           </TouchableOpacity>
@@ -1048,7 +1059,7 @@ export default function HomeScreen({ navigation }: { navigation?: any }) {
         <TouchableOpacity
           style={styles.aliveCard}
           activeOpacity={0.85}
-          onPress={() => navigation?.navigate('Membros', { screen: 'Grupos', params: { grupoInicial: 'jovens' } })}
+          onPress={() => abrirAreaMembro({ screen: 'Grupos', params: { grupoInicial: 'jovens' } })}
         >
           <Image
             source={require('../assets/PenielAlive-Logo.jpg')}

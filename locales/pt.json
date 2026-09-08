@@ -21,7 +21,8 @@
     "emBreve": "Em breve",
     "remover": "Remover",
     "enviar": "Enviar",
-    "tenteNovamente": "Tente novamente."
+    "tenteNovamente": "Tente novamente.",
+    "enviando": "Enviando..."
   },
   "home": {
     "bemVindo": "Bem-vindo de volta",
@@ -108,7 +109,17 @@
     "inserirCodigo": "Inserir código",
     "continuarVisitante": "Continuar visitante",
     "informeSeuEmail": "Informe seu e-mail.",
-    "emailEnviadoResetMsg": "Verifique sua caixa de entrada para redefinir a senha."
+    "emailEnviadoResetMsg": "Verifique sua caixa de entrada para redefinir a senha.",
+    "inserirCodigoEmail": "Inserir código",
+    "confirmeSeuEmail": "Confirme seu e-mail",
+    "confirmeSeuEmailMsg": "Enviamos um código de 6 dígitos para {{email}}. Digite-o abaixo para ativar sua conta.",
+    "codigoDoEmail": "Código de confirmação",
+    "confirmarBtn": "Confirmar e entrar",
+    "codigoEmailIncompleto": "Digite os 6 dígitos do código.",
+    "codigoEmailInvalido": "Código inválido ou expirado. Peça um novo abaixo.",
+    "naoRecebeuReenviar": "Não recebeu? Enviar outro código",
+    "codigoReenviado": "Enviamos um novo código para {{email}}.",
+    "dicaSpam": "Se não encontrar o e-mail, verifique a pasta de spam."
   },
   "perfil": {
     "titulo": "Perfil",
@@ -199,7 +210,11 @@
     "excluirBtn": "Excluir",
     "contaExcluidaTitulo": "Conta excluída",
     "contaExcluidaMsg": "Sua conta e seus dados foram removidos permanentemente.",
-    "meuCadastro": "Meu Cadastro"
+    "meuCadastro": "Meu Cadastro",
+    "souMembroTitulo": "Sou membro da Peniel Church",
+    "souMembroSub": "Ativar meu acesso à Área do Membro",
+    "entrarOuCriarConta": "Entrar ou criar conta",
+    "entrarOuCriarContaSub": "Salve versículos, receba avisos e acompanhe a agenda"
   },
   "grupos": {
     "titulo": "Grupos",
@@ -781,5 +796,30 @@
     "estadoRegiao": "Estado / Região",
     "estadoRegiaoPlaceholder": "Ex: Berkshire",
     "ministerioAtual": "Já serve em algum ministério na Peniel?"
+  },
+  "ativarMembro": {
+    "titulo": "Área do Membro",
+    "explicacao": "Se você é membro da Peniel Church, ative seu acesso com o código que o seu líder enviou.",
+    "digiteOCodigo": "Digite o código.",
+    "codigoInvalido": "Código inválido ou expirado.",
+    "ativar": "Ativar acesso de membro",
+    "sucessoTitulo": "Acesso ativado!",
+    "sucessoTexto": "A aba Membros já está disponível no seu app, com grupos, escalas e o diretório da igreja.",
+    "sucessoBotao": "Continuar",
+    "semCodigoTitulo": "Ainda não tem o código?",
+    "semCodigoTexto": "Fale com a liderança e peça a liberação do seu acesso. Você pode voltar aqui a qualquer momento para inserir o código.",
+    "solicitarAcesso": "Falar com a liderança",
+    "mensagemSolicitacao": "Olá! Gostaria de solicitar o acesso de membro no app da Peniel Church.",
+    "rodape": "Sua conta funciona normalmente sem o código. A Área do Membro é um espaço a mais para quem é membro da Peniel Church."
+  },
+  "bemVindo": {
+    "titulo": "Bem-vindo à Peniel Church",
+    "tituloComNome": "Bem-vindo, {{nome}}!",
+    "subtitulo": "Sua conta está ativa. Aqui você acompanha a igreja de onde estiver.",
+    "pontoBiblia": "Bíblia completa em quatro idiomas, com versículos salvos e histórico de leitura",
+    "pontoAgenda": "Agenda de cultos e eventos, devocionais e a transmissão ao vivo",
+    "pontoAvisos": "Avisos e notificações da igreja direto no seu celular",
+    "notaMembro": "É membro da Peniel Church? Ative o acesso à Área do Membro pelo seu Perfil.",
+    "explorar": "Explorar o app"
   }
 }

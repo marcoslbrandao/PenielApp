@@ -15,6 +15,7 @@ import Constants from 'expo-constants';
 import * as Updates from 'expo-updates';
 import { supabase } from '../lib/supabase';
 import { useAuth } from '../lib/useAuth';
+import { useAcesso } from '../lib/acesso';
 import { IDIOMAS, trocarIdioma } from '../lib/i18n';
 import { useTheme, ThemeMode } from '../lib/theme';
 
@@ -576,6 +577,7 @@ export default function ProfileScreen() {
   const { t, i18n } = useTranslation();
   const navigation = useNavigation();
   const { user, isLoggedIn } = useAuth();
+  const { papel, ehMembro } = useAcesso();
   const { isDark, mode, setMode } = useTheme();
   const C = useMemo(() => paleta(isDark), [isDark]);
   const styles = useMemo(() => buildStyles(C), [C]);
@@ -599,7 +601,13 @@ export default function ProfileScreen() {
       .then(({ data }) => { setProfile(data); setLoadingProfile(false); });
   };
 
-  useEffect(() => { fetchProfile(); }, [user]);
+  // Sem o `else` daqui, sair da conta (ou excluí-la) deixava o perfil antigo
+  // na memória: a tela continuava mostrando nome, telefone e foto de uma
+  // conta que já não existia — só o rótulo mudava para "Visitante".
+  useEffect(() => {
+    if (!user) { setProfile(null); setLoadingProfile(false); return; }
+    fetchProfile();
+  }, [user?.id]);
 
   const handleTrocarFoto = async () => {
     if (!isLoggedIn || !user) {
@@ -654,6 +662,15 @@ export default function ProfileScreen() {
   const displayEmail = user?.email ?? '';
   const initials = displayName.split(' ').map((n: string) => n[0]).slice(0, 2).join('').toUpperCase();
 
+  // Com a aba Membros escondida pra quem não é membro, um alerta seco de
+  // "faça login" deixaria a pessoa sem caminho nenhum: o botão leva à tela.
+  const pedirLogin = (mensagem: string) => {
+    Alert.alert(t('common.atencao'), mensagem, [
+      { text: t('common.cancelar'), style: 'cancel' },
+      { text: t('auth.entrar'), onPress: () => navigation.navigate('Auth' as never) },
+    ]);
+  };
+
   const handleLogout = () => {
     Alert.alert(t('perfil.sairDaContaTitulo'), t('perfil.confirmaSair'), [
       { text: t('common.cancelar'), style: 'cancel' },
@@ -701,10 +718,10 @@ export default function ProfileScreen() {
     {
       title: t('perfil.minhaIgreja'),
       items: [
-        { icon: 'id-card-outline', label: t('perfil.meuCadastro'), onPress: () => isLoggedIn ? navigation.navigate('MeuCadastro' as never) : Alert.alert(t('common.atencao'), t('perfil.faceLoginEditarPerfil')) },
-        { icon: 'bookmark-outline', label: t('perfil.versiculosSalvos'), onPress: () => isLoggedIn ? setSavedVersesVisible(true) : Alert.alert(t('common.atencao'), t('perfil.faceLoginVersiculos')) },
-        { icon: 'book-outline', label: t('perfil.historicoDeEstudos'), onPress: () => isLoggedIn ? setReadingHistoryVisible(true) : Alert.alert(t('common.atencao'), t('perfil.faceLoginHistorico')) },
-        { icon: 'heart-outline', label: t('perfil.pedidosDeOracao'), onPress: () => isLoggedIn ? setPrayerVisible(true) : Alert.alert(t('common.atencao'), t('perfil.faceLoginOracao')) },
+        { icon: 'id-card-outline', label: t('perfil.meuCadastro'), onPress: () => isLoggedIn ? navigation.navigate('MeuCadastro' as never) : pedirLogin(t('perfil.faceLoginEditarPerfil')) },
+        { icon: 'bookmark-outline', label: t('perfil.versiculosSalvos'), onPress: () => isLoggedIn ? setSavedVersesVisible(true) : pedirLogin(t('perfil.faceLoginVersiculos')) },
+        { icon: 'book-outline', label: t('perfil.historicoDeEstudos'), onPress: () => isLoggedIn ? setReadingHistoryVisible(true) : pedirLogin(t('perfil.faceLoginHistorico')) },
+        { icon: 'heart-outline', label: t('perfil.pedidosDeOracao'), onPress: () => isLoggedIn ? setPrayerVisible(true) : pedirLogin(t('perfil.faceLoginOracao')) },
       ],
     },
     {
@@ -733,10 +750,10 @@ export default function ProfileScreen() {
     {
       title: t('perfil.conta'),
       items: [
-        { icon: 'person-outline', label: t('perfil.editarPerfil'), onPress: () => isLoggedIn ? setEditModalVisible(true) : Alert.alert(t('common.atencao'), t('perfil.faceLoginEditarPerfil')) },
-        { icon: 'lock-closed-outline', label: t('perfil.alterarSenha'), onPress: () => isLoggedIn ? handleChangePassword() : Alert.alert(t('common.atencao'), t('perfil.faceLoginAlterarSenha')) },
+        { icon: 'person-outline', label: t('perfil.editarPerfil'), onPress: () => isLoggedIn ? setEditModalVisible(true) : pedirLogin(t('perfil.faceLoginEditarPerfil')) },
+        { icon: 'lock-closed-outline', label: t('perfil.alterarSenha'), onPress: () => isLoggedIn ? handleChangePassword() : pedirLogin(t('perfil.faceLoginAlterarSenha')) },
         { icon: 'help-circle-outline', label: t('perfil.suporte'), onPress: handleSupport },
-        { icon: 'trash-outline', label: t('perfil.excluirConta'), color: C.danger, onPress: () => isLoggedIn ? setDeleteAccountVisible(true) : Alert.alert(t('common.atencao'), t('perfil.faceLoginExcluirConta')) },
+        { icon: 'trash-outline', label: t('perfil.excluirConta'), color: C.danger, onPress: () => isLoggedIn ? setDeleteAccountVisible(true) : pedirLogin(t('perfil.faceLoginExcluirConta')) },
       ],
     },
     {
@@ -783,29 +800,27 @@ export default function ProfileScreen() {
           <Text style={styles.userName}>{displayName}</Text>
           <Text style={styles.userEmail}>{displayEmail}</Text>
           {profile?.phone && <Text style={styles.userPhone}>{profile.phone}</Text>}
-          <View style={styles.badges}>
-            {isLoggedIn ? (
-              <>
-                <View style={[styles.badge, { backgroundColor: '#E8F5E9' }]}>
-                  <Ionicons name="checkmark-circle-outline" size={12} color={C.success} />
-                  <Text style={[styles.badgeText, { color: C.success }]}>
-                    {profile?.role === 'lider' ? t('perfil.badgeLider') : profile?.role === 'admin' ? t('perfil.badgeAdmin') : t('perfil.badgeMembro')}
-                  </Text>
-                </View>
-                {profile?.baptized && (
-                  <View style={styles.badge}>
-                    <Ionicons name="water-outline" size={12} color={C.primary} />
-                    <Text style={styles.badgeText}>{t('perfil.badgeBatizado')}</Text>
-                  </View>
-                )}
-              </>
-            ) : (
-              <View style={[styles.badge, { backgroundColor: '#F3F4F6' }]}>
-                <Ionicons name="person-outline" size={12} color={C.textMuted} />
-                <Text style={[styles.badgeText, { color: C.textMuted }]}>{t('perfil.visitante')}</Text>
+          {/* Selo só pra cima: membro, líder e admin ganham etiqueta; quem
+              ainda não é membro não recebe carimbo de "visitante". O app é
+              híbrido — ninguém precisa ser lembrado do que não é. Antes, o
+              selo dizia "Membro" pra QUALQUER pessoa logada, inclusive quem
+              nunca usou um código de convite. */}
+          {ehMembro && (
+            <View style={styles.badges}>
+              <View style={[styles.badge, { backgroundColor: '#E8F5E9' }]}>
+                <Ionicons name="checkmark-circle-outline" size={12} color={C.success} />
+                <Text style={[styles.badgeText, { color: C.success }]}>
+                  {papel === 'lider' ? t('perfil.badgeLider') : papel === 'admin' ? t('perfil.badgeAdmin') : t('perfil.badgeMembro')}
+                </Text>
               </View>
-            )}
-          </View>
+              {profile?.baptized && (
+                <View style={styles.badge}>
+                  <Ionicons name="water-outline" size={12} color={C.primary} />
+                  <Text style={styles.badgeText}>{t('perfil.badgeBatizado')}</Text>
+                </View>
+              )}
+            </View>
+          )}
         </View>
 
         {/* Stats */}
@@ -818,16 +833,28 @@ export default function ProfileScreen() {
           ))}
         </View>
 
-        {/* Login CTA */}
-        {!isLoggedIn && (
-          <View style={styles.loginCta}>
-            <Ionicons name="lock-closed-outline" size={20} color={C.primary} />
+        {/* Ponto de entrada fixo: deslogado leva ao login/cadastro; logado sem
+            vínculo leva à ativação de membro. O card fica aqui enquanto a
+            pessoa não for membro — é o lugar onde ela volta quando o líder
+            finalmente mandar o código, dias depois. Antes isto era um <View>
+            com uma seta que não navegava para lugar nenhum. */}
+        {!ehMembro && (
+          <TouchableOpacity
+            style={styles.loginCta}
+            activeOpacity={0.8}
+            onPress={() => navigation.navigate((isLoggedIn ? 'AtivarMembro' : 'Auth') as never)}
+          >
+            <Ionicons name={isLoggedIn ? 'key-outline' : 'log-in-outline'} size={20} color={C.primary} />
             <View style={{ flex: 1 }}>
-              <Text style={styles.loginCtaTitle}>{t('perfil.areaDoMembro')}</Text>
-              <Text style={styles.loginCtaSub}>{t('perfil.acesseAbaMembros')}</Text>
+              <Text style={styles.loginCtaTitle}>
+                {isLoggedIn ? t('perfil.souMembroTitulo') : t('perfil.entrarOuCriarConta')}
+              </Text>
+              <Text style={styles.loginCtaSub}>
+                {isLoggedIn ? t('perfil.souMembroSub') : t('perfil.entrarOuCriarContaSub')}
+              </Text>
             </View>
             <Ionicons name="chevron-forward" size={16} color={C.textMuted} />
-          </View>
+          </TouchableOpacity>
         )}
 
         {/* Menu */}

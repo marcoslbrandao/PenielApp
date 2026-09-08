@@ -18,9 +18,13 @@ import NovaSenhaScreen from './screens/NovaSenhaScreen';
 import MeuCadastroScreen from './screens/MeuCadastroScreen';
 import DevocionaisScreen from './screens/DevocionaisScreen';
 import TraducaoAoVivoScreen from './screens/TraducaoAoVivoScreen';
+import AuthScreen from './screens/AuthScreen';
+import AtivarMembroScreen from './screens/AtivarMembroScreen';
+import BemVindoScreen from './screens/BemVindoScreen';
 import { supabase } from './lib/supabase';
 import { carregarIdiomaSalvo } from './lib/i18n';
 import { ThemeProvider, useTheme } from './lib/theme';
+import { AcessoProvider, useAcesso } from './lib/acesso';
 
 const Tab = createBottomTabNavigator();
 const Stack = createNativeStackNavigator();
@@ -64,6 +68,11 @@ async function handleAuthDeepLink(url: string | null): Promise<boolean> {
 function MainTabs() {
   const { t } = useTranslation();
   const { colors } = useTheme();
+  // A aba "Membros" só existe pra quem é membro, líder ou admin. Visitante
+  // não vê uma porta trancada — não vê porta. Quem tem um código de convite
+  // ativa o acesso pelo card do Perfil (rota "AtivarMembro"), e a aba aparece
+  // sozinha assim que o papel muda.
+  const { ehMembro } = useAcesso();
   return (
     <Tab.Navigator
       screenOptions={{
@@ -106,14 +115,16 @@ function MainTabs() {
           tabBarIcon: ({ color, size }) => <Ionicons name="play-circle-outline" size={size} color={color} />,
         }}
       />
-      <Tab.Screen
-        name="Membros"
-        component={AreaMembroScreen}
-        options={{
-          tabBarLabel: t('tabs.membros'),
-          tabBarIcon: ({ color, size }) => <Ionicons name="people-outline" size={size} color={color} />,
-        }}
-      />
+      {ehMembro && (
+        <Tab.Screen
+          name="Membros"
+          component={AreaMembroScreen}
+          options={{
+            tabBarLabel: t('tabs.membros'),
+            tabBarIcon: ({ color, size }) => <Ionicons name="people-outline" size={size} color={color} />,
+          }}
+        />
+      )}
       <Tab.Screen
         name="Perfil"
         component={PerfilScreen}
@@ -150,6 +161,7 @@ export default function App() {
     >
       <SafeAreaProvider>
         <ThemeProvider>
+          <AcessoProvider>
           <NavigationContainer ref={navigationRef}>
             <Stack.Navigator screenOptions={{ headerShown: false }}>
               <Stack.Screen name="MainTabs" component={MainTabs} />
@@ -178,8 +190,28 @@ export default function App() {
                 component={NovaSenhaScreen}
                 options={{ presentation: 'fullScreenModal', gestureEnabled: false }}
               />
+              {/* Login/cadastro deixou de morar dentro da aba Membros: agora é
+                  uma rota própria, aberta pelo card do Perfil. Antes, quem
+                  estava deslogado só conseguia entrar tocando numa aba que
+                  parecia ser "a lista de membros da igreja". */}
+              <Stack.Screen
+                name="Auth"
+                component={AuthScreen}
+                options={{ presentation: 'modal' }}
+              />
+              <Stack.Screen
+                name="AtivarMembro"
+                component={AtivarMembroScreen}
+                options={{ presentation: 'modal' }}
+              />
+              <Stack.Screen
+                name="BemVindo"
+                component={BemVindoScreen}
+                options={{ presentation: 'fullScreenModal', gestureEnabled: false }}
+              />
             </Stack.Navigator>
           </NavigationContainer>
+          </AcessoProvider>
         </ThemeProvider>
       </SafeAreaProvider>
     </StripeProvider>

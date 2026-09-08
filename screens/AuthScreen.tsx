@@ -7,6 +7,7 @@ import {
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
 import { useTranslation } from 'react-i18next';
+import { useNavigation } from '@react-navigation/native';
 import { supabase } from '../lib/supabase';
 
 // ─── Palette ──────────────────────────────────────────────────────────────────
@@ -24,11 +25,20 @@ const C = {
 };
 
 // ─── Tipos de modo ────────────────────────────────────────────────────────────
-type Mode = 'login' | 'signup' | 'reset' | 'invite';
+// 'confirmar' = confirmação do e-mail por CÓDIGO de 6 dígitos, não por link.
+// O link do e-mail abria o Safari e morria em "endereço inválido" (o esquema
+// penielchurch:// não é aberto a partir do Mail, e o redirect nem estava na
+// allow-list do Supabase). Com código, a pessoa nunca sai do app — e funciona
+// mesmo quando ela abre o e-mail no computador e o app está no celular.
+type Mode = 'login' | 'signup' | 'reset' | 'invite' | 'confirmar';
 
 export default function AuthScreen() {
   const { t } = useTranslation();
+  const navigation = useNavigation<any>();
   const [mode, setMode] = useState<Mode>('login');
+  const [codigoEmail, setCodigoEmail] = useState('');
+  const [erroCodigo, setErroCodigo] = useState('');
+  const [reenviando, setReenviando] = useState(false);
   const [fullName, setFullName] = useState('');
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
@@ -46,15 +56,28 @@ export default function AuthScreen() {
     setLoading(false);
     if (error) {
       if (error.message.includes('Email not confirmed') || error.message.includes('email_not_confirmed')) {
+        // Em vez de só avisar, leva pra tela de código: quem não confirmou
+        // precisa de um caminho, não de um aviso.
         Alert.alert(
           t('auth.emailNaoConfirmadoTitulo'),
           t('auth.emailNaoConfirmadoMsg'),
-          [{ text: t('common.ok') }]
+          [
+            { text: t('common.cancelar'), style: 'cancel' },
+            { text: t('auth.inserirCodigoEmail'), onPress: () => { setCodigoEmail(''); setErroCodigo(''); setMode('confirmar'); } },
+          ]
         );
       } else {
         Alert.alert(t('auth.erroAoEntrar'), error.message);
       }
+      return;
     }
+    fecharSeModal();
+  };
+
+  // Esta tela é aberta como modal (a partir do card do Perfil). Depois de
+  // entrar ou confirmar, ela sai de cena sozinha e devolve a pessoa ao app.
+  const fecharSeModal = () => {
+    if (navigation.canGoBack()) navigation.goBack();
   };
 
   // ── Cadastro ───────────────────────────────────────────────────────────────
@@ -69,13 +92,51 @@ export default function AuthScreen() {
     setLoading(false);
     if (error) {
       Alert.alert(t('auth.erroAoCadastrar'), error.message);
-    } else {
-      Alert.alert(
-        t('auth.cadastroRealizadoTitulo'),
-        t('auth.cadastroRealizadoMsg', { email }),
-        [{ text: t('auth.okEntendi'), onPress: () => setMode('login') }]
-      );
+      return;
     }
+    setCodigoEmail('');
+    setErroCodigo('');
+    setMode('confirmar');
+  };
+
+  // ── Confirmar e-mail com o código de 6 dígitos ─────────────────────────────
+  const handleConfirmarEmail = async () => {
+    const token = codigoEmail.replace(/\D/g, '');
+    if (token.length < 6) { setErroCodigo(t('auth.codigoEmailIncompleto')); return; }
+    setLoading(true); setErroCodigo('');
+    const { error } = await supabase.auth.verifyOtp({ email, token, type: 'signup' });
+    if (error) {
+      // Rede de segurança: o código do e-mail é de USO ÚNICO e é o mesmo
+      // token do antigo link de confirmação. Se a pessoa tiver um e-mail
+      // velho na caixa de entrada e clicar no link, a conta é confirmada e o
+      // código morre — digitá-lo aqui daria "código inválido" numa conta que
+      // está perfeitamente ativa. Antes de acusar erro, tentamos entrar com a
+      // senha que ela acabou de criar: se funcionar, estava tudo certo.
+      if (password) {
+        const { error: erroLogin } = await supabase.auth.signInWithPassword({ email, password });
+        if (!erroLogin) {
+          setLoading(false);
+          if (navigation.canGoBack()) navigation.replace('BemVindo');
+          return;
+        }
+      }
+      setLoading(false);
+      setErroCodigo(t('auth.codigoEmailInvalido'));
+      return;
+    }
+    setLoading(false);
+    // verifyOtp já devolve a sessão: a pessoa entra direto, sem precisar
+    // digitar a senha de novo logo depois de tê-la criado.
+    if (navigation.canGoBack()) navigation.replace('BemVindo');
+  };
+
+  const handleReenviarCodigo = async () => {
+    if (!email) { Alert.alert(t('common.atencao'), t('auth.informeSeuEmail')); return; }
+    setReenviando(true);
+    const { error } = await supabase.auth.resend({ type: 'signup', email });
+    setReenviando(false);
+    if (error) Alert.alert(t('common.erro'), error.message);
+    else Alert.alert(t('perfil.emailEnviadoTitulo'), t('auth.codigoReenviado', { email }));
   };
 
   // ── Usar código de convite ─────────────────────────────────────────────────
@@ -135,6 +196,7 @@ export default function AuthScreen() {
     else if (mode === 'signup') handleSignup();
     else if (mode === 'reset') handleReset();
     else if (mode === 'invite') handleInviteCode();
+    else if (mode === 'confirmar') handleConfirmarEmail();
   };
 
   // ── Tela de código de convite ──────────────────────────────────────────────
@@ -221,10 +283,89 @@ export default function AuthScreen() {
     );
   }
 
+  // ── Tela de confirmação de e-mail (código de 6 dígitos) ────────────────────
+  if (mode === 'confirmar') {
+    return (
+      <SafeAreaView style={s.safe} edges={['top', 'bottom']}>
+        <StatusBar barStyle="light-content" backgroundColor={C.bg} />
+        <TouchableOpacity style={s.fecharBtn} onPress={fecharSeModal} hitSlop={10}>
+          <Ionicons name="close" size={24} color={C.textMuted} />
+        </TouchableOpacity>
+        <KeyboardAvoidingView behavior={Platform.OS === 'ios' ? 'padding' : undefined} style={s.kav}>
+          <View style={s.inner}>
+            <View style={s.logoWrap}>
+              <View style={s.logoCircle}>
+                <Ionicons name="mail-open-outline" size={36} color={C.accent} />
+              </View>
+              <Text style={s.appName}>{t('auth.confirmeSeuEmail')}</Text>
+              <Text style={s.appSub}>{t('auth.confirmeSeuEmailMsg', { email })}</Text>
+            </View>
+
+            <View style={s.form}>
+              <View style={s.fieldWrap}>
+                <Text style={s.fieldLabel}>{t('auth.codigoDoEmail')}</Text>
+                <View style={[s.fieldRow, !!erroCodigo && { borderColor: C.danger }]}>
+                  <Ionicons name="keypad-outline" size={18} color={C.textMuted} style={s.fieldIcon} />
+                  <TextInput
+                    style={[s.fieldInput, { letterSpacing: 8, fontWeight: '700', fontSize: 20 }]}
+                    placeholder="000000"
+                    placeholderTextColor={C.textDim}
+                    value={codigoEmail}
+                    onChangeText={v => { setCodigoEmail(v.replace(/[^0-9]/g, '').slice(0, 6)); setErroCodigo(''); }}
+                    keyboardType="number-pad"
+                    maxLength={6}
+                    autoFocus
+                    returnKeyType="done"
+                    onSubmitEditing={handleConfirmarEmail}
+                  />
+                </View>
+                {!!erroCodigo && (
+                  <View style={s.errorRow}>
+                    <Ionicons name="alert-circle-outline" size={14} color={C.danger} />
+                    <Text style={s.errorText}>{erroCodigo}</Text>
+                  </View>
+                )}
+              </View>
+
+              <TouchableOpacity
+                style={[s.submitBtn, loading && { opacity: 0.7 }]}
+                onPress={handleConfirmarEmail} disabled={loading} activeOpacity={0.85}
+              >
+                {loading ? <ActivityIndicator color="#fff" /> : (
+                  <>
+                    <Text style={s.submitBtnText}>{t('auth.confirmarBtn')}</Text>
+                    <Ionicons name="arrow-forward" size={18} color="#fff" />
+                  </>
+                )}
+              </TouchableOpacity>
+
+              <TouchableOpacity style={s.skipBtn} onPress={handleReenviarCodigo} disabled={reenviando}>
+                <Text style={s.skipText}>
+                  {reenviando ? t('common.enviando') : t('auth.naoRecebeuReenviar')}
+                </Text>
+              </TouchableOpacity>
+
+              <View style={s.switchRow}>
+                <TouchableOpacity onPress={() => setMode('login')}>
+                  <Text style={s.switchLink}>{t('auth.voltarParaLogin')}</Text>
+                </TouchableOpacity>
+              </View>
+
+              <Text style={s.inviteHint}>{t('auth.dicaSpam')}</Text>
+            </View>
+          </View>
+        </KeyboardAvoidingView>
+      </SafeAreaView>
+    );
+  }
+
   // ── Tela principal (login / cadastro / reset) ──────────────────────────────
   return (
     <SafeAreaView style={s.safe} edges={['top', 'bottom']}>
       <StatusBar barStyle="light-content" backgroundColor={C.bg} />
+      <TouchableOpacity style={s.fecharBtn} onPress={fecharSeModal} hitSlop={10}>
+        <Ionicons name="close" size={24} color={C.textMuted} />
+      </TouchableOpacity>
       <KeyboardAvoidingView behavior={Platform.OS === 'ios' ? 'padding' : undefined} style={s.kav}>
         <View style={s.inner}>
 
@@ -351,6 +492,7 @@ export default function AuthScreen() {
 const s = StyleSheet.create({
   safe: { flex: 1, backgroundColor: C.bg },
   kav: { flex: 1 },
+  fecharBtn: { position: 'absolute', top: 8, right: 16, zIndex: 10, padding: 8 },
   inner: { flex: 1, justifyContent: 'center', paddingHorizontal: 28 },
   logoWrap: { alignItems: 'center', marginBottom: 36 },
   logoCircle: { width: 80, height: 80, borderRadius: 40, backgroundColor: 'rgba(245,200,66,0.15)', borderWidth: 1, borderColor: 'rgba(245,200,66,0.3)', alignItems: 'center', justifyContent: 'center', marginBottom: 16 },

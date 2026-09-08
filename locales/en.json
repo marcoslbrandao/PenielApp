@@ -21,7 +21,8 @@
     "emBreve": "Coming soon",
     "remover": "Remove",
     "enviar": "Send",
-    "tenteNovamente": "Please try again."
+    "tenteNovamente": "Please try again.",
+    "enviando": "Sending..."
   },
   "home": {
     "bemVindo": "Welcome back",
@@ -108,7 +109,17 @@
     "inserirCodigo": "Enter code",
     "continuarVisitante": "Continue as visitor",
     "informeSeuEmail": "Enter your email.",
-    "emailEnviadoResetMsg": "Check your inbox to reset your password."
+    "emailEnviadoResetMsg": "Check your inbox to reset your password.",
+    "inserirCodigoEmail": "Enter code",
+    "confirmeSeuEmail": "Confirm your email",
+    "confirmeSeuEmailMsg": "We sent a 6-digit code to {{email}}. Enter it below to activate your account.",
+    "codigoDoEmail": "Confirmation code",
+    "confirmarBtn": "Confirm and sign in",
+    "codigoEmailIncompleto": "Enter all 6 digits of the code.",
+    "codigoEmailInvalido": "Invalid or expired code. Request a new one below.",
+    "naoRecebeuReenviar": "Didn't get it? Send another code",
+    "codigoReenviado": "We sent a new code to {{email}}.",
+    "dicaSpam": "If you can't find the email, check your spam folder."
   },
   "perfil": {
     "titulo": "Profile",
@@ -199,7 +210,11 @@
     "excluirBtn": "Delete",
     "contaExcluidaTitulo": "Account deleted",
     "contaExcluidaMsg": "Your account and data have been permanently removed.",
-    "meuCadastro": "My Registration"
+    "meuCadastro": "My Registration",
+    "souMembroTitulo": "I'm a Peniel Church member",
+    "souMembroSub": "Activate my access to the Members Area",
+    "entrarOuCriarConta": "Sign in or create an account",
+    "entrarOuCriarContaSub": "Save verses, get announcements and follow the schedule"
   },
   "grupos": {
     "titulo": "Groups",
@@ -781,5 +796,30 @@
     "estadoRegiao": "County / Region",
     "estadoRegiaoPlaceholder": "e.g. Berkshire",
     "ministerioAtual": "Do you already serve in a ministry at Peniel?"
+  },
+  "ativarMembro": {
+    "titulo": "Members Area",
+    "explicacao": "If you are a Peniel Church member, activate your access with the code your leader sent you.",
+    "digiteOCodigo": "Enter the code.",
+    "codigoInvalido": "Invalid or expired code.",
+    "ativar": "Activate member access",
+    "sucessoTitulo": "Access activated!",
+    "sucessoTexto": "The Members tab is now available in your app, with groups, schedules and the church directory.",
+    "sucessoBotao": "Continue",
+    "semCodigoTitulo": "Don't have the code yet?",
+    "semCodigoTexto": "Get in touch with the leadership to request your access. You can come back here any time to enter the code.",
+    "solicitarAcesso": "Contact the leadership",
+    "mensagemSolicitacao": "Hello! I would like to request member access in the Peniel Church app.",
+    "rodape": "Your account works normally without the code. The Members Area is an extra space for Peniel Church members."
+  },
+  "bemVindo": {
+    "titulo": "Welcome to Peniel Church",
+    "tituloComNome": "Welcome, {{nome}}!",
+    "subtitulo": "Your account is active. Follow the church from wherever you are.",
+    "pontoBiblia": "Full Bible in four languages, with saved verses and reading history",
+    "pontoAgenda": "Services and events schedule, devotionals and the live stream",
+    "pontoAvisos": "Church announcements and notifications straight to your phone",
+    "notaMembro": "A Peniel Church member? Activate your Members Area access from your Profile.",
+    "explorar": "Explore the app"
   }
 }
