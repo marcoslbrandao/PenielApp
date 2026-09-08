@@ -1038,7 +1038,7 @@ export default function MembrosScreen() {
   }, []);
 
   useEffect(() => {
-    if (role === 'admin' || role === 'lider') fetchMembros();
+    if (role === 'admin') fetchMembros();
   }, [role, fetchMembros]);
 
   const handleDelete = (id: string) => {
@@ -1075,7 +1075,9 @@ export default function MembrosScreen() {
     );
   }
 
-  if (role !== 'admin' && role !== 'lider') {
+  // Diretório com dados pessoais: só admin. Líder de grupo monta o grupo dele
+  // por uma busca reduzida (só nome) dentro da aba Grupos.
+  if (role !== 'admin') {
     return (
       <SafeAreaView style={s.safe} edges={['top']}>
         <StatusBar barStyle="light-content" backgroundColor={C.primary} />
@@ -1085,7 +1087,7 @@ export default function MembrosScreen() {
         <View style={s.empty}>
           <Ionicons name="lock-closed-outline" size={48} color={C.textDim} />
           <Text style={[s.emptyText, { fontWeight: '700', fontSize: 16, marginTop: 12 }]}>Acesso restrito</Text>
-          <Text style={s.emptyText}>Esta lista com dados dos membros é exclusiva para líderes e administradores.</Text>
+          <Text style={s.emptyText}>Esta lista com os dados pessoais dos membros é exclusiva para os administradores da igreja.</Text>
         </View>
       </SafeAreaView>
     );

@@ -93,7 +93,10 @@ const GRUPO_DEVOCIONAL_OPCOES: { valor: string | null; label: string }[] = [
 
 type EscalaArea = { id: string; nome: string; vagas_padrao: number };
 type AreaVoluntario = { id: string; area_id: string; membro_id: string; nome: string; sobrenome: string };
-type MembroDiretorio = { id: string; nome: string; sobrenome: string; telefone: string };
+// Sem telefone: quem lidera uma área de escala monta o time da área, mas não
+// tem acesso ao diretório da igreja. A busca vem de `membros_para_area_escala`
+// no Supabase, que devolve só nome e checa a permissão lá dentro.
+type MembroDiretorio = { id: string; nome: string; sobrenome: string };
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 function generateCode(): string {
@@ -1121,14 +1124,11 @@ function AreaVoluntariosModal({ visible, area, onClose, onChanged }: {
   const fetchVoluntarios = useCallback(async () => {
     if (!area) return;
     setLoading(true);
-    const { data } = await supabase
-      .from('escala_area_voluntarios')
-      .select('id, area_id, membro_id, members(nome, sobrenome)')
-      .eq('area_id', area.id);
+    const { data } = await supabase.rpc('voluntarios_da_area', { p_area_id: area.id });
     setVoluntarios(((data ?? []) as any[]).map(row => ({
       id: row.id, area_id: row.area_id, membro_id: row.membro_id,
-      nome: row.members?.nome ?? '', sobrenome: row.members?.sobrenome ?? '',
-    })).sort((a, b) => a.nome.localeCompare(b.nome)));
+      nome: row.nome ?? '', sobrenome: row.sobrenome ?? '',
+    })));
     setLoading(false);
   }, [area]);
 
@@ -1137,20 +1137,19 @@ function AreaVoluntariosModal({ visible, area, onClose, onChanged }: {
   }, [visible, fetchVoluntarios]);
 
   useEffect(() => {
-    if (query.trim().length < 2) { setResultados([]); return; }
+    if (!area || query.trim().length < 2) { setResultados([]); return; }
+    const areaId = area.id;
     setBuscando(true);
     const t = setTimeout(() => {
-      supabase.from('members').select('id, nome, sobrenome, telefone')
-        .or(`nome.ilike.%${query.trim()}%,sobrenome.ilike.%${query.trim()}%`)
-        .limit(10)
+      // A função já exclui quem está no time e já limita o resultado.
+      supabase.rpc('membros_para_area_escala', { p_area_id: areaId, p_busca: query.trim() })
         .then(({ data }) => {
-          const jaAdicionados = new Set(voluntarios.map(v => v.membro_id));
-          setResultados(((data ?? []) as MembroDiretorio[]).filter(m => !jaAdicionados.has(m.id)));
+          setResultados((data ?? []) as MembroDiretorio[]);
           setBuscando(false);
         });
     }, 300);
     return () => clearTimeout(t);
-  }, [query, voluntarios]);
+  }, [query, area?.id, voluntarios.length]);
 
   const adicionar = async (membro: MembroDiretorio) => {
     if (!area) return;
@@ -1418,6 +1417,12 @@ export default function AdminScreen() {
   const { todayBirthdays, monthBirthdays } = useBirthdays();
   const [role, setRole] = useState<string | null>(null);
   const [loadingRole, setLoadingRole] = useState(true);
+  // Painel Admin = conteúdo PÚBLICO da igreja (avisos, devocionais, mensagens
+  // e shorts que aparecem na Home e na Mídia) — isso é só do admin. A única
+  // exceção é quem lidera uma área de escala: essa pessoa entra aqui, mas vê
+  // exclusivamente a aba Escalas, e dentro dela só as áreas que lidera.
+  // Conteúdo de GRUPO não se administra aqui: é dentro da aba Grupos.
+  const [lideraAreaEscala, setLideraAreaEscala] = useState(false);
   const [stats, setStats] = useState<Stats>({ total: 0, membros: 0, lideres: 0, visitantes: 0, admins: 0 });
   const [invites, setInvites] = useState<InviteCode[]>([]);
   const [offerings, setOfferings] = useState<Offering[]>([]);
@@ -1450,11 +1455,17 @@ export default function AdminScreen() {
   // pra arrastar pra ver o resto, e some sozinha quando chega no fim.
   const [tabsScrollFim, setTabsScrollFim] = useState(false);
 
-  // Verifica role
+  // Verifica role e liderança de área de escala
   useEffect(() => {
     if (!user) return;
-    supabase.from('profiles').select('role').eq('id', user.id).single()
-      .then(({ data }) => { setRole(data?.role ?? null); setLoadingRole(false); });
+    Promise.all([
+      supabase.from('profiles').select('role').eq('id', user.id).single(),
+      supabase.from('escala_area_lideres').select('area_id').eq('profile_id', user.id),
+    ]).then(([{ data: perfil }, { data: areas }]) => {
+      setRole(perfil?.role ?? null);
+      setLideraAreaEscala((areas ?? []).length > 0);
+      setLoadingRole(false);
+    });
   }, [user]);
 
   const fetchData = useCallback(async () => {
@@ -1674,8 +1685,15 @@ export default function AdminScreen() {
     );
   }
 
+  const ehAdmin = role === 'admin';
+  // Quem só lidera área de escala começa (e fica) na aba Escalas.
+  const abasVisiveis = ehAdmin
+    ? (['convites', 'avisos', 'devocionais', 'mensagens', 'contato', 'oracao', 'agenda', 'shorts', 'ofertas', 'escalas', 'stats'] as const)
+    : (['escalas'] as const);
+  const abaAtual = abasVisiveis.includes(activeTab as any) ? activeTab : 'escalas';
+
   // Acesso negado
-  if (role !== 'admin' && role !== 'lider') {
+  if (!ehAdmin && !lideraAreaEscala) {
     return (
       <SafeAreaView style={s.safe} edges={['top']}>
         <View style={s.header}>
@@ -1684,7 +1702,7 @@ export default function AdminScreen() {
         <View style={s.denied}>
           <Ionicons name="lock-closed-outline" size={48} color={C.textDim} />
           <Text style={s.deniedTitle}>Acesso Restrito</Text>
-          <Text style={s.deniedSub}>Esta área é exclusiva para líderes e administradores.</Text>
+          <Text style={s.deniedSub}>Esta área é exclusiva para os administradores da igreja.</Text>
         </View>
       </SafeAreaView>
     );
@@ -1698,25 +1716,25 @@ export default function AdminScreen() {
       <View style={s.header}>
         <View>
           <Text style={s.headerTitle}>Painel Admin</Text>
-          <Text style={s.headerSub}>{role === 'admin' ? 'Administrador' : 'Líder'}</Text>
+          <Text style={s.headerSub}>{ehAdmin ? 'Administrador' : 'Líder de escala'}</Text>
         </View>
-        {!(activeTab === 'escalas' && role !== 'admin') && activeTab !== 'contato' && activeTab !== 'oracao' && (
+        {!(abaAtual === 'escalas' && !ehAdmin) && abaAtual !== 'contato' && abaAtual !== 'oracao' && (
           <TouchableOpacity
             style={s.newBtn}
             onPress={() => {
-              if (activeTab === 'ofertas') setOfertaModalVisible(true);
-              else if (activeTab === 'avisos') setAvisoModalVisible(true);
-              else if (activeTab === 'devocionais') setDevocionalModalVisible(true);
-              else if (activeTab === 'agenda') setEventoModalVisible(true);
-              else if (activeTab === 'shorts') setShortModalVisible(true);
-              else if (activeTab === 'mensagens') setMensagemModalVisible(true);
-              else if (activeTab === 'escalas') setAreaModalVisible(true);
+              if (abaAtual === 'ofertas') setOfertaModalVisible(true);
+              else if (abaAtual === 'avisos') setAvisoModalVisible(true);
+              else if (abaAtual === 'devocionais') setDevocionalModalVisible(true);
+              else if (abaAtual === 'agenda') setEventoModalVisible(true);
+              else if (abaAtual === 'shorts') setShortModalVisible(true);
+              else if (abaAtual === 'mensagens') setMensagemModalVisible(true);
+              else if (abaAtual === 'escalas') setAreaModalVisible(true);
               else setModalVisible(true);
             }}
           >
             <Ionicons name="add" size={18} color={C.primary} />
             <Text style={s.newBtnText}>
-              {activeTab === 'ofertas' ? 'Nova Oferta' : activeTab === 'avisos' ? 'Novo Aviso' : activeTab === 'devocionais' ? 'Novo Devocional' : activeTab === 'agenda' ? 'Novo Evento' : activeTab === 'shorts' ? 'Novo Short' : activeTab === 'mensagens' ? 'Nova Mensagem' : activeTab === 'escalas' ? 'Nova Área' : 'Novo Convite'}
+              {abaAtual === 'ofertas' ? 'Nova Oferta' : abaAtual === 'avisos' ? 'Novo Aviso' : abaAtual === 'devocionais' ? 'Novo Devocional' : abaAtual === 'agenda' ? 'Novo Evento' : abaAtual === 'shorts' ? 'Novo Short' : abaAtual === 'mensagens' ? 'Nova Mensagem' : abaAtual === 'escalas' ? 'Nova Área' : 'Novo Convite'}
             </Text>
           </TouchableOpacity>
         )}
@@ -1735,16 +1753,16 @@ export default function AdminScreen() {
             setTabsScrollFim(contentOffset.x + layoutMeasurement.width >= contentSize.width - 12);
           }}
         >
-          {(['convites', 'avisos', 'devocionais', 'mensagens', 'contato', 'oracao', 'agenda', 'shorts', 'ofertas', 'escalas', 'stats'] as const).map(tab => (
+          {abasVisiveis.map(tab => (
             <TouchableOpacity
               key={tab}
-              style={[s.tabBtn, activeTab === tab && s.tabBtnActive]}
+              style={[s.tabBtn, abaAtual === tab && s.tabBtnActive]}
               onPress={() => setActiveTab(tab)}
             >
               <Ionicons
                 name={tab === 'convites' ? 'ticket-outline' : tab === 'avisos' ? 'megaphone-outline' : tab === 'devocionais' ? 'book-outline' : tab === 'mensagens' ? 'newspaper-outline' : tab === 'contato' ? 'chatbubble-ellipses-outline' : tab === 'oracao' ? 'heart-outline' : tab === 'agenda' ? 'calendar-outline' : tab === 'shorts' ? 'film-outline' : tab === 'ofertas' ? 'gift-outline' : tab === 'escalas' ? 'people-circle-outline' : 'bar-chart-outline'}
                 size={14}
-                color={activeTab === tab ? C.purple : C.textMuted}
+                color={abaAtual === tab ? C.purple : C.textMuted}
               />
               {tab === 'contato' && contatoMensagens.some(m => m.status === 'novo') && (
                 <View style={s.tabDot} />
@@ -1752,7 +1770,7 @@ export default function AdminScreen() {
               {tab === 'oracao' && pedidosOracao.some(p => p.status === 'aberto') && (
                 <View style={s.tabDot} />
               )}
-              <Text style={[s.tabBtnText, activeTab === tab && { color: C.purple, fontWeight: '700' }]}>
+              <Text style={[s.tabBtnText, abaAtual === tab && { color: C.purple, fontWeight: '700' }]}>
                 {tab === 'convites' ? 'Convites' : tab === 'avisos' ? 'Avisos' : tab === 'devocionais' ? 'Devocionais' : tab === 'mensagens' ? 'Mensagens' : tab === 'contato' ? 'Contato' : tab === 'oracao' ? 'Oração' : tab === 'agenda' ? 'Agenda' : tab === 'shorts' ? 'Shorts' : tab === 'ofertas' ? 'Ofertas' : tab === 'escalas' ? 'Escalas' : 'Estatísticas'}
               </Text>
             </TouchableOpacity>
@@ -1776,7 +1794,7 @@ export default function AdminScreen() {
         >
 
           {/* ══ CONVITES ══════════════════════════════════════════════════════ */}
-          {activeTab === 'convites' && (
+          {abaAtual === 'convites' && (
             <>
               {/* Summary */}
               <View style={s.summaryRow}>
@@ -1851,7 +1869,7 @@ export default function AdminScreen() {
           )}
 
           {/* ══ AVISOS ════════════════════════════════════════════════════════ */}
-          {activeTab === 'avisos' && (
+          {abaAtual === 'avisos' && (
             <>
               {avisos.length === 0 ? (
                 <View style={s.empty}>
@@ -1902,7 +1920,7 @@ export default function AdminScreen() {
           )}
 
           {/* ══ DEVOCIONAIS ═══════════════════════════════════════════════════ */}
-          {activeTab === 'devocionais' && (
+          {abaAtual === 'devocionais' && (
             <>
               <Text style={{ fontSize: 12, color: C.textMuted, marginBottom: 12, lineHeight: 18 }}>
                 Devocionais gerais aparecem em destaque na Home pra todo mundo. Devocionais de grupo só aparecem pra quem tem acesso àquele grupo.
@@ -1946,7 +1964,7 @@ export default function AdminScreen() {
           )}
 
           {/* ══ MENSAGENS (blog) ═════════════════════════════════════════════ */}
-          {activeTab === 'mensagens' && (
+          {abaAtual === 'mensagens' && (
             <>
               <Text style={{ fontSize: 12, color: C.textMuted, marginBottom: 12, lineHeight: 18 }}>
                 A mensagem mais recente aparece em destaque na Home. Todas ficam listadas na aba Mensagens dentro de Mídia.
@@ -1986,7 +2004,7 @@ export default function AdminScreen() {
           )}
 
           {/* ══ CONTATO ═══════════════════════════════════════════════════════ */}
-          {activeTab === 'contato' && (
+          {abaAtual === 'contato' && (
             <>
               <Text style={{ fontSize: 12, color: C.textMuted, marginBottom: 12, lineHeight: 18 }}>
                 Mensagens enviadas pelo botão "Contato" nos grupos (e visitantes sem conta). Ninguém mais vê essas mensagens.
@@ -2059,7 +2077,7 @@ export default function AdminScreen() {
           )}
 
           {/* ══ ORAÇÃO ═════════════════════════════════════════════════════════ */}
-          {activeTab === 'oracao' && (
+          {abaAtual === 'oracao' && (
             <>
               <Text style={{ fontSize: 12, color: C.textMuted, marginBottom: 12, lineHeight: 18 }}>
                 Pedidos enviados pelo Perfil {'>'} Pedidos de Oração. Só admin/líder vê — inclusive o próprio membro só vê os dele.
@@ -2119,7 +2137,7 @@ export default function AdminScreen() {
           )}
 
           {/* ══ AGENDA ════════════════════════════════════════════════════════ */}
-          {activeTab === 'agenda' && (
+          {abaAtual === 'agenda' && (
             <>
               {eventosAgenda.length === 0 ? (
                 <View style={s.empty}>
@@ -2179,7 +2197,7 @@ export default function AdminScreen() {
           )}
 
           {/* ══ SHORTS ════════════════════════════════════════════════════════ */}
-          {activeTab === 'shorts' && (
+          {abaAtual === 'shorts' && (
             <>
               {shorts.length === 0 ? (
                 <View style={s.empty}>
@@ -2226,7 +2244,7 @@ export default function AdminScreen() {
           )}
 
           {/* ══ OFERTAS ═══════════════════════════════════════════════════════ */}
-          {activeTab === 'ofertas' && (
+          {abaAtual === 'ofertas' && (
             <>
               <View style={s.summaryRow}>
                 <View style={s.summaryCard}>
@@ -2275,7 +2293,7 @@ export default function AdminScreen() {
           )}
 
           {/* ══ ESCALAS ═══════════════════════════════════════════════════════ */}
-          {activeTab === 'escalas' && (() => {
+          {abaAtual === 'escalas' && (() => {
             const areasVisiveis = role === 'admin'
               ? escalaAreas
               : escalaAreas.filter(a => areasLideradas.includes(a.id));
@@ -2326,7 +2344,7 @@ export default function AdminScreen() {
           })()}
 
           {/* ══ ESTATÍSTICAS ══════════════════════════════════════════════════ */}
-          {activeTab === 'stats' && (
+          {abaAtual === 'stats' && (
             <>
               <Text style={s.sectionLabel}>Usuários do App</Text>
               <View style={s.statsGrid}>

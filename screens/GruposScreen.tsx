@@ -219,7 +219,11 @@ function GrupoDevocionalCard({ dev, cor, isOpen, onToggle }: {
 
 // ─── Gestão de Participantes (só líder do grupo ou admin) ────────────────────
 type Participante = { id: string; membro_id: string; nome: string; sobrenome: string };
-type MembroBusca = { id: string; nome: string; sobrenome: string; telefone: string };
+// Sem telefone de propósito: o líder de grupo não tem acesso ao diretório da
+// igreja. A busca vem da função `membros_para_grupo` no Supabase, que devolve
+// só nome e sobrenome — o suficiente pra montar o grupo, sem entregar a ficha
+// de ninguém. A permissão é checada dentro da função, não aqui.
+type MembroBusca = { id: string; nome: string; sobrenome: string };
 
 function GerenciarParticipantesModal({ visible, grupo, grupoNome, cor, onClose }: {
   visible: boolean; grupo: Tab; grupoNome: string; cor: string; onClose: () => void;
@@ -235,16 +239,13 @@ function GerenciarParticipantesModal({ visible, grupo, grupoNome, cor, onClose }
 
   const fetchParticipantes = useCallback(async () => {
     setLoading(true);
-    const { data } = await supabase
-      .from('grupo_membros')
-      .select('id, membro_id, members(nome, sobrenome)')
-      .eq('grupo', grupo);
+    const { data } = await supabase.rpc('participantes_do_grupo', { p_grupo: grupo });
     setParticipantes(((data ?? []) as any[]).map(row => ({
       id: row.id,
       membro_id: row.membro_id,
-      nome: row.members?.nome ?? '',
-      sobrenome: row.members?.sobrenome ?? '',
-    })).sort((a, b) => a.nome.localeCompare(b.nome)));
+      nome: row.nome ?? '',
+      sobrenome: row.sobrenome ?? '',
+    })));
     setLoading(false);
   }, [grupo]);
 
@@ -256,17 +257,15 @@ function GerenciarParticipantesModal({ visible, grupo, grupoNome, cor, onClose }
     if (query.trim().length < 2) { setResultados([]); return; }
     setBuscando(true);
     const t = setTimeout(() => {
-      supabase.from('members').select('id, nome, sobrenome, telefone')
-        .or(`nome.ilike.%${query.trim()}%,sobrenome.ilike.%${query.trim()}%`)
-        .limit(10)
+      // A função já filtra quem está no grupo e já limita o resultado.
+      supabase.rpc('membros_para_grupo', { p_grupo: grupo, p_busca: query.trim() })
         .then(({ data }) => {
-          const jaAdicionados = new Set(participantes.map(p => p.membro_id));
-          setResultados(((data ?? []) as MembroBusca[]).filter(m => !jaAdicionados.has(m.id)));
+          setResultados((data ?? []) as MembroBusca[]);
           setBuscando(false);
         });
     }, 300);
     return () => clearTimeout(t);
-  }, [query, participantes]);
+  }, [query, grupo, participantes.length]);
 
   const adicionar = async (membro: MembroBusca) => {
     const { error } = await supabase.from('grupo_membros').insert({ membro_id: membro.id, grupo });
@@ -315,7 +314,6 @@ function GerenciarParticipantesModal({ visible, grupo, grupoNome, cor, onClose }
                   <TouchableOpacity key={m.id} style={gm.resultRow} onPress={() => adicionar(m)}>
                     <View style={{ flex: 1 }}>
                       <Text style={gm.resultNome}>{m.nome} {m.sobrenome}</Text>
-                      {!!m.telefone && <Text style={gm.resultMeta}>{m.telefone}</Text>}
                     </View>
                     <Ionicons name="add-circle" size={22} color={cor} />
                   </TouchableOpacity>
@@ -626,15 +624,13 @@ export default function GruposScreen() {
           <Text style={s.headerTitle}>{t('grupos.titulo')}</Text>
           <Text style={s.headerSub}>Peniel Church</Text>
         </View>
-        <View style={{ flexDirection: 'row', gap: 8 }}>
-          {temAcessoConteudo && (
-            <TouchableOpacity
-              style={[s.waBtn, { backgroundColor: 'rgba(255,255,255,0.15)', borderColor: 'rgba(255,255,255,0.3)' }]}
-              onPress={() => setChatModalVisible(true)}
-            >
-              <Ionicons name="chatbubbles-outline" size={16} color="#fff" />
-            </TouchableOpacity>
-          )}
+        {/* Ações do grupo. Os três ícones brancos são de gestão e só aparecem
+            pra quem pode usá-los: Participantes e Admin do grupo pro líder
+            DAQUELE grupo, Líderes só pro admin da igreja — só ele nomeia ou
+            remove um líder, nem o próprio líder pode. O Chat ficou no lugar
+            onde estava o botão de Contato, maior e na cor do grupo: é a ação
+            que todo mundo do grupo usa todo dia, não uma ferramenta de gestão. */}
+        <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
           {souLiderDesteGrupo && (
             <TouchableOpacity
               style={[s.waBtn, { backgroundColor: 'rgba(255,255,255,0.15)', borderColor: 'rgba(255,255,255,0.3)' }]}
@@ -659,10 +655,15 @@ export default function GruposScreen() {
               <Ionicons name="ribbon-outline" size={16} color="#fff" />
             </TouchableOpacity>
           )}
-          <TouchableOpacity style={[s.waBtn, { backgroundColor: grupo.cor + '20', borderColor: grupo.cor + '40' }]} onPress={abrirContato}>
-            <Ionicons name="chatbubble-ellipses-outline" size={16} color={grupo.cor} />
-            <Text style={[s.waBtnText, { color: grupo.cor }]}>{t('grupos.contato')}</Text>
-          </TouchableOpacity>
+          {temAcessoConteudo && (
+            <TouchableOpacity
+              style={[s.chatBtn, { backgroundColor: grupo.cor + '26', borderColor: grupo.cor + '59' }]}
+              onPress={() => setChatModalVisible(true)}
+            >
+              <Ionicons name="chatbubbles" size={20} color={grupo.cor} />
+              <Text style={[s.chatBtnText, { color: grupo.cor }]}>{t('grupos.chat')}</Text>
+            </TouchableOpacity>
+          )}
         </View>
       </View>
 
@@ -830,11 +831,14 @@ export default function GruposScreen() {
           </>
         )}
 
-        {/* Botão de contato */}
-        <TouchableOpacity style={[s.contactBtn, { backgroundColor: grupo.cor }]} onPress={abrirContato}>
-          <Ionicons name="chatbubble-ellipses-outline" size={20} color="#fff" />
-          <Text style={s.contactBtnText}>{t('grupos.entrarContatoLider')}</Text>
-        </TouchableOpacity>
+        {/* Falar com o líder: só pra quem ainda NÃO faz parte do grupo — é
+            como essa pessoa pede pra entrar. Quem já está dentro usa o Chat. */}
+        {!temAcessoConteudo && (
+          <TouchableOpacity style={[s.contactBtn, { backgroundColor: grupo.cor }]} onPress={abrirContato}>
+            <Ionicons name="chatbubble-ellipses-outline" size={20} color="#fff" />
+            <Text style={s.contactBtnText}>{t('grupos.entrarContatoLider')}</Text>
+          </TouchableOpacity>
+        )}
 
         <View style={{ height: 32 }} />
       </ScrollView>
@@ -897,6 +901,10 @@ function buildS(C: Paleta) { return StyleSheet.create({
   headerSub: { fontSize: 12, color: 'rgba(255,255,255,0.6)', marginTop: 2 },
   waBtn: { flexDirection: 'row', alignItems: 'center', gap: 6, paddingVertical: 7, paddingHorizontal: 12, borderRadius: 20, borderWidth: 1 },
   waBtnText: { fontSize: 12, fontWeight: '700' },
+  // Chat: um pouco maior que os ícones de gestão ao lado — é a ação principal
+  // do grupo, não uma ferramenta de liderança.
+  chatBtn: { flexDirection: 'row', alignItems: 'center', gap: 7, paddingVertical: 9, paddingHorizontal: 14, borderRadius: 22, borderWidth: 1 },
+  chatBtnText: { fontSize: 13.5, fontWeight: '700' },
   tabBar: { flexDirection: 'row', backgroundColor: C.surface, borderBottomWidth: 1, borderBottomColor: C.border },
   tabItem: { flex: 1, alignItems: 'center', paddingVertical: 10, gap: 3 },
   tabLabel: { fontSize: 11, color: C.textMuted, fontWeight: '500' },

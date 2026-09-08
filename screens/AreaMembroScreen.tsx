@@ -11,6 +11,8 @@ import AdminScreen from './AdminScreen';
 import GruposScreen from './GruposScreen';
 import EscalasScreen from './EscalasScreen';
 import { useAcesso } from '../lib/acesso';
+import { supabase } from '../lib/supabase';
+import { useAuth } from '../lib/useAuth';
 
 // ─── Palette ──────────────────────────────────────────────────────────────────
 const C = {
@@ -36,7 +38,21 @@ const Tab = createBottomTabNavigator();
 export default function AreaMembroScreen() {
   const { t } = useTranslation();
   const navigation = useNavigation<any>();
-  const { ehMembro, carregando } = useAcesso();
+  const { ehMembro, ehAdmin, carregando } = useAcesso();
+  const { user } = useAuth();
+
+  // Quem lidera pelo menos UMA área de escala (banda, som, recepção…) precisa
+  // da aba Admin pra montar a escala e o time daquela área — e só disso: a
+  // própria AdminScreen esconde as outras abas de quem não é admin. É um eixo
+  // de liderança separado do líder de grupo; a mesma pessoa pode ser os dois.
+  const [lideraAreaEscala, setLideraAreaEscala] = React.useState(false);
+  React.useEffect(() => {
+    if (!user) { setLideraAreaEscala(false); return; }
+    supabase.from('escala_area_lideres').select('area_id').eq('profile_id', user.id)
+      .then(({ data }) => setLideraAreaEscala((data ?? []).length > 0));
+  }, [user?.id]);
+
+  const mostrarAdmin = ehAdmin || lideraAreaEscala;
 
   // Carregando o papel
   if (carregando) {
@@ -111,15 +127,21 @@ export default function AreaMembroScreen() {
             ),
           }}
         />
-        <Tab.Screen
-          name="Admin"
-          component={AdminScreen}
-          options={{
-            tabBarIcon: ({ color, size }) => (
-              <Ionicons name="shield-outline" size={size} color={color} />
-            ),
-          }}
-        />
+        {/* Admin = conteúdo público da igreja (avisos, devocionais, mensagens
+            e shorts que aparecem na Home e na Mídia). Membro comum não tem o
+            que fazer aqui, e antes batia numa tela de "acesso negado" dentro
+            de uma aba que o app tinha mostrado pra ele. */}
+        {mostrarAdmin && (
+          <Tab.Screen
+            name="Admin"
+            component={AdminScreen}
+            options={{
+              tabBarIcon: ({ color, size }) => (
+                <Ionicons name="shield-outline" size={size} color={color} />
+              ),
+            }}
+          />
+        )}
         <Tab.Screen
           name="Banda"
           component={BandaScreen}
@@ -129,15 +151,21 @@ export default function AreaMembroScreen() {
             ),
           }}
         />
-        <Tab.Screen
-          name="Membros"
-          component={MembrosScreen}
-          options={{
-            tabBarIcon: ({ color, size }) => (
-              <Ionicons name="people-outline" size={size} color={color} />
-            ),
-          }}
-        />
+        {/* Diretório da igreja: telefone, endereço, data de nascimento e
+            observações internas da liderança. Só admin — nem líder de grupo.
+            Pra montar o grupo dele, o líder tem uma busca reduzida (só nome)
+            dentro da aba Grupos. */}
+        {ehAdmin && (
+          <Tab.Screen
+            name="Membros"
+            component={MembrosScreen}
+            options={{
+              tabBarIcon: ({ color, size }) => (
+                <Ionicons name="people-outline" size={size} color={color} />
+              ),
+            }}
+          />
+        )}
       </Tab.Navigator>
     </View>
   );

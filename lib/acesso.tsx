@@ -16,8 +16,10 @@ export type Papel = 'visitante' | 'membro' | 'lider' | 'admin';
 
 type Acesso = {
   papel: Papel | null;
-  /** membro, líder ou admin — quem enxerga a aba Membros */
+  /** membro, líder ou admin — quem enxerga a Área do Membro */
   ehMembro: boolean;
+  /** administrador da igreja — quem enxerga as abas Admin e Membros */
+  ehAdmin: boolean;
   /** true enquanto a sessão OU o papel ainda estão sendo carregados */
   carregando: boolean;
   /** relê o papel no Supabase (usar depois de ativar um código de convite) */
@@ -29,6 +31,7 @@ type Acesso = {
 const AcessoContext = createContext<Acesso>({
   papel: null,
   ehMembro: false,
+  ehAdmin: false,
   carregando: true,
   recarregar: async () => {},
   definirPapel: () => {},
@@ -53,12 +56,14 @@ export function AcessoProvider({ children }: { children: React.ReactNode }) {
   useEffect(() => { recarregar(); }, [recarregar]);
 
   const ehMembro = papel === 'membro' || papel === 'lider' || papel === 'admin';
+  const ehAdmin = papel === 'admin';
 
   return (
     <AcessoContext.Provider
       value={{
         papel,
         ehMembro,
+        ehAdmin,
         carregando: loading || carregandoPapel,
         recarregar,
         definirPapel: setPapel,
